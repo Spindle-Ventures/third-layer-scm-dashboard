@@ -1046,7 +1046,7 @@ async function editRevenueForecast(channel) {
   const monthLabel = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
   const current = (window._revenuePacing || {})[channel];
   const currentMonthKey = new Date().toISOString().slice(0, 7);
-  const fallback = (window._revenueTabData?.monthlyForecast?.[currentMonthKey] || {})[channel];
+  const fallback = (window._revState?.liveForecast?.[currentMonthKey] || {})[channel];
   const existingVal = (current && !current.noForecast) ? current.forecastFullMonth : (fallback || '');
   const input = prompt(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} full-month revenue forecast for ${monthLabel} ($):`, existingVal);
   if (input === null) return;
@@ -1100,174 +1100,433 @@ async function decideRecommendation(id, decision) {
   await renderOverview();
 }
 
-// ---------- Revenue ----------
+// ---------- Revenue (scenario modeling) ----------
+function monthKey(d) { return d.toISOString().slice(0, 7); }
+function monthLabelShort(key) { return new Date(key + '-02').toLocaleString('en-US', { month: 'short', year: '2-digit' }); }
+function monthLabelLong(key) { return new Date(key + '-02').toLocaleString('en-US', { month: 'long', year: 'numeric' }); }
+function nextSixMonths() {
+  const out = []; const d = new Date(); d.setDate(1);
+  for (let i = 0; i < 6; i++) { out.push(monthKey(d)); d.setMonth(d.getMonth() + 1); }
+  return out;
+}
+
 async function renderRevenue() {
   const el = document.getElementById('tab-revenue');
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const sevenMonthsAgoIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 6); d.setDate(1); return d.toISOString().slice(0, 10); })();
+  el.innerHTML = `<div class="card empty-state">Loading revenue data…</div>`;
 
-  const [{ data: revActuals }, { data: revForecasts }, { data: forecastParams }] = await Promise.all([
-    sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', sevenMonthsAgoIso),
-    sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', sevenMonthsAgoIso.slice(0, 7) + '-01'),
-    sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, products(sku_code, display_name)').eq('is_active', true),
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const histStartIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 5); d.setDate(1); return d.toISOString().slice(0, 10); })();
+  const months = nextSixMonths();
+
+  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }] = await Promise.all([
+    sb.from('product_qoh').select('*'),
+    sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', histStartIso),
+    sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
+    sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, product_id, products(sku_code, display_name)').eq('is_active', true),
+    sb.from('open_orders_by_product').select('product_sku, qty, eta').not('eta', 'is', null),
+    sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
   ]);
 
-  // Roll daily actuals up into months per channel.
-  const monthlyActual = {}; // { 'YYYY-MM': { shopify: n, amazon: n } }
+  const monthlyActual = {};
   (revActuals || []).forEach(r => {
-    const month = r.revenue_date.slice(0, 7);
-    if (!monthlyActual[month]) monthlyActual[month] = { shopify: 0, amazon: 0 };
-    monthlyActual[month][r.channel] = (monthlyActual[month][r.channel] || 0) + Number(r.gross_revenue || 0);
+    const m = r.revenue_date.slice(0, 7);
+    if (!monthlyActual[m]) monthlyActual[m] = { shopify: 0, amazon: 0 };
+    monthlyActual[m][r.channel] = (monthlyActual[m][r.channel] || 0) + Number(r.gross_revenue || 0);
   });
-  const monthlyForecast = {};
+  const liveForecast = {};
   (revForecasts || []).forEach(r => {
-    const month = r.forecast_month.slice(0, 7);
-    if (!monthlyForecast[month]) monthlyForecast[month] = { shopify: null, amazon: null };
-    monthlyForecast[month][r.channel] = Number(r.forecast_revenue);
+    const m = r.forecast_month.slice(0, 7);
+    if (!liveForecast[m]) liveForecast[m] = {};
+    liveForecast[m][r.channel] = Number(r.forecast_revenue);
   });
-  const months = [...new Set([...Object.keys(monthlyActual), ...Object.keys(monthlyForecast)])].sort();
+  const liveMix = { shopify: {}, amazon: {} };
+  (forecastParams || []).forEach(fp => {
+    liveMix[fp.channel] = liveMix[fp.channel] || {};
+    liveMix[fp.channel][fp.product_id] = { revenue_pct: Number(fp.revenue_pct), avg_selling_price: Number(fp.avg_selling_price) };
+  });
+  const receipts = {}; // { product_sku: { month: qty } }
+  (openOrders || []).forEach(o => {
+    const m = o.eta.slice(0, 7);
+    if (!receipts[o.product_sku]) receipts[o.product_sku] = {};
+    receipts[o.product_sku][m] = (receipts[o.product_sku][m] || 0) + (o.qty || 0);
+  });
 
-  window._revenueTabData = { monthlyActual, monthlyForecast, months, forecastParams: forecastParams || [] };
-
-  const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const daysElapsed = now.getDate();
-  const monthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-  const currentMonthKey = todayIso.slice(0, 7);
-
-  const pacingRow = (channel, label) => {
-    const mtd = (monthlyActual[currentMonthKey] || {})[channel] || 0;
-    const forecastFullMonth = (monthlyForecast[currentMonthKey] || {})[channel];
-    if (!forecastFullMonth) {
-      return `
-        <div style="display:flex; align-items:center; gap:10px; padding:8px 0;">
-          <div style="width:80px; font-size:13px; font-weight:600;">${label}</div>
-          <div style="flex:1; font-size:13px;" class="muted">No forecast set for ${monthLabel} — MTD actual ${fmtMoney(mtd)}</div>
-          <button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" onclick="editRevenueForecast('${channel}')">+ Set forecast</button>
-        </div>
-      `;
-    }
-    const expectedPace = daysInMonth ? (forecastFullMonth / daysInMonth) * daysElapsed : 0;
-    const pctOfGoal = forecastFullMonth > 0 ? (mtd / forecastFullMonth) * 100 : 0;
-    const pctOfPace = expectedPace > 0 ? (mtd / expectedPace) * 100 : 0;
-    const barColor = pctOfPace >= 95 ? 'var(--good-text)' : (pctOfPace >= 80 ? 'var(--watch-text)' : 'var(--bad-text)');
-    const paceLabel = pctOfPace >= 100 ? `${(pctOfPace - 100).toFixed(0)}% ahead of pace` : `${(100 - pctOfPace).toFixed(0)}% behind pace`;
-    return `
-      <div style="display:flex; align-items:center; gap:10px; padding:8px 0;">
-        <div style="width:80px; font-size:13px; font-weight:600;">${label}</div>
-        <div style="flex:1; background:var(--border); border-radius:6px; height:12px; overflow:hidden;">
-          <div style="width:${Math.min(100, pctOfGoal)}%; background:${barColor}; height:100%;"></div>
-        </div>
-        <div style="width:48px; text-align:right; font-size:15px; font-weight:700; color:${barColor};">${pctOfGoal.toFixed(0)}%</div>
-        <div class="muted" style="font-size:12px; width:280px;">${fmtMoney(mtd)} of ${fmtMoney(forecastFullMonth)} goal — ${paceLabel}</div>
-        <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px;" onclick="showRevenueFormula('${channel}')">Formula</button>
-        <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px;" onclick="editRevenueForecast('${channel}')">✎</button>
-      </div>
-    `;
+  window._revState = {
+    products: products || [], monthlyActual, liveForecast, liveMix, receipts, months,
+    scenarios: scenarios || [], selectedScenarioId: window._revState?.selectedScenarioId || 'live',
+    draftChannel: null, draftMix: null,
   };
 
-  // Product mix table, grouped by channel, sorted by revenue_pct descending within channel.
-  const mixRows = (channel) => (forecastParams || [])
-    .filter(fp => fp.channel === channel)
-    .sort((a, b) => b.revenue_pct - a.revenue_pct)
-    .map(fp => {
-      const forecastFullMonth = (monthlyForecast[currentMonthKey] || {})[channel];
-      const impliedRevenue = forecastFullMonth ? forecastFullMonth * fp.revenue_pct : null;
-      const impliedUnits = impliedRevenue && fp.avg_selling_price ? Math.round(impliedRevenue / fp.avg_selling_price) : null;
-      return [
-        `<strong>${fp.products?.display_name || '—'}</strong>`,
-        `${(fp.revenue_pct * 100).toFixed(1)}%`,
-        fmtMoney(fp.avg_selling_price),
-        impliedRevenue != null ? fmtMoney(impliedRevenue) : '<span class="muted">no forecast</span>',
-        impliedUnits != null ? impliedUnits.toLocaleString() : '—',
-      ];
+  await selectRevenueScenario(window._revState.selectedScenarioId, true);
+}
+
+async function selectRevenueScenario(scenarioId, skipFetch) {
+  const S = window._revState;
+  S.selectedScenarioId = scenarioId;
+
+  if (scenarioId === 'live') {
+    S.draftChannel = {};
+    S.months.forEach(m => { S.draftChannel[m] = { shopify: S.liveForecast[m]?.shopify ?? null, amazon: S.liveForecast[m]?.amazon ?? null }; });
+    S.draftMix = { shopify: {}, amazon: {} };
+    ['shopify', 'amazon'].forEach(ch => {
+      S.products.forEach(p => {
+        const base = S.liveMix[ch]?.[p.product_id];
+        if (!base) return;
+        S.draftMix[ch][p.product_id] = {};
+        S.months.forEach(m => { S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price }; });
+      });
     });
+  } else if (!skipFetch || !S.draftChannel) {
+    const [{ data: chanRows }, { data: mixRows }] = await Promise.all([
+      sb.from('revenue_scenario_channel').select('*').eq('scenario_id', scenarioId),
+      sb.from('revenue_scenario_mix').select('*').eq('scenario_id', scenarioId),
+    ]);
+    S.draftChannel = {};
+    S.months.forEach(m => {
+      const shopRow = (chanRows || []).find(r => r.channel === 'shopify' && r.forecast_month.slice(0, 7) === m);
+      const amzRow = (chanRows || []).find(r => r.channel === 'amazon' && r.forecast_month.slice(0, 7) === m);
+      S.draftChannel[m] = {
+        shopify: shopRow ? Number(shopRow.forecast_revenue) : (S.liveForecast[m]?.shopify ?? null),
+        amazon: amzRow ? Number(amzRow.forecast_revenue) : (S.liveForecast[m]?.amazon ?? null),
+      };
+    });
+    S.draftMix = { shopify: {}, amazon: {} };
+    ['shopify', 'amazon'].forEach(ch => {
+      S.products.forEach(p => {
+        const base = S.liveMix[ch]?.[p.product_id];
+        S.draftMix[ch][p.product_id] = {};
+        S.months.forEach(m => {
+          const row = (mixRows || []).find(r => r.channel === ch && r.product_id === p.product_id && r.forecast_month.slice(0, 7) === m);
+          if (row) S.draftMix[ch][p.product_id][m] = { revenue_pct: Number(row.revenue_pct), avg_selling_price: Number(row.avg_selling_price) };
+          else if (base) S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price };
+        });
+      });
+    });
+  }
+  renderRevenueBody();
+}
+
+function currentScenario() {
+  const S = window._revState;
+  if (S.selectedScenarioId === 'live') return null;
+  return S.scenarios.find(s => s.id === S.selectedScenarioId);
+}
+
+function isEditable() {
+  const sc = currentScenario();
+  return canEdit() && sc && sc.status === 'draft';
+}
+
+async function createRevenueScenario() {
+  if (!canEdit()) return;
+  const name = prompt('Name this scenario (e.g. "Holiday push", "Conservative Q1"):');
+  if (!name) return;
+  const { data, error } = await sb.from('revenue_scenarios').insert({ name, status: 'draft', created_by: currentUserRow?.email || 'dashboard' }).select().single();
+  if (error) { alert('Failed: ' + error.message); return; }
+  // Seed from the live numbers currently in window._revState so it starts as an exact copy.
+  const S = window._revState;
+  const chanRows = [];
+  S.months.forEach(m => ['shopify', 'amazon'].forEach(ch => {
+    const val = S.draftChannel?.[m]?.[ch];
+    if (val != null) chanRows.push({ scenario_id: data.id, channel: ch, forecast_month: m + '-01', forecast_revenue: val });
+  }));
+  if (chanRows.length) await sb.from('revenue_scenario_channel').insert(chanRows);
+  const mixRows = [];
+  ['shopify', 'amazon'].forEach(ch => S.products.forEach(p => {
+    const base = S.liveMix[ch]?.[p.product_id];
+    if (!base) return;
+    S.months.forEach(m => mixRows.push({ scenario_id: data.id, product_id: p.product_id, channel: ch, forecast_month: m + '-01', revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price }));
+  }));
+  if (mixRows.length) await sb.from('revenue_scenario_mix').insert(mixRows);
+  S.scenarios.unshift(data);
+  await selectRevenueScenario(data.id);
+}
+
+async function deleteRevenueScenario(scenarioId) {
+  if (!confirm('Delete this draft scenario? This cannot be undone.')) return;
+  const { error } = await sb.from('revenue_scenarios').delete().eq('id', scenarioId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  window._revState.scenarios = window._revState.scenarios.filter(s => s.id !== scenarioId);
+  await selectRevenueScenario('live');
+}
+
+async function commitRevenueScenario() {
+  const sc = currentScenario();
+  if (!sc) return;
+  if (!confirm(`Commit "${sc.name}" as the live forecast? This will update revenue_forecasts and the monthly product-mix assumptions that drive PO/component recommendations. Changes take full effect on the next pipeline run.`)) return;
+  const S = window._revState;
+  const chanRows = [];
+  S.months.forEach(m => ['shopify', 'amazon'].forEach(ch => {
+    const val = S.draftChannel?.[m]?.[ch];
+    if (val != null) chanRows.push({ channel: ch, forecast_month: m + '-01', forecast_revenue: val, created_by: currentUserRow?.email || 'dashboard' });
+  }));
+  const mixRows = [];
+  ['shopify', 'amazon'].forEach(ch => S.products.forEach(p => {
+    S.months.forEach(m => {
+      const v = S.draftMix[ch][p.product_id]?.[m];
+      if (v) mixRows.push({ product_id: p.product_id, channel: ch, forecast_month: m + '-01', revenue_pct: v.revenue_pct, avg_selling_price: v.avg_selling_price, source_scenario_id: sc.id, committed_at: new Date().toISOString() });
+    });
+  }));
+  const [{ error: e1 }, { error: e2 }, { error: e3 }] = await Promise.all([
+    chanRows.length ? sb.from('revenue_forecasts').upsert(chanRows, { onConflict: 'channel,forecast_month' }) : Promise.resolve({ error: null }),
+    mixRows.length ? sb.from('forecast_params_monthly').upsert(mixRows, { onConflict: 'product_id,channel,forecast_month' }) : Promise.resolve({ error: null }),
+    sb.from('revenue_scenarios').update({ status: 'committed', committed_at: new Date().toISOString() }).eq('id', sc.id),
+  ]);
+  if (e1 || e2 || e3) { alert('Commit failed: ' + (e1 || e2 || e3).message); return; }
+  alert(`"${sc.name}" is now the live forecast. Overview-tab recommendations and inventory projections will reflect it after the next daily pipeline run.`);
+  await renderRevenue();
+  await renderOverview();
+}
+
+async function editDraftChannelMonth(channel, month) {
+  if (!isEditable()) { alert('Select or create a draft scenario to edit forecast numbers.'); return; }
+  const S = window._revState;
+  const current = S.draftChannel[month]?.[channel];
+  const input = prompt(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} forecast for ${monthLabelLong(month)} ($):`, current ?? '');
+  if (input === null) return;
+  const val = Number(input.replace(/[^0-9.]/g, ''));
+  if (!val || val <= 0) { alert('Enter a positive number.'); return; }
+  S.draftChannel[month][channel] = val;
+  await sb.from('revenue_scenario_channel').upsert(
+    { scenario_id: S.selectedScenarioId, channel, forecast_month: month + '-01', forecast_revenue: val },
+    { onConflict: 'scenario_id,channel,forecast_month' }
+  );
+  renderRevenueBody();
+}
+
+async function editDraftMixProduct(channel, productId) {
+  if (!isEditable()) { alert('Select or create a draft scenario to edit product mix.'); return; }
+  const S = window._revState;
+  const product = S.products.find(p => p.product_id === productId);
+  const months = S.months;
+  const current = months.map(m => ((S.draftMix[channel][productId]?.[m]?.revenue_pct || 0) * 100).toFixed(1));
+  const input = prompt(
+    `${product?.display_name} — ${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue share %, one per month (${months.map(monthLabelShort).join(', ')}), comma-separated:`,
+    current.join(', ')
+  );
+  if (input === null) return;
+  const vals = input.split(',').map(s => Number(s.trim()));
+  if (vals.length !== months.length || vals.some(v => isNaN(v) || v < 0)) { alert(`Enter exactly ${months.length} non-negative numbers, comma-separated.`); return; }
+  const asp = S.draftMix[channel][productId]?.[months[0]]?.avg_selling_price || S.liveMix[channel]?.[productId]?.avg_selling_price;
+  const rows = [];
+  months.forEach((m, i) => {
+    S.draftMix[channel][productId][m] = { revenue_pct: vals[i] / 100, avg_selling_price: asp };
+    rows.push({ scenario_id: S.selectedScenarioId, product_id: productId, channel, forecast_month: m + '-01', revenue_pct: vals[i] / 100, avg_selling_price: asp });
+  });
+  await sb.from('revenue_scenario_mix').upsert(rows, { onConflict: 'scenario_id,product_id,channel,forecast_month' });
+  renderRevenueBody();
+}
+
+function computeProjection(channelData, mixData) {
+  // Returns { [product_sku]: [eom_m0, eom_m1, ...] } using the same direct_units formula as
+  // demand_engine.py (channel_revenue * revenue_pct / ASP), without bundle expansion -- a
+  // deliberate simplification for this fast preview, noted in the UI.
+  const S = window._revState;
+  const out = {};
+  S.products.forEach(p => {
+    let eom = p.qty_on_hand;
+    const series = [];
+    S.months.forEach(m => {
+      let demand = 0;
+      ['shopify', 'amazon'].forEach(ch => {
+        const mix = mixData[ch][p.product_id]?.[m];
+        const chanRev = channelData[m]?.[ch];
+        if (mix && chanRev && mix.avg_selling_price) demand += (chanRev * mix.revenue_pct) / mix.avg_selling_price;
+      });
+      const inReceipts = (S.receipts[p.sku_code] || {})[m] || 0;
+      eom = eom - demand + inReceipts;
+      series.push(eom);
+    });
+    out[p.sku_code] = series;
+  });
+  return out;
+}
+
+function renderRevenueBody() {
+  const S = window._revState;
+  const el = document.getElementById('tab-revenue');
+  const sc = currentScenario();
+  const editable = isEditable();
+  const months = S.months;
+
+  const scenarioOptions = [
+    `<option value="live" ${S.selectedScenarioId === 'live' ? 'selected' : ''}>Live Forecast</option>`,
+    ...S.scenarios.map(s => `<option value="${s.id}" ${S.selectedScenarioId === s.id ? 'selected' : ''}>${s.name} (${s.status})</option>`),
+  ].join('');
+
+  const channelRow = (channel, label) => `
+    <div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+      <div style="width:64px; font-size:12px; font-weight:600;">${label}</div>
+      ${months.map(m => `
+        <button class="btn ${editable ? 'btn-ghost' : ''}" style="padding:4px 8px; font-size:11px; ${editable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
+          onclick="${editable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)}">
+          ${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}
+        </button>
+      `).join('')}
+    </div>
+  `;
+
+  const projection = computeProjection(S.draftChannel, S.draftMix);
+  const liveChannel = {}; months.forEach(m => liveChannel[m] = { shopify: S.liveForecast[m]?.shopify ?? null, amazon: S.liveForecast[m]?.amazon ?? null });
+  const liveMixByMonth = { shopify: {}, amazon: {} };
+  ['shopify', 'amazon'].forEach(ch => S.products.forEach(p => {
+    const base = S.liveMix[ch]?.[p.product_id];
+    if (!base) return;
+    liveMixByMonth[ch][p.product_id] = {};
+    months.forEach(m => liveMixByMonth[ch][p.product_id][m] = base);
+  }));
+  const liveProjection = computeProjection(liveChannel, liveMixByMonth);
+
+  const impactCards = [...S.products].sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name)).map(p => {
+    const scenarioSeries = projection[p.sku_code] || [];
+    const liveSeries = liveProjection[p.sku_code] || [];
+    const ss = p.safety_stock_qty || 0;
+    const firstBreach = (series) => { const i = series.findIndex(v => v < ss); return i === -1 ? null : months[i]; };
+    const scenarioBreach = firstBreach(scenarioSeries);
+    const liveBreach = firstBreach(liveSeries);
+    let compareLine;
+    if (!scenarioBreach && !liveBreach) compareLine = `<span class="pill good">No safety-stock breach projected (either forecast)</span>`;
+    else if (scenarioBreach && !liveBreach) compareLine = `<span class="pill bad">This scenario introduces a shortfall in ${monthLabelLong(scenarioBreach)} — live forecast shows none</span>`;
+    else if (!scenarioBreach && liveBreach) compareLine = `<span class="pill good">This scenario avoids the ${monthLabelLong(liveBreach)} shortfall the live forecast projects</span>`;
+    else if (scenarioBreach === liveBreach) compareLine = `<span class="pill watch">Same shortfall timing as live forecast: ${monthLabelLong(scenarioBreach)}</span>`;
+    else {
+      const sooner = months.indexOf(scenarioBreach) < months.indexOf(liveBreach);
+      compareLine = `<span class="pill ${sooner ? 'bad' : 'good'}">Shortfall moves ${sooner ? 'sooner' : 'later'}: ${monthLabelLong(scenarioBreach)} (vs. ${monthLabelLong(liveBreach)} live)</span>`;
+    }
+    return `
+      <div class="card" style="padding:10px 12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <strong style="font-size:13px;">${p.display_name}</strong>
+          <span style="font-size:11px;" class="muted">safety stock ${ss.toLocaleString()}</span>
+        </div>
+        <div style="height:60px;"><canvas id="impact-spark-${p.product_id}"></canvas></div>
+        <div style="margin-top:6px;">${compareLine}</div>
+      </div>
+    `;
+  }).join('');
+
+  const mixLegendButtons = (channel) => S.products
+    .filter(p => S.liveMix[channel]?.[p.product_id])
+    .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name))
+    .map(p => `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px; ${editable ? '' : 'cursor:default;'}" ${editable ? `onclick="editDraftMixProduct('${channel}','${p.product_id}')"` : 'disabled'}>${editable ? '✎ ' : ''}${p.display_name}</button>`)
+    .join(' ');
 
   el.innerHTML = `
-    <div class="card" style="padding:14px 16px; margin-bottom:14px;">
-      <div class="section-label" style="margin:0 0 4px;">Revenue Pacing — ${monthLabel}</div>
-      <div class="muted" style="font-size:12px; margin-bottom:4px;">Answers: are we pacing ahead or behind this month's plan, per channel?</div>
-      ${pacingRow('shopify', 'Shopify')}
-      ${pacingRow('amazon', 'Amazon')}
+    <div class="card" style="padding:12px 16px; margin-bottom:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <div class="section-label" style="margin:0;">Scenario:</div>
+      <select id="scenario-select" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="selectRevenueScenario(this.value)">
+        ${scenarioOptions}
+      </select>
+      ${sc ? `<span class="pill ${sc.status === 'draft' ? 'watch' : 'good'}">${sc.status}</span>` : `<span class="muted" style="font-size:12px;">read-only — create a scenario to model changes</span>`}
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="createRevenueScenario()">+ New Scenario</button>` : ''}
+      ${sc && sc.status === 'draft' ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="commitRevenueScenario()">Commit to Live</button>` : ''}
+      ${sc && sc.status === 'draft' ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px; color:var(--bad-text);" onclick="deleteRevenueScenario('${sc.id}')">Delete Draft</button>` : ''}
     </div>
 
-    <div class="card" style="padding:14px 16px; margin-bottom:14px;">
-      <div class="section-label" style="margin:0 0 8px;">Revenue Trend — Actual vs Forecast (7 months)</div>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
-        <div>
-          <div class="muted" style="font-size:12px; margin-bottom:4px;">Shopify</div>
-          <div style="height:160px;"><canvas id="revenue-trend-shopify"></canvas></div>
-        </div>
-        <div>
-          <div class="muted" style="font-size:12px; margin-bottom:4px;">Amazon</div>
-          <div style="height:160px;"><canvas id="revenue-trend-amazon"></canvas></div>
-        </div>
-      </div>
+    <div class="card" style="padding:14px 16px; margin-bottom:12px;">
+      <div class="section-label" style="margin:0 0 2px;">Revenue by Channel — next 6 months</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">${editable ? 'Click a month to edit this scenario\'s forecast.' : 'Switch to a draft scenario to edit.'}</div>
+      <div style="height:170px; margin-bottom:10px;"><canvas id="revenue-channel-chart"></canvas></div>
+      ${channelRow('shopify', 'Shopify')}
+      ${channelRow('amazon', 'Amazon')}
     </div>
 
-    <div class="card" style="padding:14px 16px; margin-bottom:14px;">
-      <div class="section-label" style="margin:0 0 4px;">Forecasted Product Mix</div>
-      <div class="muted" style="font-size:12px; margin-bottom:8px;">Answers: is the mix of products we're selling in line with how we forecasted it? Shows the forecast assumption per product (revenue_pct) and what that implies for ${monthLabel}'s dollars/units at the current channel forecast.</div>
+    <div class="card" style="padding:14px 16px; margin-bottom:12px;">
+      <div class="section-label" style="margin:0 0 2px;">Product Mix Evolution</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">How each product's share of channel revenue is modeled to shift over the next 6 months. ${editable ? 'Click a product below to edit its monthly share.' : 'Switch to a draft scenario to edit.'}</div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
         <div>
-          <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Shopify</div>
-          ${kpiTable(['Product', 'Rev Share', 'ASP', `${monthLabel} $`, 'Implied Units'], mixRows('shopify'))}
+          <div style="font-weight:600; font-size:12px; margin-bottom:4px;">Shopify</div>
+          <div style="height:180px;"><canvas id="mix-chart-shopify"></canvas></div>
+          <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">${mixLegendButtons('shopify')}</div>
         </div>
         <div>
-          <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Amazon</div>
-          ${kpiTable(['Product', 'Rev Share', 'ASP', `${monthLabel} $`, 'Implied Units'], mixRows('amazon'))}
+          <div style="font-weight:600; font-size:12px; margin-bottom:4px;">Amazon</div>
+          <div style="height:180px;"><canvas id="mix-chart-amazon"></canvas></div>
+          <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">${mixLegendButtons('amazon')}</div>
         </div>
-      </div>
-      <div class="muted" style="font-size:11px; margin-top:10px; line-height:1.5;">
-        These are the <em>forecasted</em> shares used to drive demand projections (products.forecast_params). Validating them against <em>actual</em> per-SKU sales mix requires a Shopify bulk line-item pull that's currently a manual step (see revenue_pct_audit.py) — not yet wired into the daily pipeline. Last manual audit (2026-10-21): no SKU off by more than 2.0 percentage points.
       </div>
     </div>
 
     <div class="card" style="padding:14px 16px;">
-      <div class="section-label" style="margin:0 0 4px;">Does the mix call for new POs or components?</div>
-      <div class="muted" style="font-size:12px; margin-bottom:8px;">That logic already lives in the Overview tab's Agentic Recommendations — they're driven directly by these same revenue_pct assumptions, so any mix-driven shortfall shows up there automatically.</div>
-      <button class="btn btn-primary" onclick="document.querySelector('.tab-btn[data-tab=\\'overview\\']').click()">Go to Agentic Recommendations</button>
+      <div class="section-label" style="margin:0 0 2px;">Projected Impact — this scenario vs. live forecast</div>
+      <div class="muted" style="font-size:11px; margin-bottom:10px;">Projected end-of-month inventory per product, using the same channel-revenue × mix-share ÷ ASP math as the demand engine (bundle expansion omitted from this fast preview). Shows whether this scenario pushes a safety-stock breach earlier, later, or avoids/introduces one entirely.</div>
+      <div class="kpi-grid">${impactCards}</div>
     </div>
   `;
 
-  ['shopify', 'amazon'].forEach(channel => {
-    const canvas = document.getElementById(`revenue-trend-${channel}`);
-    if (!canvas) return;
-    new Chart(canvas, {
-      type: 'bar',
+  renderRevenueCharts(projection, liveProjection);
+}
+
+function renderRevenueCharts(projection, liveProjection) {
+  const S = window._revState;
+  const months = S.months;
+  const labels = months.map(monthLabelShort);
+
+  const chanCanvas = document.getElementById('revenue-channel-chart');
+  if (chanCanvas) {
+    new Chart(chanCanvas, {
       data: {
-        labels: months.map(m => new Date(m + '-02').toLocaleString('en-US', { month: 'short', year: '2-digit' })),
+        labels,
         datasets: [
-          {
-            label: 'Actual', type: 'bar',
-            data: months.map(m => (monthlyActual[m] || {})[channel] || null),
-            backgroundColor: '#C9A876',
-          },
-          {
-            label: 'Forecast', type: 'line',
-            data: months.map(m => (monthlyForecast[m] || {})[channel] ?? null),
-            borderColor: '#8A7257', borderWidth: 2, pointRadius: 3, tension: 0.2, fill: false,
-          },
+          { label: 'Shopify', type: 'bar', data: months.map(m => S.draftChannel[m]?.shopify ?? null), backgroundColor: '#C9A876' },
+          { label: 'Amazon', type: 'bar', data: months.map(m => S.draftChannel[m]?.amazon ?? null), backgroundColor: '#8A7257' },
         ],
       },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
-        scales: { y: { ticks: { callback: (v) => '$' + (v / 1000) + 'k', font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } },
+        scales: { y: { ticks: { callback: v => '$' + (v / 1000) + 'k', font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } },
+      },
+    });
+  }
+
+  const palette = ['#C9A876', '#8A7257', '#A3B18A', '#588157', '#BC6C25', '#606C38', '#DDA15E', '#283618'];
+  ['shopify', 'amazon'].forEach(channel => {
+    const canvas = document.getElementById(`mix-chart-${channel}`);
+    if (!canvas) return;
+    const prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id])
+      .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
+    new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: prods.map((p, i) => ({
+          label: p.display_name,
+          data: months.map(m => ((S.draftMix[channel][p.product_id]?.[m]?.revenue_pct || 0) * 100)),
+          backgroundColor: palette[i % palette.length],
+        })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { stacked: true, ticks: { font: { size: 10 } } },
+          y: { stacked: true, max: 100, ticks: { callback: v => v + '%', font: { size: 10 } } },
+        },
       },
     });
   });
-}
 
-function showRevenueFormula(channel) {
-  const body = `
-    <div style="line-height:1.6;">
-      <div style="margin-bottom:10px;"><strong>Pacing %</strong> = MTD actual gross revenue ÷ this month's full forecast.</div>
-      <div style="margin-bottom:10px;"><strong>Ahead/behind pace</strong> = MTD actual ÷ (full-month forecast ÷ days in month × days elapsed so far). This is the fairer comparison mid-month — a flat % of the monthly goal always looks "behind" in the first half of the month even if sales are right on schedule.</div>
-      <div><strong>Per-product demand</strong> = channel revenue forecast × that product's revenue_pct share ÷ its average selling price = units expected to sell. This is the same number that drives the Overview tab's shortfall/PO recommendations.</div>
-    </div>
-  `;
-  showDetail(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} — How These Numbers Are Calculated`, body);
+  S.products.forEach(p => {
+    const canvas = document.getElementById(`impact-spark-${p.product_id}`);
+    if (!canvas) return;
+    new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { data: liveProjection[p.sku_code] || [], borderColor: '#B7B0A6', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false, borderDash: [4, 3] },
+          { data: projection[p.sku_code] || [], borderColor: '#8A7257', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: true } },
+        scales: { x: { display: false }, y: { display: false } },
+      },
+    });
+  });
 }
 
 // ---------- Inventory ----------
