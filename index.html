@@ -343,13 +343,19 @@ function showRecommendationDetail(recId) {
   showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, body);
 }
 
-function kpiTable(headers, rows, wrapIdx) {
+function kpiTable(headers, rows, wrapIdx, colWidths) {
   if (rows.length === 0) return '<div class="muted">Nothing here right now.</div>';
   const idx = wrapIdx != null ? wrapIdx : headers.length - 1;
+  const colgroup = colWidths ? `<colgroup>${colWidths.map(w => `<col style="width:${w || 'auto'};">`).join('')}</colgroup>` : '';
+  const cellStyle = (ci) => {
+    if (colWidths && colWidths[ci]) return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:normal; word-break:break-word;`;
+    return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:${ci === idx ? 'normal' : 'nowrap'}; ${ci === idx ? 'min-width:380px;' : ''}`;
+  };
   return `
-    <table style="width:100%; font-size:13px; border-collapse:collapse;">
+    <table style="width:100%; font-size:13px; border-collapse:collapse; table-layout:${colWidths ? 'fixed' : 'auto'};">
+      ${colgroup}
       <thead><tr>${headers.map(h => `<th style="padding:8px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)'};">${r.map((c, ci) => `<td style="padding:8px 10px; border-bottom:1px solid var(--border); white-space:${ci === idx ? 'normal' : 'nowrap'}; ${ci === idx ? 'min-width:380px;' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody>
+      <tbody>${rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)'};">${r.map((c, ci) => `<td style="${cellStyle(ci)}">${c}</td>`).join('')}</tr>`).join('')}</tbody>
     </table>
   `;
 }
@@ -375,7 +381,11 @@ function showOverdueKpiDetail() {
     buildActionDetail(o),
     `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
   ]);
-  showDetail('Overdue Orders', kpiTable(['Product', 'PO #', 'Qty', 'ETA', 'Why It\'s Overdue', ''], rows, 4), 'wide');
+  showDetail('Overdue Orders', kpiTable(
+    ['Product', 'PO #', 'Qty', 'ETA', "Why It's Overdue", ''],
+    rows, 4,
+    ['110px', '90px', '55px', '75px', null, '120px']
+  ), 'wide');
 }
 
 function showContactsKpiDetail() {
