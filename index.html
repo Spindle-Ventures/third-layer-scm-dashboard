@@ -217,18 +217,21 @@ function fmtMoney2(n) { return '$' + Number(n || 0).toLocaleString('en-US', { mi
 // ---------- Overview ----------
 async function renderOverview() {
   const el = document.getElementById('tab-overview');
-  const [{ data: recs }, { data: products }, { data: pos }] = await Promise.all([
+  const [{ data: recs }, { data: pos }, { data: openOrders }, { data: qcRuns }] = await Promise.all([
     sb.from('agent_recommendations').select('*, products(sku_code, display_name)').neq('decision', 'dismissed').order('days_until_deadline', { ascending: true }),
-    sb.from('product_qoh').select('*'),
     sb.from('purchase_orders').select('*').in('status', ['draft', 'pending_approval', 'approved', 'placed', 'in_transit']),
+    sb.from('open_orders_by_product').select('*'),
+    sb.from('qc_runs').select('*').order('run_at', { ascending: false }).limit(1),
   ]);
 
   const activeRecs = (recs || []).filter(r => r.urgency !== 'OK');
   const criticalCount = activeRecs.filter(r => r.urgency === 'CRITICAL').length;
-  const totalCashAtRisk = (recs || []).reduce((s, r) => s + Number(r.cash_at_risk || 0), 0);
+  const openComponentryCount = (openOrders || []).filter(o => o.order_type === 'componentry').length;
+  const lastQc = (qcRuns && qcRuns[0]) || null;
+  const needsActionCount = (openOrders || []).filter(o => o.action_needed !== 'On track — no action needed').length;
 
   el.innerHTML = `
-    <div class="section-label">Needs Your Attention</div>
+    <div class="section-label">At a Glance</div>
     <div class="kpi-grid">
       <div class="card kpi-card">
         <div class="kpi-label">Open Recommendations</div>
@@ -236,20 +239,28 @@ async function renderOverview() {
         <div class="pill ${criticalCount > 0 ? 'bad' : 'good'}">${criticalCount} critical</div>
       </div>
       <div class="card kpi-card">
-        <div class="kpi-label">Cash at Risk (shortfalls)</div>
-        <div class="kpi-value">${fmtMoney(totalCashAtRisk)}</div>
-        <div class="muted" style="font-size:12px;">across all open recommendations</div>
-      </div>
-      <div class="card kpi-card">
         <div class="kpi-label">Open Purchase Orders</div>
         <div class="kpi-value">${(pos || []).length}</div>
         <div class="muted" style="font-size:12px;">draft → in transit</div>
       </div>
       <div class="card kpi-card">
-        <div class="kpi-label">Products Tracked</div>
-        <div class="kpi-value">${(products || []).length}</div>
-        <div class="muted" style="font-size:12px;">active root SKUs</div>
+        <div class="kpi-label">Open Componentry Orders</div>
+        <div class="kpi-value">${openComponentryCount}</div>
+        <div class="muted" style="font-size:12px;">not yet landed</div>
       </div>
+      <div class="card kpi-card">
+        <div class="kpi-label">Data Last Updated</div>
+        <div class="kpi-value" style="font-size:18px;">${lastQc ? new Date(lastQc.run_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}</div>
+        <div class="pill ${lastQc && lastQc.all_clear ? 'good' : 'bad'}">${lastQc ? (lastQc.all_clear ? 'QC: all clear' : 'QC: discrepancy found') : 'no QC run yet'}</div>
+      </div>
+    </div>
+
+    <div class="section-label">Open Orders by Product — ${needsActionCount} need attention</div>
+    <div class="card" style="padding:0; margin-bottom:24px;">
+      <table>
+        <thead><tr><th>Product</th><th>Type</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Action Needed</th></tr></thead>
+        <tbody id="open-orders-body"></tbody>
+      </table>
     </div>
 
     <div class="section-label">Agentic Recommendations — Validate or Dismiss</div>
@@ -260,6 +271,27 @@ async function renderOverview() {
       </table>
     </div>
   `;
+
+  const ooBody = document.getElementById('open-orders-body');
+  if (!openOrders || openOrders.length === 0) {
+    ooBody.innerHTML = `<tr><td colspan="9" class="empty-state">No open orders.</td></tr>`;
+  } else {
+    ooBody.innerHTML = openOrders.map(o => {
+      const needsAction = o.action_needed !== 'On track — no action needed';
+      return `
+      <tr>
+        <td><strong>${o.product_sku}</strong><br><span class="muted" style="font-size:12px;">${o.product_name}</span></td>
+        <td><span class="pill watch">${o.order_type === 'componentry' ? o.component_name || 'componentry' : 'finished good'}</span></td>
+        <td>${o.vendor_name || '—'}</td>
+        <td>${o.qty ?? '—'}</td>
+        <td>${o.eta || '—'}</td>
+        <td>${o.tracking_info || '—'}</td>
+        <td>${o.last_contacted || '—'}</td>
+        <td>${o.next_contact || '—'}</td>
+        <td><span class="pill ${needsAction ? (o.action_needed.startsWith('OVERDUE') ? 'bad' : 'watch') : 'good'}">${o.action_needed}</span></td>
+      </tr>
+    `}).join('');
+  }
 
   const body = document.getElementById('overview-recs-body');
   if (!recs || recs.length === 0) {
