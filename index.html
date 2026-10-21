@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Third Layer · Supply Chain Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #F2EFE9;
+    --card: #FFFFFF;
+    --ink: #2C2A26;
+    --muted: #8C867D;
+    --border: #E5E0D8;
+    --accent: #5C4A36;
+    --accent-light: #8A7257;
+    --good-bg: #E5EEE0;
+    --good-text: #3F6B35;
+    --bad-bg: #F3E2E0;
+    --bad-text: #A33B2E;
+    --watch-bg: #FBF0DD;
+    --watch-text: #96631A;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: 'Inter', -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .serif { font-family: 'Playfair Display', serif; }
+  header {
+    padding: 28px 40px 0 40px;
+  }
+  .brand { font-size: 13px; font-weight: 700; letter-spacing: 0.12em; color: var(--ink); }
+  h1.title { font-size: 32px; font-weight: 600; margin: 4px 0 2px 0; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 18px; }
+  .top-row { display: flex; justify-content: space-between; align-items: flex-start; }
+  .snapshot-pill {
+    background: var(--card); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; font-size: 12px; color: var(--muted);
+  }
+  nav.tabs {
+    display: flex; gap: 28px; border-bottom: 1px solid var(--border);
+    padding: 0 40px; margin-top: 10px;
+  }
+  nav.tabs button {
+    background: none; border: none; font-family: 'Inter'; font-size: 14px; font-weight: 500;
+    color: var(--muted); padding: 12px 0; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  nav.tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
+  main { padding: 28px 40px 60px 40px; max-width: 1400px; margin: 0 auto; }
+  .section-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--muted);
+    margin: 28px 0 10px 0; text-transform: uppercase;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px;
+  }
+  .kpi-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;
+  }
+  .kpi-card { display: flex; flex-direction: column; gap: 6px; }
+  .kpi-label { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .kpi-value { font-size: 28px; font-weight: 700; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600;
+    padding: 3px 9px; border-radius: 999px; width: fit-content;
+  }
+  .pill.good { background: var(--good-bg); color: var(--good-text); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad-text); }
+  .pill.watch { background: var(--watch-bg); color: var(--watch-text); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.04em; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  td { padding: 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  .urgency-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; letter-spacing: 0.03em; }
+  .urgency-CRITICAL { background: var(--bad-bg); color: var(--bad-text); }
+  .urgency-WARNING { background: var(--watch-bg); color: var(--watch-text); }
+  .urgency-WATCH { background: #EFEAE2; color: var(--accent-light); }
+  .urgency-OK { background: var(--good-bg); color: var(--good-text); }
+  .btn {
+    font-family: 'Inter'; font-size: 13px; font-weight: 600; padding: 7px 14px;
+    border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+    cursor: pointer; color: var(--ink);
+  }
+  .btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn-primary:hover { background: #4a3c2c; }
+  .btn-ghost:hover { background: #F7F4EE; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .login-wrap {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+  }
+  .login-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 40px; width: 360px; text-align: center; }
+  input[type=email] {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    font-family: 'Inter'; font-size: 14px; margin: 14px 0; box-sizing: border-box;
+  }
+  .muted { color: var(--muted); font-size: 13px; }
+  .sparkline-wrap { width: 100%; height: 36px; margin-top: 6px; }
+  .hidden { display: none !important; }
+  .role-badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 3px 9px; border-radius: 999px; }
+  .top-actions { display: flex; align-items: center; gap: 10px; }
+  .empty-state { color: var(--muted); font-size: 14px; padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="brand">THIRD LAYER</div>
+    <h1 class="title" style="font-size:22px;">Supply Chain Manager</h1>
+    <p class="muted">Sign in with your @spindle.ventures email — you'll get a magic link, no password needed.</p>
+    <input type="email" id="login-email" placeholder="you@spindle.ventures" />
+    <button class="btn btn-primary" style="width:100%;" onclick="sendMagicLink()">Send magic link</button>
+    <p class="muted" id="login-status" style="margin-top:14px;"></p>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+<header>
+  <div class="top-row">
+    <div>
+      <div class="brand">THIRD LAYER</div>
+      <h1 class="title serif">Supply Chain Manager</h1>
+      <div class="subtitle" id="subtitle-date"></div>
+    </div>
+    <div class="top-actions">
+      <span class="role-badge" id="user-badge"></span>
+      <span class="snapshot-pill" id="snapshot-pill">Loading…</span>
+      <button class="btn btn-ghost" onclick="signOut()">Sign out</button>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="inventory">Inventory</button>
+    <button class="tab-btn" data-tab="pos">Purchase Orders</button>
+    <button class="tab-btn" data-tab="vendors">Vendors &amp; Comms</button>
+  </nav>
+</header>
+
+<main>
+  <div id="tab-overview" class="tab-panel"></div>
+  <div id="tab-inventory" class="tab-panel hidden"></div>
+  <div id="tab-pos" class="tab-panel hidden"></div>
+  <div id="tab-vendors" class="tab-panel hidden"></div>
+</main>
+</div>
+
+<script>
+// ---- Config: fill in your Supabase project URL + anon (public) key ----
+const SUPABASE_URL = "https://rvbferpfrgkayxuujpna.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ2YmZlcnBmcmdrYXl4dXVqcG5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1MDc2NjUsImV4cCI6MjEwODA4MzY2NX0._UNtJphO40WvJfoDqQ612Vi1Wx78D2S6FVl2-VMt76w";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentUserRow = null;
+
+// ---------- Auth ----------
+async function sendMagicLink() {
+  const email = document.getElementById('login-email').value.trim();
+  const statusEl = document.getElementById('login-status');
+  if (!email) { statusEl.textContent = 'Enter an email address.'; return; }
+  statusEl.textContent = 'Sending…';
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+  statusEl.textContent = error ? ('Error: ' + error.message) : 'Check your email for a sign-in link.';
+}
+
+async function signOut() {
+  await sb.auth.signOut();
+  window.location.reload();
+}
+
+async function checkSession() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    await loadApp(session);
+  } else {
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('app').classList.add('hidden');
+  }
+}
+
+async function loadApp(session) {
+  const { data: userRow, error } = await sb.from('users').select('*').eq('auth_user_id', session.user.id).single();
+  if (error || !userRow) {
+    document.getElementById('login-status').textContent = 'Signed in, but no matching user record found — ask an admin to grant access.';
+    document.getElementById('login-screen').classList.remove('hidden');
+    return;
+  }
+  currentUserRow = userRow;
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('user-badge').textContent = `${userRow.display_name || userRow.email} · ${userRow.role}`;
+  document.getElementById('subtitle-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  document.getElementById('snapshot-pill').textContent = 'Snapshot · updated on page load';
+
+  await Promise.all([renderOverview(), renderInventory(), renderPOs(), renderVendors()]);
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+  });
+});
+
+function fmtMoney(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
+function fmtMoney2(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+// ---------- Overview ----------
+async function renderOverview() {
+  const el = document.getElementById('tab-overview');
+  const [{ data: recs }, { data: products }, { data: pos }] = await Promise.all([
+    sb.from('agent_recommendations').select('*, products(sku_code, display_name)').neq('decision', 'dismissed').order('days_until_deadline', { ascending: true }),
+    sb.from('product_qoh').select('*'),
+    sb.from('purchase_orders').select('*').in('status', ['draft', 'pending_approval', 'approved', 'placed', 'in_transit']),
+  ]);
+
+  const activeRecs = (recs || []).filter(r => r.urgency !== 'OK');
+  const criticalCount = activeRecs.filter(r => r.urgency === 'CRITICAL').length;
+  const totalCashAtRisk = (recs || []).reduce((s, r) => s + Number(r.cash_at_risk || 0), 0);
+
+  el.innerHTML = `
+    <div class="section-label">Needs Your Attention</div>
+    <div class="kpi-grid">
+      <div class="card kpi-card">
+        <div class="kpi-label">Open Recommendations</div>
+        <div class="kpi-value">${activeRecs.length}</div>
+        <div class="pill ${criticalCount > 0 ? 'bad' : 'good'}">${criticalCount} critical</div>
+      </div>
+      <div class="card kpi-card">
+        <div class="kpi-label">Cash at Risk (shortfalls)</div>
+        <div class="kpi-value">${fmtMoney(totalCashAtRisk)}</div>
+        <div class="muted" style="font-size:12px;">across all open recommendations</div>
+      </div>
+      <div class="card kpi-card">
+        <div class="kpi-label">Open Purchase Orders</div>
+        <div class="kpi-value">${(pos || []).length}</div>
+        <div class="muted" style="font-size:12px;">draft → in transit</div>
+      </div>
+      <div class="card kpi-card">
+        <div class="kpi-label">Products Tracked</div>
+        <div class="kpi-value">${(products || []).length}</div>
+        <div class="muted" style="font-size:12px;">active root SKUs</div>
+      </div>
+    </div>
+
+    <div class="section-label">Agentic Recommendations — Validate or Dismiss</div>
+    <div class="card" style="padding:0;">
+      <table>
+        <thead><tr><th>SKU</th><th>Urgency</th><th>Shortfall</th><th>Deadline</th><th>Cash at Risk</th><th>Decision</th><th></th></tr></thead>
+        <tbody id="overview-recs-body"></tbody>
+      </table>
+    </div>
+  `;
+
+  const body = document.getElementById('overview-recs-body');
+  if (!recs || recs.length === 0) {
+    body.innerHTML = `<tr><td colspan="7" class="empty-state">No open recommendations — nothing needs a decision today.</td></tr>`;
+  } else {
+    body.innerHTML = recs.map(r => `
+      <tr>
+        <td><strong>${r.products.sku_code}</strong><br><span class="muted" style="font-size:12px;">${r.products.display_name}</span></td>
+        <td><span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span></td>
+        <td>${r.shortfall_qty} units<br><span class="muted" style="font-size:12px;">by ${r.shortfall_month}</span></td>
+        <td>${r.last_responsible_date}<br><span class="muted" style="font-size:12px;">${r.days_until_deadline < 0 ? 'OVERDUE ' + (-r.days_until_deadline) + 'd' : r.days_until_deadline + ' days left'}</span></td>
+        <td>${fmtMoney2(r.cash_at_risk)}</td>
+        <td><span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}">${r.decision}</span></td>
+        <td>
+          ${canEdit() ? `
+            <button class="btn btn-primary" style="margin-right:6px;" onclick="decideRecommendation('${r.id}','approved')" ${r.decision === 'approved' ? 'disabled' : ''}>Approve</button>
+            <button class="btn btn-ghost" onclick="decideRecommendation('${r.id}','dismissed')" ${r.decision === 'dismissed' ? 'disabled' : ''}>Dismiss</button>
+          ` : '<span class="muted" style="font-size:12px;">view only</span>'}
+        </td>
+      </tr>
+    `).join('');
+  }
+}
+
+function canEdit() {
+  return currentUserRow && (currentUserRow.role === 'editor' || currentUserRow.role === 'admin');
+}
+function canDelete() {
+  return currentUserRow && currentUserRow.role === 'admin';
+}
+
+async function decideRecommendation(id, decision) {
+  const { error } = await sb.from('agent_recommendations').update({
+    decision, decided_by: currentUserRow.display_name || currentUserRow.email, decided_at: new Date().toISOString()
+  }).eq('id', id);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+
+// ---------- Inventory ----------
+async function renderInventory() {
+  const el = document.getElementById('tab-inventory');
+  const { data: products } = await sb.from('product_qoh').select('*').order('sku_code');
+  const { data: projections } = await sb.from('monthly_projections').select('*').order('projection_month');
+
+  el.innerHTML = `
+    <div class="section-label">Finished Goods — Quantity on Hand &amp; Safety Stock</div>
+    <div class="kpi-grid" id="inventory-cards"></div>
+  `;
+  const cardsEl = document.getElementById('inventory-cards');
+  cardsEl.innerHTML = (products || []).map(p => {
+    const projRows = (projections || []).filter(m => m.product_id === p.product_id).sort((a, b) => a.projection_month.localeCompare(b.projection_month));
+    const belowSafety = p.qty_on_hand < p.safety_stock_qty;
+    const canvasId = 'spark-' + p.product_id;
+    return `
+      <div class="card kpi-card">
+        <div class="kpi-label">${p.sku_code} — ${p.display_name}</div>
+        <div class="kpi-value">${p.qty_on_hand.toLocaleString()}</div>
+        <div class="pill ${belowSafety ? 'bad' : 'good'}">safety stock ${p.safety_stock_qty.toLocaleString()}</div>
+        <div class="sparkline-wrap"><canvas id="${canvasId}"></canvas></div>
+      </div>
+    `;
+  }).join('') || `<div class="empty-state">No products found.</div>`;
+
+  (products || []).forEach(p => {
+    const projRows = (projections || []).filter(m => m.product_id === p.product_id).sort((a, b) => a.projection_month.localeCompare(b.projection_month));
+    const canvas = document.getElementById('spark-' + p.product_id);
+    if (!canvas || projRows.length === 0) return;
+    new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: projRows.map(r => r.projection_month),
+        datasets: [{
+          data: projRows.map(r => r.eom_inventory),
+          borderColor: '#8A7257', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: true } },
+        scales: { x: { display: false }, y: { display: false } }
+      }
+    });
+  });
+}
+
+// ---------- Purchase Orders ----------
+async function renderPOs() {
+  const el = document.getElementById('tab-pos');
+  const { data: pos } = await sb.from('purchase_orders').select('*, vendors(vendor_name)').order('created_at', { ascending: false });
+
+  el.innerHTML = `
+    <div class="section-label">Purchase Orders</div>
+    <div class="card" style="padding:0;">
+      <table>
+        <thead><tr><th>Ref</th><th>Vendor</th><th>Status</th><th>Qty</th><th>Total Cost</th><th>ETA</th><th></th></tr></thead>
+        <tbody id="pos-body"></tbody>
+      </table>
+    </div>
+  `;
+  const body = document.getElementById('pos-body');
+  if (!pos || pos.length === 0) {
+    body.innerHTML = `<tr><td colspan="7" class="empty-state">No purchase orders yet.</td></tr>`;
+    return;
+  }
+  body.innerHTML = pos.map(po => `
+    <tr>
+      <td><strong>${po.internal_ref}</strong>${po.vendor_po_number ? `<br><span class="muted" style="font-size:12px;">vendor#: ${po.vendor_po_number}</span>` : ''}</td>
+      <td>${po.vendors ? po.vendors.vendor_name : '—'}</td>
+      <td><span class="pill watch">${po.status}</span></td>
+      <td>${po.qty_ordered ?? '—'}</td>
+      <td>${po.total_cost ? fmtMoney2(po.total_cost) : '—'}</td>
+      <td>${po.eta_date || '—'}</td>
+      <td>
+        ${canEdit() && po.status === 'draft' ? `<button class="btn btn-primary" onclick="approvePO('${po.id}')">Approve</button>` : ''}
+        ${canDelete() ? `<button class="btn btn-ghost" onclick="cancelPO('${po.id}')" style="margin-left:6px;">Cancel</button>` : ''}
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function approvePO(id) {
+  const { error } = await sb.from('purchase_orders').update({ status: 'approved', approved_by: currentUserRow.display_name || currentUserRow.email }).eq('id', id);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderPOs();
+}
+async function cancelPO(id) {
+  if (!confirm('Cancel this PO?')) return;
+  const { error } = await sb.from('purchase_orders').update({ status: 'cancelled' }).eq('id', id);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderPOs();
+}
+
+// ---------- Vendors & Comms ----------
+async function renderVendors() {
+  const el = document.getElementById('tab-vendors');
+  const { data: vendors } = await sb.from('vendors').select('*').order('vendor_name');
+  const { data: ledger } = await sb.from('inventory_ledger').select('*, components(component_name), vendors(vendor_name)').eq('event_type', 'component_order').eq('landed', false).order('next_contact');
+
+  el.innerHTML = `
+    <div class="section-label">Vendors</div>
+    <div class="card" style="padding:0; margin-bottom:24px;">
+      <table>
+        <thead><tr><th>Vendor</th><th>Contact</th><th>Lead Time</th><th>Cadence</th><th>Channel</th></tr></thead>
+        <tbody>
+          ${(vendors || []).map(v => `
+            <tr>
+              <td><strong>${v.vendor_name}</strong></td>
+              <td>${v.contact_name || '—'}<br><span class="muted" style="font-size:12px;">${v.contact_email || 'no email on file'}</span></td>
+              <td>${v.default_lead_days} days</td>
+              <td>every ${v.default_cadence_days} days</td>
+              <td><span class="pill watch">${v.preferred_contact_channel}</span></td>
+            </tr>
+          `).join('') || `<tr><td colspan="5" class="empty-state">No vendors found.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-label">Planned Actions &amp; Comms — In-Flight Component Orders</div>
+    <div class="card" style="padding:0;">
+      <table>
+        <thead><tr><th>Component</th><th>Vendor</th><th>ETA</th><th>Next Contact</th><th>Status</th></tr></thead>
+        <tbody>
+          ${(ledger || []).map(l => {
+            const overdue = l.next_contact && new Date(l.next_contact) < new Date();
+            return `
+            <tr>
+              <td>${l.components ? l.components.component_name : '—'}</td>
+              <td>${l.vendors ? l.vendors.vendor_name : '—'}</td>
+              <td>${l.eta || '—'}</td>
+              <td>${l.next_contact || '—'}</td>
+              <td><span class="pill ${overdue ? 'bad' : 'good'}">${overdue ? 'overdue for contact' : 'on track'}</span></td>
+            </tr>
+          `}).join('') || `<tr><td colspan="5" class="empty-state">No in-flight component orders.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ---------- Boot ----------
+sb.auth.onAuthStateChange((event, session) => { if (session) loadApp(session); });
+checkSession();
+</script>
+</body>
+</html>
