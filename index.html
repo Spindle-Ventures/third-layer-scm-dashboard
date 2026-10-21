@@ -867,7 +867,6 @@ function showPoNumberDetail(ledgerId) {
   const body = `
     <div style="margin-bottom:12px;">${value ? `Order #: <strong>${value}</strong>` : 'No order number on file for this order yet.'}</div>
     ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editPoNumber('${ledgerId}')">${value ? 'Edit' : 'Add'} Order #</button>` : ''}
-    <button class="btn btn-ghost" style="margin-left:8px;" onclick="scrollToOrderRow('${ledgerId}')">Take me there</button>
   `;
   showDetail(`${o.product_name} — Order #`, body);
 }
@@ -879,7 +878,6 @@ function showTrackingDetail(ledgerId) {
   const body = `
     <div style="margin-bottom:12px;">${value ? `Tracking: <strong>${value}</strong>` : 'No tracking info on file for this order yet.'}</div>
     ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editTracking('${ledgerId}')">${value ? 'Edit' : 'Add'} Tracking</button>` : ''}
-    <button class="btn btn-ghost" style="margin-left:8px;" onclick="scrollToOrderRow('${ledgerId}')">Take me there</button>
   `;
   showDetail(`${o.product_name} — Tracking`, body);
 }
