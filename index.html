@@ -113,8 +113,8 @@
     justify-content: center; z-index: 1000;
   }
   .detail-modal {
-    background: var(--card); border-radius: 14px; padding: 22px 26px; max-width: 400px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    background: var(--card); border-radius: 14px; padding: 22px 26px; max-width: 640px;
+    max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
   }
 </style>
 </head>
@@ -226,7 +226,7 @@ function fmtMoney2(n) { return '$' + Number(n || 0).toLocaleString('en-US', { mi
 function fmtDate(d) {
   if (!d) return '—';
   const [y, m, day] = d.split('-');
-  return `${m}-${day}-${y}`;
+  return `${m}/${day}/${y}`;
 }
 function fmtDateTime(ts) {
   const dt = new Date(ts);
@@ -234,16 +234,16 @@ function fmtDateTime(ts) {
   const dd = String(dt.getDate()).padStart(2, '0');
   const yyyy = dt.getFullYear();
   const time = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  return `${mm}-${dd}-${yyyy} ${time}`;
+  return `${mm}/${dd}/${yyyy} ${time}`;
 }
-// Prompts the user for a date in MM-DD-YYYY (matching Alex's display-format requirement) and
+// Prompts the user for a date in MM/DD/YYYY (matching Alex's display-format requirement) and
 // converts it to the ISO YYYY-MM-DD format Postgres date columns need internally.
 function promptDateMMDDYYYY(message, currentIso) {
   const defaultVal = currentIso ? fmtDate(currentIso) : '';
-  const input = prompt(`${message} (MM-DD-YYYY):`, defaultVal);
+  const input = prompt(`${message} (MM/DD/YYYY):`, defaultVal);
   if (!input) return null;
-  const match = input.trim().match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
-  if (!match) { alert('Please enter a date as MM-DD-YYYY, e.g. 11-30-2026.'); return null; }
+  const match = input.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) { alert('Please enter a date as MM/DD/YYYY, e.g. 11/30/2026.'); return null; }
   const [, mm, dd, yyyy] = match;
   return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
 }
@@ -316,6 +316,77 @@ function showRecommendationDetail(recId) {
   showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, buildRecommendationNarrative(r));
 }
 
+function kpiTable(headers, rows) {
+  if (rows.length === 0) return '<div class="muted">Nothing here right now.</div>';
+  return `
+    <table style="width:100%; font-size:13px;">
+      <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table>
+  `;
+}
+
+function showRecsKpiDetail() {
+  const { activeRecs } = window._kpiContext || { activeRecs: [] };
+  const rows = activeRecs.map(r => [
+    r.products.display_name,
+    `<span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span>`,
+    PROBLEM_LABELS[r.problem_type] || r.problem_type,
+    r.decision,
+  ]);
+  showDetail('Open Recommendations', kpiTable(['Product', 'Urgency', 'Problem', 'Decision'], rows));
+}
+
+function showOverdueKpiDetail() {
+  const { overdueOrders } = window._kpiContext || { overdueOrders: [] };
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = overdueOrders.map(o => [
+    o.product_name,
+    o.vendor_name || '—',
+    o.qty ?? '—',
+    fmtDate(o.eta),
+    Math.round((new Date(today) - new Date(o.eta)) / 86400000),
+    o.internal_ref || o.vendor_po_number || '—',
+  ]);
+  showDetail('Overdue Orders', kpiTable(['Product', 'Vendor', 'Qty', 'ETA', 'Days Overdue', 'PO #'], rows));
+}
+
+function showContactsKpiDetail() {
+  const { contactsDueOrSoon } = window._kpiContext || { contactsDueOrSoon: [] };
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = contactsDueOrSoon
+    .slice()
+    .sort((a, b) => (a.next_contact || '').localeCompare(b.next_contact || ''))
+    .map(o => {
+      const overdue = o.next_contact < today;
+      const why = overdue
+        ? `Contact overdue — regarding ${o.order_type === 'componentry' ? (o.component_name || 'component') : 'finished good'} (ETA ${fmtDate(o.eta)})`
+        : `Scheduled check-in — regarding ${o.order_type === 'componentry' ? (o.component_name || 'component') : 'finished good'} (ETA ${fmtDate(o.eta)})`;
+      return [
+        o.vendor_name || '—',
+        o.product_name,
+        o.internal_ref || o.vendor_po_number || '—',
+        why,
+        `<span class="pill ${overdue ? 'bad' : 'watch'}">${fmtDate(o.next_contact)}</span>`,
+      ];
+    });
+  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'PO #', 'Why', 'Next Contact'], rows));
+}
+
+function showQcKpiDetail() {
+  const { lastQc } = window._kpiContext || { lastQc: null };
+  if (!lastQc) { showDetail('Data Last Updated', 'No QC run has been logged yet.'); return; }
+  const checks = lastQc.checks && lastQc.checks.length > 0
+    ? lastQc.checks
+    : (lastQc.failures || []).map(f => ({ check: f.check, passed: false, detail: f.detail }));
+  const rows = checks.map(c => [
+    c.check,
+    `<span class="pill ${c.passed ? 'good' : 'bad'}">${c.passed ? 'Pass' : 'Fail'}</span>`,
+    c.detail || '',
+  ]);
+  showDetail(`QC Run — ${fmtDateTime(lastQc.run_at)}`, kpiTable(['Check', 'Result', 'Detail'], rows));
+}
+
 // ---------- Overview ----------
 async function renderOverview() {
   const el = document.getElementById('tab-overview');
@@ -335,38 +406,47 @@ async function renderOverview() {
     window._invSnapshotBySku[sku][s.channel] = s.qty;
   });
 
+  const today = new Date().toISOString().slice(0, 10);
+  const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+
   const activeRecs = (recs || []).filter(r => r.urgency !== 'OK');
   const criticalCount = activeRecs.filter(r => r.urgency === 'CRITICAL').length;
-  const overdueCount = (openOrders || []).filter(o => o.action_needed === 'Overdue').length;
-  const contactDueCount = (openOrders || []).filter(o => o.action_needed === 'Contact Due').length;
+  const overdueOrders = (openOrders || []).filter(o => o.action_needed === 'Overdue');
+  const overdueCount = overdueOrders.length;
+  // "Vendor Contacts Due" = overdue contacts + anything coming up in the next 7 days, so Alex can
+  // see what communications are coming, not just what's already late.
+  const contactsDueOrSoon = (openOrders || []).filter(o => o.order_status !== 'paused' && o.next_contact && o.next_contact <= in7Days);
+  const contactDueCount = contactsDueOrSoon.length;
   const lastQc = (qcRuns && qcRuns[0]) || null;
   const needsActionCount = (openOrders || []).filter(o => o.action_needed !== 'On Track').length;
+
+  window._kpiContext = { activeRecs, overdueOrders, contactsDueOrSoon, lastQc };
 
   el.innerHTML = `
     <div class="section-label">At a Glance</div>
     <div class="kpi-grid">
-      <div class="card kpi-card">
+      <div class="card kpi-card clickable-pill" onclick="showRecsKpiDetail()">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <div class="kpi-label">Open Recommendations</div>
           <div class="kpi-value" style="font-size:20px;">${activeRecs.length}</div>
         </div>
         <div class="pill ${criticalCount > 0 ? 'bad' : 'good'}">${criticalCount} critical</div>
       </div>
-      <div class="card kpi-card">
+      <div class="card kpi-card clickable-pill" onclick="showOverdueKpiDetail()">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <div class="kpi-label">Overdue Orders</div>
           <div class="kpi-value" style="font-size:20px;">${overdueCount}</div>
         </div>
         <div class="pill ${overdueCount > 0 ? 'bad' : 'good'}">${overdueCount > 0 ? 'past ETA, not landed' : 'none overdue'}</div>
       </div>
-      <div class="card kpi-card">
+      <div class="card kpi-card clickable-pill" onclick="showContactsKpiDetail()">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <div class="kpi-label">Vendor Contacts Due</div>
           <div class="kpi-value" style="font-size:20px;">${contactDueCount}</div>
         </div>
-        <div class="pill ${contactDueCount > 0 ? 'watch' : 'good'}">${contactDueCount > 0 ? 'reach out now' : 'all current'}</div>
+        <div class="pill ${contactDueCount > 0 ? 'watch' : 'good'}">${contactDueCount > 0 ? 'due now or within 7 days' : 'none in next 7 days'}</div>
       </div>
-      <div class="card kpi-card">
+      <div class="card kpi-card clickable-pill" onclick="showQcKpiDetail()">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <div class="kpi-label">Data Last Updated</div>
           <div class="kpi-value" style="font-size:14px;">${lastQc ? fmtDateTime(lastQc.run_at) : '—'}</div>
@@ -513,22 +593,35 @@ function buildActionDetail(o) {
   const vendorLabel = o.vendor_name || 'the vendor';
   const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
 
+  const contactLine = (o.vendor_contact_name || o.vendor_contact_email)
+    ? `Contact: ${o.vendor_contact_name || ''}${o.vendor_contact_name && o.vendor_contact_email ? ' — ' : ''}${o.vendor_contact_email || ''}${o.vendor_contact_channel ? ` (prefers ${o.vendor_contact_channel})` : ''}.`
+    : '';
+  const placedLine = o.placed_date ? `Placed on ${fmtDate(o.placed_date)}.` : (o.order_type === 'finished_good' || o.po_id ? `No placed date on record yet.` : '');
+  const contentsLine = `Contains: ${o.qty ?? 'an unknown quantity of'} units of ${itemLabel}${o.po_status ? ` (PO status: ${o.po_status})` : ''}.`;
+  const notesLine = o.notes ? `Notes: ${o.notes}` : '';
+  const trailer = [placedLine, contentsLine, contactLine, notesLine].filter(Boolean).join(' ');
+
   if (o.order_status === 'paused') {
-    return `This order is paused — it will not generate overdue or contact alerts until you resume it.`;
+    return `This order is paused — it will not generate overdue or contact alerts until you resume it. ${trailer}`;
   }
   if (o.eta && o.eta < today && !o.landed) {
     const daysOverdue = daysBetween(o.eta, today);
-    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} were supposed to land on ${fmtDate(o.eta)}. As of today (${fmtDate(today)}), this is ${daysOverdue} day(s) overdue — confirm status with ${vendorLabel}.`;
+    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} were supposed to land on ${fmtDate(o.eta)}. As of today (${fmtDate(today)}), this is ${daysOverdue} day(s) overdue — confirm status with ${vendorLabel}. ${trailer}`;
   }
   if (o.next_contact && o.next_contact < today) {
     const daysOverdue = daysBetween(o.next_contact, today);
-    return `${vendorLabel} was due for a check-in on ${fmtDate(o.next_contact)} regarding ${itemLabel}${o.eta ? ` (ETA ${fmtDate(o.eta)})` : ''}. As of today (${fmtDate(today)}), this contact is ${daysOverdue} day(s) overdue — reach out now.`;
+    return `${vendorLabel} was due for a check-in on ${fmtDate(o.next_contact)} regarding ${itemLabel}${o.eta ? ` (ETA ${fmtDate(o.eta)})` : ''}. As of today (${fmtDate(today)}), this contact is ${daysOverdue} day(s) overdue — reach out now. ${trailer}`;
   }
   if (o.eta && daysBetween(today, o.eta) <= 14 && daysBetween(today, o.eta) >= 0) {
     const daysUntil = daysBetween(today, o.eta);
-    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are expected to land on ${fmtDate(o.eta)}, in ${daysUntil} day(s). Confirm shipment status and tracking with ${vendorLabel}.`;
+    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are expected to land on ${fmtDate(o.eta)}, in ${daysUntil} day(s). Confirm shipment status and tracking with ${vendorLabel}. ${trailer}`;
   }
-  return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are on track${o.eta ? `, expected ${fmtDate(o.eta)}` : ''}. No action needed.`;
+  // On Track: Alex wants this case specifically to summarize the last contact, its outcome, and
+  // the next scheduled contact, rather than just saying "no action needed."
+  const lastContactLine = o.last_contacted ? `Last contacted ${vendorLabel} on ${fmtDate(o.last_contacted)}.` : `No contact with ${vendorLabel} logged yet.`;
+  const summaryLine = o.notes ? `Summary: ${o.notes}` : `No summary logged for the last communication.`;
+  const nextContactLine = o.next_contact ? `Next contact scheduled for ${fmtDate(o.next_contact)}.` : `No next contact date scheduled.`;
+  return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are on track${o.eta ? `, expected ${fmtDate(o.eta)}` : ''}. ${lastContactLine} ${summaryLine} ${nextContactLine} ${placedLine} ${contactLine}`;
 }
 
 function renderOpenOrderRow(o, editing) {
@@ -569,11 +662,11 @@ function renderOpenOrderRow(o, editing) {
           </select>
         ` : '<span class="muted" style="font-size:12px;">view only</span>'}
       </td>
-      <td>${o.internal_ref || o.vendor_po_number || '—'}</td>
+      <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" onclick="editPoNumber('${o.ledger_id}')">${o.internal_ref || o.vendor_po_number || '+ Add'}</button>` : (o.internal_ref || o.vendor_po_number || '—')}</td>
       <td>${o.vendor_name || '—'}</td>
       <td>${o.qty ?? '—'}</td>
       <td>${fmtDate(o.eta)}</td>
-      <td style="white-space:normal; max-width:160px; word-break:break-word;">${o.tracking_info || '—'}</td>
+      <td style="white-space:normal; max-width:160px; word-break:break-word;">${canAct ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px; white-space:normal; word-break:break-word;" onclick="editTracking('${o.ledger_id}')">${o.tracking_info || '+ Add'}</button>` : (o.tracking_info || '—')}</td>
       <td>${fmtDate(o.last_contacted)}</td>
       <td>${fmtDate(o.next_contact)}</td>
       <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
@@ -637,6 +730,27 @@ async function splitOrder(ledgerId) {
     notes: `Split from original order ${ledgerId} via dashboard`,
   });
   if (err2) { alert('Original order was reduced, but creating the split-off order failed: ' + err2.message); }
+  await renderOverview();
+}
+
+async function editPoNumber(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  if (!o.po_id) { alert('This order has no linked purchase order to attach a PO number to yet.'); return; }
+  const newVal = prompt('PO Number (internal reference):', o.internal_ref || '');
+  if (newVal === null) return;
+  const { error } = await sb.from('purchase_orders').update({ internal_ref: newVal || null }).eq('id', o.po_id);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+
+async function editTracking(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const newVal = prompt('Tracking info:', o.tracking_info || '');
+  if (newVal === null) return;
+  const { error } = await sb.from('inventory_ledger').update({ tracking_info: newVal || null }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
   await renderOverview();
 }
 
