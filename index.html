@@ -213,6 +213,17 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 function fmtMoney(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
 function fmtMoney2(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDate(d) {
+  if (!d) return '—';
+  const [y, m, day] = d.split('-');
+  return `${m}-${day}-${y}`;
+}
+const PROBLEM_LABELS = {
+  shortfall: 'Projected Shortfall',
+  vendor_delay: 'Vendor Delay',
+  safety_stock_review: 'Safety Stock Review Due',
+  overdue_contact: 'Overdue Vendor Contact',
+};
 
 // ---------- Overview ----------
 async function renderOverview() {
@@ -278,9 +289,9 @@ async function renderOverview() {
     <div id="open-orders-groups"></div>
 
     <div class="section-label" style="margin-top:28px;">Agentic Recommendations — Validate or Dismiss</div>
-    <div class="card" style="padding:0;">
-      <table>
-        <thead><tr><th>SKU</th><th>Urgency</th><th>Shortfall</th><th>Deadline</th><th>Cash at Risk</th><th>Decision</th><th></th></tr></thead>
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <table style="white-space:nowrap;">
+        <thead><tr><th>SKU</th><th>Urgency</th><th>Problem</th><th>Decision</th></tr></thead>
         <tbody id="overview-recs-body"></tbody>
       </table>
     </div>
@@ -296,21 +307,24 @@ async function renderOverview() {
 
   const body = document.getElementById('overview-recs-body');
   if (!recs || recs.length === 0) {
-    body.innerHTML = `<tr><td colspan="7" class="empty-state">No open recommendations — nothing needs a decision today.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="4" class="empty-state">No open recommendations — nothing needs a decision today.</td></tr>`;
   } else {
     body.innerHTML = recs.map(r => `
       <tr>
-        <td><strong>${r.products.display_name}</strong><br><span class="muted" style="font-size:12px;">${r.products.sku_code}</span></td>
+        <td><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></td>
         <td><span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span></td>
-        <td>${r.shortfall_qty} units<br><span class="muted" style="font-size:12px;">by ${r.shortfall_month}</span></td>
-        <td>${r.last_responsible_date}<br><span class="muted" style="font-size:12px;">${r.days_until_deadline < 0 ? 'OVERDUE ' + (-r.days_until_deadline) + 'd' : r.days_until_deadline + ' days left'}</span></td>
-        <td>${fmtMoney2(r.cash_at_risk)}</td>
-        <td><span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}">${r.decision}</span></td>
+        <td>
+          <span class="pill watch">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
+          <span class="muted" style="font-size:12px;">— ${r.shortfall_qty} units by ${fmtDate(r.shortfall_month)}, ${fmtMoney2(r.cash_at_risk)} at risk</span>
+        </td>
         <td>
           ${canEdit() ? `
-            <button class="btn btn-primary" style="margin-right:6px;" onclick="decideRecommendation('${r.id}','approved')" ${r.decision === 'approved' ? 'disabled' : ''}>Approve</button>
-            <button class="btn btn-ghost" onclick="decideRecommendation('${r.id}','dismissed')" ${r.decision === 'dismissed' ? 'disabled' : ''}>Dismiss</button>
-          ` : '<span class="muted" style="font-size:12px;">view only</span>'}
+            <select onchange="decideRecommendation('${r.id}', this.value)" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
+              <option value="pending" ${r.decision === 'pending' ? 'selected' : ''}>Pending</option>
+              <option value="approved" ${r.decision === 'approved' ? 'selected' : ''}>Approved</option>
+              <option value="dismissed" ${r.decision === 'dismissed' ? 'selected' : ''}>Dismissed</option>
+            </select>
+          ` : `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}">${r.decision}</span>`}
         </td>
       </tr>
     `).join('');
@@ -343,8 +357,6 @@ function applyOpenOrdersFilter() {
     return;
   }
 
-  // Group by product, preserving product_name as the primary label (per Alex's feedback:
-  // display name first, SKU as the secondary/muted line, not the other way around).
   const byProduct = new Map();
   filtered.forEach(o => {
     if (!byProduct.has(o.product_sku)) byProduct.set(o.product_sku, { name: o.product_name, rows: [] });
@@ -352,33 +364,142 @@ function applyOpenOrdersFilter() {
   });
 
   groupsEl.innerHTML = [...byProduct.entries()].map(([sku, group]) => `
-    <div class="card" style="padding:0; margin-bottom:14px;">
-      <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+    <div class="card" style="padding:0; margin-bottom:14px; overflow-x:auto;">
+      <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap;">
         <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
-      <table>
-        <thead><tr><th>Type</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Action Needed</th><th></th></tr></thead>
+      <table style="white-space:nowrap;">
+        <thead><tr><th>Order Type</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Status</th><th>Action Needed</th><th>Actions</th></tr></thead>
         <tbody>
-          ${group.rows.map(o => {
-            const needsAction = o.action_needed !== 'On track — no action needed';
-            return `
-            <tr>
-              <td><span class="pill watch">${o.order_type === 'componentry' ? (o.component_name || 'componentry') : 'finished good'}</span></td>
-              <td>${o.vendor_name || '—'}</td>
-              <td>${o.qty ?? '—'}</td>
-              <td>${o.eta || '—'}</td>
-              <td>${o.tracking_info || '—'}</td>
-              <td>${o.last_contacted || '—'}</td>
-              <td>${o.next_contact || '—'}</td>
-              <td><span class="pill ${needsAction ? (o.action_needed.startsWith('OVERDUE') ? 'bad' : 'watch') : 'good'}">${o.action_needed}</span></td>
-              <td>${canEdit() ? `<button class="btn btn-ghost" onclick="markLanded('${o.ledger_id}')">Mark Landed</button>` : ''}</td>
-            </tr>
-          `}).join('')}
+          ${group.rows.map(o => renderOpenOrderRow(o)).join('')}
         </tbody>
       </table>
     </div>
   `).join('');
+}
+
+function renderOpenOrderRow(o, editing) {
+  const needsAction = o.action_needed !== 'On track — no action needed' && o.order_status !== 'paused';
+  const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
+  const canAct = canEdit();
+  if (editing) {
+    return `
+      <tr id="row-${o.ledger_id}">
+        <td><span class="pill watch">${orderTypeLabel}</span></td>
+        <td>${o.vendor_name || '—'}</td>
+        <td><input type="number" id="edit-qty-${o.ledger_id}" value="${o.qty ?? ''}" style="width:70px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td><input type="text" id="edit-tracking-${o.ledger_id}" value="${o.tracking_info || ''}" style="width:110px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td><input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td><input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td colspan="2"></td>
+        <td>
+          <button class="btn btn-primary" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
+          <button class="btn btn-ghost" onclick="applyOpenOrdersFilter()">Cancel</button>
+        </td>
+      </tr>
+    `;
+  }
+  return `
+    <tr id="row-${o.ledger_id}">
+      <td><span class="pill watch">${orderTypeLabel}</span></td>
+      <td>${o.vendor_name || '—'}</td>
+      <td>${o.qty ?? '—'}</td>
+      <td>${fmtDate(o.eta)}</td>
+      <td>${o.tracking_info || '—'}</td>
+      <td>${fmtDate(o.last_contacted)}</td>
+      <td>${fmtDate(o.next_contact)}</td>
+      <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
+      <td><span class="pill ${needsAction ? (o.action_needed.startsWith('OVERDUE') ? 'bad' : 'watch') : 'good'}">${o.action_needed}</span></td>
+      <td>
+        ${canAct ? `
+          <button class="btn btn-ghost" onclick="editOpenOrderRow('${o.ledger_id}')">Edit</button>
+          <button class="btn btn-ghost" onclick="splitOrder('${o.ledger_id}')">Split</button>
+          <button class="btn btn-ghost" onclick="delayOrder('${o.ledger_id}')">Delay</button>
+          ${o.order_status === 'paused'
+            ? `<button class="btn btn-ghost" onclick="resumeOrder('${o.ledger_id}')">Resume</button>`
+            : `<button class="btn btn-ghost" onclick="pauseOrder('${o.ledger_id}')">Pause</button>`}
+          <button class="btn btn-ghost" onclick="cancelOrder('${o.ledger_id}')">Cancel</button>
+          <button class="btn btn-primary" onclick="markLanded('${o.ledger_id}')">Mark Landed</button>
+        ` : '<span class="muted" style="font-size:12px;">view only</span>'}
+      </td>
+    </tr>
+  `;
+}
+
+function editOpenOrderRow(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  document.getElementById('row-' + ledgerId).outerHTML = renderOpenOrderRow(o, true);
+}
+
+async function saveOrderEdit(ledgerId) {
+  const payload = {
+    qty_in: Number(document.getElementById('edit-qty-' + ledgerId).value) || 0,
+    eta: document.getElementById('edit-eta-' + ledgerId).value || null,
+    tracking_info: document.getElementById('edit-tracking-' + ledgerId).value || null,
+    last_contacted: document.getElementById('edit-lastcontact-' + ledgerId).value || null,
+    next_contact: document.getElementById('edit-nextcontact-' + ledgerId).value || null,
+  };
+  const { error } = await sb.from('inventory_ledger').update(payload).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+
+async function splitOrder(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const splitQtyStr = prompt(`Split ${o.qty} units — how many units go into the NEW (second) order?`, Math.floor((o.qty || 0) / 2));
+  if (!splitQtyStr) return;
+  const splitQty = Number(splitQtyStr);
+  if (!splitQty || splitQty <= 0 || splitQty >= o.qty) { alert('Enter a quantity less than the current total.'); return; }
+  const newEta = prompt('ETA for the new (split-off) order (YYYY-MM-DD):', o.eta || '');
+
+  // Reduce the original row, then insert a new ledger row carrying the remainder.
+  const { error: err1 } = await sb.from('inventory_ledger').update({ qty_in: o.qty - splitQty }).eq('id', ledgerId);
+  if (err1) { alert('Failed: ' + err1.message); return; }
+  const { error: err2 } = await sb.from('inventory_ledger').insert({
+    event_date: new Date().toISOString().slice(0, 10),
+    event_type: o.order_type === 'componentry' ? 'component_order' : 'production_run',
+    product_id: o.order_type === 'componentry' ? null : o.product_id,
+    component_id: null, // component_id can't be resolved client-side reliably; left for manual follow-up if componentry
+    po_id: o.po_id,
+    vendor_id: null,
+    qty_in: splitQty,
+    landed: false,
+    order_status: 'open',
+    eta: newEta || o.eta,
+    notes: `Split from original order ${ledgerId} via dashboard`,
+  });
+  if (err2) { alert('Original order was reduced, but creating the split-off order failed: ' + err2.message); }
+  await renderOverview();
+}
+
+async function delayOrder(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  const newEta = prompt('New ETA (YYYY-MM-DD):', o ? o.eta : '');
+  if (!newEta) return;
+  const { error } = await sb.from('inventory_ledger').update({ eta: newEta }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+
+async function pauseOrder(ledgerId) {
+  const { error } = await sb.from('inventory_ledger').update({ order_status: 'paused' }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+async function resumeOrder(ledgerId) {
+  const { error } = await sb.from('inventory_ledger').update({ order_status: 'open' }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+async function cancelOrder(ledgerId) {
+  if (!confirm('Cancel this order? It will be removed from the open-orders list.')) return;
+  const { error } = await sb.from('inventory_ledger').update({ order_status: 'cancelled' }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
 }
 
 async function markLanded(ledgerId) {
@@ -468,7 +589,7 @@ async function renderPOs() {
       <td><span class="pill watch">${po.status}</span></td>
       <td>${po.qty_ordered ?? '—'}</td>
       <td>${po.total_cost ? fmtMoney2(po.total_cost) : '—'}</td>
-      <td>${po.eta_date || '—'}</td>
+      <td>${fmtDate(po.eta_date)}</td>
       <td>
         ${canEdit() && po.status === 'draft' ? `<button class="btn btn-primary" onclick="approvePO('${po.id}')">Approve</button>` : ''}
         ${canDelete() ? `<button class="btn btn-ghost" onclick="cancelPO('${po.id}')" style="margin-left:6px;">Cancel</button>` : ''}
@@ -525,8 +646,8 @@ async function renderVendors() {
             <tr>
               <td>${l.components ? l.components.component_name : '—'}</td>
               <td>${l.vendors ? l.vendors.vendor_name : '—'}</td>
-              <td>${l.eta || '—'}</td>
-              <td>${l.next_contact || '—'}</td>
+              <td>${fmtDate(l.eta)}</td>
+              <td>${fmtDate(l.next_contact)}</td>
               <td><span class="pill ${overdue ? 'bad' : 'good'}">${overdue ? 'overdue for contact' : 'on track'}</span></td>
             </tr>
           `}).join('') || `<tr><td colspan="5" class="empty-state">No in-flight component orders.</td></tr>`}
