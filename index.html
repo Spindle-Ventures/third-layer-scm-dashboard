@@ -321,7 +321,9 @@ function scrollToOrderRow(ledgerId) {
   if (overviewTabBtn && !overviewTabBtn.classList.contains('active')) overviewTabBtn.click();
   document.getElementById('filter-product').value = 'all';
   document.getElementById('filter-type').value = 'all';
-  document.getElementById('filter-needs-action').checked = false;
+  window._needsActionFilter = false;
+  const toggleBtn = document.getElementById('needs-action-toggle-btn');
+  if (toggleBtn) { toggleBtn.textContent = '⚑ Showing: all orders'; toggleBtn.className = 'btn btn-ghost'; }
   applyOpenOrdersFilter();
   const row = document.getElementById('row-' + ledgerId);
   if (!row) return;
@@ -586,9 +588,7 @@ async function renderOverview() {
             <option value="componentry">Component</option>
           </select>
         </label>
-        <label style="font-size:13px; font-weight:500; display:flex; align-items:center; gap:6px;">
-          <input type="checkbox" id="filter-needs-action" checked onchange="applyOpenOrdersFilter()" /> Only show items needing attention
-        </label>
+        <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleNeedsActionFilter()">⚑ ${window._needsActionFilter !== false ? 'Showing: needs attention only' : 'Showing: all orders'}</button>
         <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
       </div>
     </div>
@@ -602,10 +602,9 @@ async function renderOverview() {
   // Preserve filter selections across re-renders (e.g. after an action) instead of resetting them.
   const prevProduct = window._filterState?.product || 'all';
   const prevType = window._filterState?.type || 'all';
-  const prevNeedsAction = window._filterState?.needsAction ?? true;
   productSelect.innerHTML = '<option value="all">All products</option>' + uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${sku === prevProduct ? 'selected' : ''}>${name} (${sku})</option>`).join('');
   document.getElementById('filter-type').value = prevType;
-  document.getElementById('filter-needs-action').checked = prevNeedsAction;
+  if (window._needsActionFilter === undefined) window._needsActionFilter = true;
 
   applyOpenOrdersFilter();
 
@@ -647,8 +646,8 @@ function applyOpenOrdersFilter() {
   const all = window._openOrdersCache || [];
   const productFilter = document.getElementById('filter-product').value;
   const typeFilter = document.getElementById('filter-type').value;
-  const onlyAction = document.getElementById('filter-needs-action').checked;
-  window._filterState = { product: productFilter, type: typeFilter, needsAction: onlyAction };
+  const onlyAction = window._needsActionFilter !== false;
+  window._filterState = { product: productFilter, type: typeFilter };
 
   const filtered = all.filter(o => {
     if (productFilter !== 'all' && o.product_sku !== productFilter) return false;
@@ -659,7 +658,7 @@ function applyOpenOrdersFilter() {
 
   const groupsEl = document.getElementById('open-orders-groups');
   if (filtered.length === 0) {
-    groupsEl.innerHTML = `<div class="card empty-state">Nothing matches these filters${onlyAction ? ' — try unchecking "only show items needing attention"' : ''}.</div>`;
+    groupsEl.innerHTML = `<div class="card empty-state">Nothing matches these filters${onlyAction ? ' — try the "Showing: needs attention only" button to see all orders' : ''}.</div>`;
     return;
   }
 
@@ -693,7 +692,7 @@ function applyOpenOrdersFilter() {
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
       <table style="white-space:nowrap;">
-        <thead><tr><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
+        <thead><tr><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Contact Schedule</th></tr></thead>
         <tbody>${group.rows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
       </table>
     </div>
@@ -788,6 +787,70 @@ function renderTrackingCell(o, canAct) {
   return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showTrackingDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
 }
 
+function renderContactScheduleCell(o) {
+  const today = new Date().toISOString().slice(0, 10);
+  let label, cls;
+  if (o.next_contact) {
+    label = fmtDate(o.next_contact);
+    cls = o.next_contact < today ? 'bad' : 'watch';
+  } else if (o.last_contacted) {
+    label = `Last ${fmtDate(o.last_contacted)}`;
+    cls = 'watch';
+  } else {
+    label = 'None scheduled';
+    cls = 'watch';
+  }
+  return `<span class="pill clickable-pill ${cls}" onclick="showContactScheduleDetail('${o.ledger_id}')">${label}</span>`;
+}
+
+function showContactScheduleDetail(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const vendorLabel = o.vendor_name || 'the vendor';
+  const rows = [];
+  if (o.last_contacted || o.notes) {
+    rows.push([fmtDate(o.last_contacted), 'Last contact', o.notes || '<span class="muted">No result logged</span>']);
+  }
+  if (o.next_contact) {
+    rows.push([fmtDate(o.next_contact), 'Next contact', '<span class="muted">Upcoming</span>']);
+  }
+  const ledgerTable = rows.length > 0
+    ? kpiTable(['Date', 'Type', 'Result'], rows, 2)
+    : '<div class="muted">No contact history logged for this order yet.</div>';
+  const body = `
+    ${ledgerTable}
+    ${canEdit() ? `
+      <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); editLastContact('${ledgerId}')">Log a contact</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); editNextContact('${ledgerId}')">Set next contact</button>
+      </div>
+    ` : ''}
+  `;
+  showDetail(`${o.product_name} — Contact Schedule with ${vendorLabel}`, body);
+}
+
+async function editLastContact(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const dateVal = promptDateMMDDYYYY('Date of this contact', o.last_contacted);
+  if (dateVal === null) return;
+  const resultVal = prompt('Result of this contact (what did they say?):', o.notes || '');
+  if (resultVal === null) return;
+  const { error } = await sb.from('inventory_ledger').update({ last_contacted: dateVal, notes: resultVal || null }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+
+async function editNextContact(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const dateVal = promptDateMMDDYYYY('Next contact date', o.next_contact);
+  if (dateVal === null) return;
+  const { error } = await sb.from('inventory_ledger').update({ next_contact: dateVal }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+
 function showPoNumberDetail(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
@@ -819,6 +882,16 @@ function toggleRevealOrderData() {
   applyOpenOrdersFilter();
 }
 
+function toggleNeedsActionFilter() {
+  window._needsActionFilter = window._needsActionFilter === false ? true : false;
+  const btn = document.getElementById('needs-action-toggle-btn');
+  if (btn) {
+    btn.textContent = `⚑ ${window._needsActionFilter !== false ? 'Showing: needs attention only' : 'Showing: all orders'}`;
+    btn.className = `btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}`;
+  }
+  applyOpenOrdersFilter();
+}
+
 function renderOpenOrderRow(o, editing) {
   const canAct = canEdit();
   const componentText = o.order_type === 'componentry' ? componentShortLabel(o.component_name) : '—';
@@ -839,8 +912,12 @@ function renderOpenOrderRow(o, editing) {
         <td>${o.vendor_name || '—'}</td>
         <td><input type="number" id="edit-qty-${o.ledger_id}" value="${o.qty ?? ''}" style="width:70px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="text" id="edit-tracking-${o.ledger_id}" value="${o.tracking_info || ''}" style="width:110px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
-        <td><input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
-        <td><input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td style="white-space:normal;">
+          <div style="display:flex; flex-direction:column; gap:3px;">
+            <label style="font-size:10px; color:var(--muted);">Last: <input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:11px;" /></label>
+            <label style="font-size:10px; color:var(--muted);">Next: <input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || ''}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:11px;" /></label>
+          </div>
+        </td>
       </tr>
     `;
   }
@@ -856,8 +933,7 @@ function renderOpenOrderRow(o, editing) {
       <td>${o.vendor_name || '—'}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
       <td style="white-space:normal; max-width:160px; word-break:break-word;">${renderTrackingCell(o, canAct)}</td>
-      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${fmtDate(o.last_contacted)}</td>
-      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${fmtDate(o.next_contact)}</td>
+      <td>${renderContactScheduleCell(o)}</td>
     </tr>
   `;
 }
@@ -938,10 +1014,9 @@ async function splitOrder(ledgerId) {
 async function editPoNumber(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  if (!o.po_id) { alert('This order has no linked PO/componentry order to attach a number to yet.'); return; }
   const newVal = prompt('Order # (PO or componentry order reference):', o.internal_ref || '');
   if (newVal === null) return;
-  const { error } = await sb.from('purchase_orders').update({ internal_ref: newVal || null }).eq('id', o.po_id);
+  const { error } = await sb.from('inventory_ledger').update({ order_number: newVal || null }).eq('id', ledgerId);
   if (error) { alert('Failed: ' + error.message); return; }
   await renderOverview();
 }
