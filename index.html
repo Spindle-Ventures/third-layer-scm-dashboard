@@ -390,12 +390,17 @@ function showQcKpiDetail() {
 // ---------- Overview ----------
 async function renderOverview() {
   const el = document.getElementById('tab-overview');
-  const [{ data: recs }, { data: pos }, { data: openOrders }, { data: qcRuns }, { data: invSnapshot }] = await Promise.all([
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const monthStartIso = todayIso.slice(0, 7) + '-01';
+  const [{ data: recs }, { data: pos }, { data: openOrders }, { data: qcRuns }, { data: invSnapshot }, { data: qohRows }, { data: revActuals }, { data: revForecasts }] = await Promise.all([
     sb.from('agent_recommendations').select('*, products(sku_code, display_name)').neq('decision', 'dismissed').order('days_until_deadline', { ascending: true }),
     sb.from('purchase_orders').select('*').in('status', ['draft', 'pending_approval', 'approved', 'placed', 'in_transit']),
     sb.from('open_orders_by_product').select('*'),
     sb.from('qc_runs').select('*').order('run_at', { ascending: false }).limit(1),
     sb.from('product_inventory_snapshot').select('*, products(sku_code)'),
+    sb.from('product_qoh').select('sku_code, safety_stock_qty'),
+    sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', monthStartIso).lte('revenue_date', todayIso),
+    sb.from('revenue_forecasts').select('channel, forecast_revenue').eq('forecast_month', monthStartIso),
   ]);
 
   window._invSnapshotBySku = {};
@@ -405,6 +410,29 @@ async function renderOverview() {
     if (!window._invSnapshotBySku[sku]) window._invSnapshotBySku[sku] = {};
     window._invSnapshotBySku[sku][s.channel] = s.qty;
   });
+  window._safetyStockBySku = {};
+  (qohRows || []).forEach(r => { window._safetyStockBySku[r.sku_code] = r.safety_stock_qty; });
+
+  // Revenue MTD vs forecast pace -- same methodology as daily_digest.py's get_revenue_pacing():
+  // pro-rate the full-month forecast by days-elapsed-so-far and compare to actual MTD gross
+  // revenue. Never fabricates a baseline if no forecast row exists for the current month.
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysElapsed = now.getDate();
+  const revenuePacing = {};
+  ['shopify', 'amazon'].forEach(channel => {
+    const mtd = (revActuals || []).filter(r => r.channel === channel).reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0);
+    const forecastRow = (revForecasts || []).find(r => r.channel === channel);
+    if (!forecastRow) {
+      revenuePacing[channel] = { mtd, noForecast: true };
+      return;
+    }
+    const forecastFullMonth = Number(forecastRow.forecast_revenue);
+    const expectedPace = daysInMonth ? (forecastFullMonth / daysInMonth) * daysElapsed : 0;
+    const pctOfPace = expectedPace > 0 ? (mtd / expectedPace) * 100 : 0;
+    revenuePacing[channel] = { mtd, forecastFullMonth, expectedPace, pctOfPace };
+  });
+  window._revenuePacing = revenuePacing;
 
   const today = new Date().toISOString().slice(0, 10);
   const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -420,9 +448,38 @@ async function renderOverview() {
   const lastQc = (qcRuns && qcRuns[0]) || null;
   const needsActionCount = (openOrders || []).filter(o => o.action_needed !== 'On Track').length;
 
+  const monthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   window._kpiContext = { activeRecs, overdueOrders, contactsDueOrSoon, lastQc };
+  const pacingCard = (channel, label) => {
+    const p = revenuePacing[channel];
+    if (p.noForecast) {
+      return `
+        <div class="card kpi-card">
+          <div class="kpi-label">${label} Revenue MTD vs Forecast</div>
+          <div class="pill watch" style="margin-top:6px;">No forecast set for ${monthLabel}</div>
+          <div class="muted" style="font-size:12px; margin-top:4px;">MTD actual: ${fmtMoney(p.mtd)} — set a forecast to see pacing.</div>
+        </div>
+      `;
+    }
+    const pillClass = p.pctOfPace >= 95 ? 'good' : (p.pctOfPace >= 80 ? 'watch' : 'bad');
+    return `
+      <div class="card kpi-card">
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <div class="kpi-label">${label} Revenue MTD vs Forecast</div>
+          <div class="kpi-value" style="font-size:20px;">${p.pctOfPace.toFixed(0)}%</div>
+        </div>
+        <div class="pill ${pillClass}">${p.pctOfPace >= 100 ? 'ahead of pace' : 'behind pace'} — ${fmtMoney(p.mtd)} of ${fmtMoney(p.expectedPace)} expected</div>
+      </div>
+    `;
+  };
 
   el.innerHTML = `
+    <div class="section-label">Revenue Pacing — ${monthLabel}</div>
+    <div class="kpi-grid" style="margin-bottom:18px;">
+      ${pacingCard('shopify', 'Shopify')}
+      ${pacingCard('amazon', 'Amazon')}
+    </div>
+
     <div class="section-label">At a Glance</div>
     <div class="kpi-grid">
       <div class="card kpi-card clickable-pill" onclick="showRecsKpiDetail()">
@@ -508,7 +565,7 @@ async function renderOverview() {
         </div>
         <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
           <span class="pill clickable-pill watch" onclick="showRecommendationDetail('${r.id}')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
-          <span class="muted" style="font-size:12px;">Current inventory: <strong>${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
+          <span style="font-size:12px;">Current inventory: <strong style="font-size:14px; color:${(() => { const ss = (window._safetyStockBySku || {})[r.products.sku_code]; if (r.current_qoh == null || ss == null) return 'var(--ink)'; if (r.current_qoh < ss) return 'var(--bad-text)'; if (r.current_qoh < ss * 1.25) return 'var(--watch-text)'; return 'var(--good-text)'; })()};">${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
         </div>
         ${canEdit() ? `
           <select onchange="decideRecommendation('${r.id}', this.value)" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
@@ -557,15 +614,23 @@ function applyOpenOrdersFilter() {
 
   groupsEl.innerHTML = [...byProduct.entries()].map(([sku, group]) => {
     const inv = (window._invSnapshotBySku || {})[sku] || {};
+    const safetyStock = (window._safetyStockBySku || {})[sku];
+    const invColor = (qty) => {
+      if (qty == null || safetyStock == null) return 'var(--ink)';
+      if (qty < safetyStock) return 'var(--bad-text)';
+      if (qty < safetyStock * 1.25) return 'var(--watch-text)';
+      return 'var(--good-text)';
+    };
     const shopifyQty = inv.shopify != null ? inv.shopify.toLocaleString() : '—';
     const amazonQty = inv.amazon != null ? inv.amazon.toLocaleString() : 'not connected';
+    const shopifyColor = invColor(inv.shopify);
     return `
     <div class="card" style="padding:0; margin-bottom:10px; overflow-x:auto;">
       <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap; flex-wrap:wrap; gap:8px;">
         <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
           <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
-          <span class="muted" style="font-size:12px;">Current Inventory — Shopify: <strong>${shopifyQty}</strong></span>
-          <span class="muted" style="font-size:12px;">Amazon: <strong>${amazonQty}</strong></span>
+          <span style="font-size:13px;">Current Inventory — Shopify: <strong style="font-size:15px; color:${shopifyColor};">${shopifyQty}</strong>${safetyStock != null ? ` <span class="muted" style="font-size:11px;">(safety stock ${safetyStock.toLocaleString()})</span>` : ''}</span>
+          <span style="font-size:13px;">Amazon: <strong style="font-size:15px; color:var(--ink);">${amazonQty}</strong></span>
         </div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
