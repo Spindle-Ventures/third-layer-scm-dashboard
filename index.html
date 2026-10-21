@@ -228,6 +228,57 @@ function fmtDate(d) {
   const [y, m, day] = d.split('-');
   return `${m}-${day}-${y}`;
 }
+function fmtDateTime(ts) {
+  const dt = new Date(ts);
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const yyyy = dt.getFullYear();
+  const time = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${mm}-${dd}-${yyyy} ${time}`;
+}
+// Prompts the user for a date in MM-DD-YYYY (matching Alex's display-format requirement) and
+// converts it to the ISO YYYY-MM-DD format Postgres date columns need internally.
+function promptDateMMDDYYYY(message, currentIso) {
+  const defaultVal = currentIso ? fmtDate(currentIso) : '';
+  const input = prompt(`${message} (MM-DD-YYYY):`, defaultVal);
+  if (!input) return null;
+  const match = input.trim().match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (!match) { alert('Please enter a date as MM-DD-YYYY, e.g. 11-30-2026.'); return null; }
+  const [, mm, dd, yyyy] = match;
+  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+}
+function monthName(isoDate) {
+  const [y, m] = isoDate.split('-');
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleString('en-US', { month: 'long' });
+}
+
+function buildRecommendationNarrative(r) {
+  const outlook = r.monthly_outlook || [];
+  if (outlook.length === 0) {
+    return `${r.shortfall_qty} units projected short by ${fmtDate(r.shortfall_month)}. Place an order by ${fmtDate(r.last_responsible_date)} (lead time ${r.lead_days} days).`;
+  }
+
+  const current = r.current_qoh != null ? r.current_qoh.toLocaleString() : 'an unknown number of';
+  let sentence = `We currently have ${current} units on hand.`;
+
+  // Any planned receipt between now and the shortfall month, in order.
+  const receipts = outlook.filter(m => m.receipts > 0 && m.month <= r.shortfall_month);
+  receipts.forEach(rec => {
+    sentence += ` We're planning on a receipt of ${rec.receipts.toLocaleString()} units landing by ${fmtDate(rec.month)}.`;
+  });
+
+  // Demand for each month up to and including the shortfall month, in plain language.
+  const relevantMonths = outlook.filter(m => m.month <= r.shortfall_month);
+  if (relevantMonths.length > 0) {
+    const demandPhrases = relevantMonths.map(m => `${m.demand.toLocaleString()} in ${monthName(m.month)}`);
+    sentence += ` Based on current revenue projections, we expect to sell through ${demandPhrases.join(', ')}.`;
+  }
+
+  sentence += ` At that pace, we'll fall ${r.shortfall_qty.toLocaleString()} units below the ${outlook[0].safety_stock ? outlook[0].safety_stock.toLocaleString() : ''} unit safety stock target by ${fmtDate(r.shortfall_month)} unless more is ordered. Recommended: place ${r.recommended_order_qty.toLocaleString()} units by ${fmtDate(r.last_responsible_date)}${r.days_until_deadline < 0 ? ` (already ${-r.days_until_deadline} day(s) overdue)` : ` (${r.days_until_deadline} day(s) from now)`}.`;
+
+  return sentence;
+}
+
 const PROBLEM_LABELS = {
   shortfall: 'Shortfall',
   vendor_delay: 'Vendor Delay',
@@ -250,6 +301,19 @@ function showDetail(title, body) {
     </div>
   `;
   document.body.appendChild(el);
+}
+
+function showOpenOrderDetail(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
+  showDetail(`${o.product_name} — ${orderTypeLabel}`, buildActionDetail(o));
+}
+
+function showRecommendationDetail(recId) {
+  const r = (window._recsCache || []).find(x => x.id === recId);
+  if (!r) return;
+  showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, buildRecommendationNarrative(r));
 }
 
 // ---------- Overview ----------
@@ -295,7 +359,7 @@ async function renderOverview() {
       <div class="card kpi-card">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <div class="kpi-label">Data Last Updated</div>
-          <div class="kpi-value" style="font-size:14px;">${lastQc ? new Date(lastQc.run_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}</div>
+          <div class="kpi-value" style="font-size:14px;">${lastQc ? fmtDateTime(lastQc.run_at) : '—'}</div>
         </div>
         <div class="pill ${lastQc && lastQc.all_clear ? 'good' : 'bad'}">${lastQc ? (lastQc.all_clear ? 'QC: all clear' : 'QC: discrepancy found') : 'no QC run yet'}</div>
       </div>
@@ -341,6 +405,7 @@ async function renderOverview() {
 
   applyOpenOrdersFilter();
 
+  window._recsCache = recs || [];
   const grid = document.getElementById('recs-grid');
   if (!recs || recs.length === 0) {
     grid.innerHTML = `<div class="card empty-state" style="grid-column: 1 / -1;">No open recommendations — nothing needs a decision today.</div>`;
@@ -352,7 +417,7 @@ async function renderOverview() {
           <span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span>
         </div>
         <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-          <span class="pill clickable-pill watch" onclick="showDetail('${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}', '${r.shortfall_qty} units projected short by ${fmtDate(r.shortfall_month)}. ${fmtMoney2(r.cash_at_risk)} at risk. Place order by ${fmtDate(r.last_responsible_date)} (${r.days_until_deadline < 0 ? 'OVERDUE by ' + (-r.days_until_deadline) + ' days' : r.days_until_deadline + ' days remaining'}).')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
+          <span class="pill clickable-pill watch" onclick="showRecommendationDetail('${r.id}')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
           <span class="muted" style="font-size:12px;">Current inventory: <strong>${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
         </div>
         ${canEdit() ? `
@@ -423,10 +488,33 @@ function actionPillClass(action) {
   return 'watch'; // Contact Due, ETA Soon
 }
 
+function buildActionDetail(o) {
+  const today = new Date().toISOString().slice(0, 10);
+  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : `${o.product_name} (finished good)`;
+  const vendorLabel = o.vendor_name || 'the vendor';
+  const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+
+  if (o.order_status === 'paused') {
+    return `This order is paused — it will not generate overdue or contact alerts until you resume it.`;
+  }
+  if (o.eta && o.eta < today && !o.landed) {
+    const daysOverdue = daysBetween(o.eta, today);
+    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} were supposed to land on ${fmtDate(o.eta)}. As of today (${fmtDate(today)}), this is ${daysOverdue} day(s) overdue — confirm status with ${vendorLabel}.`;
+  }
+  if (o.next_contact && o.next_contact < today) {
+    const daysOverdue = daysBetween(o.next_contact, today);
+    return `${vendorLabel} was due for a check-in on ${fmtDate(o.next_contact)} regarding ${itemLabel}${o.eta ? ` (ETA ${fmtDate(o.eta)})` : ''}. As of today (${fmtDate(today)}), this contact is ${daysOverdue} day(s) overdue — reach out now.`;
+  }
+  if (o.eta && daysBetween(today, o.eta) <= 14 && daysBetween(today, o.eta) >= 0) {
+    const daysUntil = daysBetween(today, o.eta);
+    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are expected to land on ${fmtDate(o.eta)}, in ${daysUntil} day(s). Confirm shipment status and tracking with ${vendorLabel}.`;
+  }
+  return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are on track${o.eta ? `, expected ${fmtDate(o.eta)}` : ''}. No action needed.`;
+}
+
 function renderOpenOrderRow(o, editing) {
   const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
   const canAct = canEdit();
-  const detailJson = JSON.stringify(o.action_detail || '').replace(/"/g, '&quot;');
   if (editing) {
     return `
       <tr id="row-${o.ledger_id}">
@@ -448,7 +536,7 @@ function renderOpenOrderRow(o, editing) {
   return `
     <tr id="row-${o.ledger_id}">
       <td><span class="pill watch">${orderTypeLabel}</span></td>
-      <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showDetail('${o.product_name} — ${orderTypeLabel}', '${detailJson}')">${o.action_needed}</span></td>
+      <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showOpenOrderDetail('${o.ledger_id}')">${o.action_needed}</span></td>
       <td>
         ${canAct ? `
           <select onchange="handleOrderAction('${o.ledger_id}', this.value); this.value='';" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
@@ -510,7 +598,7 @@ async function splitOrder(ledgerId) {
   if (!splitQtyStr) return;
   const splitQty = Number(splitQtyStr);
   if (!splitQty || splitQty <= 0 || splitQty >= o.qty) { alert('Enter a quantity less than the current total.'); return; }
-  const newEta = prompt('ETA for the new (split-off) order (YYYY-MM-DD):', o.eta || '');
+  const newEta = promptDateMMDDYYYY('ETA for the new (split-off) order', o.eta);
 
   // Reduce the original row, then insert a new ledger row carrying the remainder.
   const { error: err1 } = await sb.from('inventory_ledger').update({ qty_in: o.qty - splitQty }).eq('id', ledgerId);
@@ -534,7 +622,7 @@ async function splitOrder(ledgerId) {
 
 async function delayOrder(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
-  const newEta = prompt('New ETA (YYYY-MM-DD):', o ? o.eta : '');
+  const newEta = promptDateMMDDYYYY('New ETA', o ? o.eta : null);
   if (!newEta) return;
   const { error } = await sb.from('inventory_ledger').update({ eta: newEta }).eq('id', ledgerId);
   if (error) { alert('Failed: ' + error.message); return; }
