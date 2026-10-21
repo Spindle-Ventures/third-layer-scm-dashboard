@@ -137,9 +137,9 @@
     <div>
       <div class="brand">THIRD LAYER</div>
       <h1 class="title serif">Supply Chain Manager</h1>
-      <div class="subtitle" id="subtitle-date"></div>
     </div>
     <div class="top-actions">
+      <div class="subtitle" id="subtitle-date" style="margin-right:4px;"></div>
       <span class="role-badge" id="user-badge"></span>
       <span class="snapshot-pill" id="snapshot-pill">Loading…</span>
       <button class="btn btn-ghost" onclick="signOut()">Sign out</button>
@@ -293,7 +293,7 @@ function showDetail(title, body, size) {
   el.id = 'detail-modal-backdrop';
   el.className = 'detail-modal-backdrop';
   el.onclick = (e) => { if (e.target === el) el.remove(); };
-  const maxWidth = size === 'wide' ? '960px' : '640px';
+  const maxWidth = size === 'wide' ? '1180px' : '640px';
   el.innerHTML = `
     <div class="detail-modal" style="max-width:${maxWidth};">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${title}</div>
@@ -308,22 +308,48 @@ function showOpenOrderDetail(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
   const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
-  showDetail(`${o.product_name} — ${orderTypeLabel}`, buildActionDetail(o));
+  const body = `${buildActionDetail(o)}<div style="margin-top:14px;"><button class="btn btn-ghost" onclick="scrollToOrderRow('${ledgerId}')">Take me there</button></div>`;
+  showDetail(`${o.product_name} — ${orderTypeLabel}`, body);
+}
+
+function scrollToOrderRow(ledgerId) {
+  const modal = document.getElementById('detail-modal-backdrop');
+  if (modal) modal.remove();
+  const row = document.getElementById('row-' + ledgerId);
+  if (!row) return;
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.style.transition = 'background-color 0.3s';
+  const prevBg = row.style.backgroundColor;
+  row.style.backgroundColor = 'var(--watch-bg)';
+  setTimeout(() => { row.style.backgroundColor = prevBg; }, 1800);
+}
+
+function scrollToRecCard(recId) {
+  const modal = document.getElementById('detail-modal-backdrop');
+  if (modal) modal.remove();
+  const card = document.getElementById('rec-card-' + recId);
+  if (!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.style.transition = 'box-shadow 0.3s';
+  const prevShadow = card.style.boxShadow;
+  card.style.boxShadow = '0 0 0 3px var(--watch-text)';
+  setTimeout(() => { card.style.boxShadow = prevShadow; }, 1800);
 }
 
 function showRecommendationDetail(recId) {
   const r = (window._recsCache || []).find(x => x.id === recId);
   if (!r) return;
-  showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, buildRecommendationNarrative(r));
+  const body = `${buildRecommendationNarrative(r)}<div style="margin-top:14px;"><button class="btn btn-ghost" onclick="scrollToRecCard('${recId}')">Take me there</button></div>`;
+  showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, body);
 }
 
-function kpiTable(headers, rows) {
+function kpiTable(headers, rows, wrapIdx) {
   if (rows.length === 0) return '<div class="muted">Nothing here right now.</div>';
-  const lastIdx = headers.length - 1;
+  const idx = wrapIdx != null ? wrapIdx : headers.length - 1;
   return `
     <table style="width:100%; font-size:13px; border-collapse:collapse;">
       <thead><tr>${headers.map(h => `<th style="padding:8px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)'};">${r.map((c, ci) => `<td style="padding:8px 10px; border-bottom:1px solid var(--border); white-space:${ci === lastIdx ? 'normal' : 'nowrap'}; ${ci === lastIdx ? 'min-width:280px;' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody>
+      <tbody>${rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)'};">${r.map((c, ci) => `<td style="padding:8px 10px; border-bottom:1px solid var(--border); white-space:${ci === idx ? 'normal' : 'nowrap'}; ${ci === idx ? 'min-width:380px;' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody>
     </table>
   `;
 }
@@ -344,11 +370,12 @@ function showOverdueKpiDetail() {
   const rows = overdueOrders.map(o => [
     `<strong>${o.product_name}</strong>`,
     o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>',
-    o.qty ?? '—',
-    fmtDate(o.eta),
+    o.qty != null ? o.qty.toLocaleString() : '—',
+    `<strong>${fmtDate(o.eta)}</strong>`,
     buildActionDetail(o),
+    `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
   ]);
-  showDetail('Overdue Orders', kpiTable(['Product', 'PO #', 'Qty', 'ETA', 'Why It\'s Overdue'], rows), 'wide');
+  showDetail('Overdue Orders', kpiTable(['Product', 'PO #', 'Qty', 'ETA', 'Why It\'s Overdue', ''], rows, 4), 'wide');
 }
 
 function showContactsKpiDetail() {
@@ -363,12 +390,13 @@ function showContactsKpiDetail() {
         o.vendor_name || '—',
         `<strong>${o.product_name}</strong>`,
         o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>',
-        fmtDate(o.eta),
+        `<strong>${fmtDate(o.eta)}</strong>`,
         `<span class="pill ${overdue ? 'bad' : 'watch'}">${fmtDate(o.next_contact)}</span>`,
         buildActionDetail(o),
+        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
       ];
     });
-  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'PO #', 'ETA', 'Next Contact', 'Why'], rows), 'wide');
+  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'PO #', 'ETA', 'Next Contact', 'Why', ''], rows, 5), 'wide');
 }
 
 function showQcKpiDetail() {
@@ -427,8 +455,9 @@ async function renderOverview() {
     }
     const forecastFullMonth = Number(forecastRow.forecast_revenue);
     const expectedPace = daysInMonth ? (forecastFullMonth / daysInMonth) * daysElapsed : 0;
+    const pctOfGoal = forecastFullMonth > 0 ? (mtd / forecastFullMonth) * 100 : 0;
     const pctOfPace = expectedPace > 0 ? (mtd / expectedPace) * 100 : 0;
-    revenuePacing[channel] = { mtd, forecastFullMonth, expectedPace, pctOfPace };
+    revenuePacing[channel] = { mtd, forecastFullMonth, expectedPace, pctOfGoal, pctOfPace };
   });
   window._revenuePacing = revenuePacing;
 
@@ -460,15 +489,16 @@ async function renderOverview() {
       `;
     }
     const barColor = p.pctOfPace >= 95 ? 'var(--good-text)' : (p.pctOfPace >= 80 ? 'var(--watch-text)' : 'var(--bad-text)');
-    const fillPct = Math.min(100, p.pctOfPace);
+    const fillPct = Math.min(100, p.pctOfGoal);
+    const paceLabel = p.pctOfPace >= 100 ? `${(p.pctOfPace - 100).toFixed(0)}% ahead of pace` : `${(100 - p.pctOfPace).toFixed(0)}% behind pace`;
     return `
       <div style="display:flex; align-items:center; gap:10px; padding:6px 0;">
         <div style="width:70px; font-size:12px; font-weight:600;">${label}</div>
         <div style="flex:1; background:var(--border); border-radius:6px; height:10px; overflow:hidden;">
           <div style="width:${fillPct}%; background:${barColor}; height:100%;"></div>
         </div>
-        <div style="width:42px; text-align:right; font-size:13px; font-weight:700; color:${barColor};">${p.pctOfPace.toFixed(0)}%</div>
-        <div class="muted" style="font-size:11px; width:190px;">${fmtMoney(p.mtd)} of ${fmtMoney(p.expectedPace)} pace</div>
+        <div style="width:42px; text-align:right; font-size:13px; font-weight:700; color:${barColor};">${p.pctOfGoal.toFixed(0)}%</div>
+        <div class="muted" style="font-size:11px; width:230px;">${fmtMoney(p.mtd)} of ${fmtMoney(p.forecastFullMonth)} goal — ${paceLabel}</div>
         <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="editRevenueForecast('${channel}')">✎</button>
       </div>
     `;
@@ -560,7 +590,7 @@ async function renderOverview() {
     grid.innerHTML = `<div class="card empty-state" style="grid-column: 1 / -1;">No open recommendations — nothing needs a decision today.</div>`;
   } else {
     grid.innerHTML = recs.map(r => `
-      <div class="card" style="padding:12px 14px;">
+      <div class="card" id="rec-card-${r.id}" style="padding:12px 14px;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
           <div><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></div>
           <span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span>
@@ -656,15 +686,17 @@ function actionPillClass(action) {
 
 function buildActionDetail(o) {
   const today = new Date().toISOString().slice(0, 10);
-  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : `${o.product_name} (finished good)`;
+  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
   const vendorLabel = o.vendor_name || 'the vendor';
   const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+  const qtyFmt = o.qty != null ? o.qty.toLocaleString() : 'an unknown quantity of';
+  const etaB = o.eta ? `<strong>${fmtDate(o.eta)}</strong>` : null;
 
   const contactLine = (o.vendor_contact_name || o.vendor_contact_email)
     ? `Contact: ${o.vendor_contact_name || ''}${o.vendor_contact_name && o.vendor_contact_email ? ' — ' : ''}${o.vendor_contact_email || ''}${o.vendor_contact_channel ? ` (prefers ${o.vendor_contact_channel})` : ''}.`
     : '';
-  const placedLine = o.placed_date ? `Placed on ${fmtDate(o.placed_date)}.` : (o.order_type === 'finished_good' || o.po_id ? `No placed date on record yet.` : '');
-  const contentsLine = `Contains: ${o.qty ?? 'an unknown quantity of'} units of ${itemLabel}${o.po_status ? ` (PO status: ${o.po_status})` : ''}.`;
+  const placedLine = o.placed_date ? `Placed on ${fmtDate(o.placed_date)}.` : (o.po_id ? `No placed date on record yet.` : '');
+  const contentsLine = `Contains: ${qtyFmt} units of ${itemLabel}${o.po_status ? ` (PO status: ${o.po_status})` : ''}.`;
   const notesLine = o.notes ? `Notes: ${o.notes}` : '';
   const trailer = [placedLine, contentsLine, contactLine, notesLine].filter(Boolean).join(' ');
 
@@ -673,22 +705,22 @@ function buildActionDetail(o) {
   }
   if (o.eta && o.eta < today && !o.landed) {
     const daysOverdue = daysBetween(o.eta, today);
-    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} were supposed to land on ${fmtDate(o.eta)}. As of today (${fmtDate(today)}), this is ${daysOverdue} day(s) overdue — confirm status with ${vendorLabel}. ${trailer}`;
+    return `${qtyFmt} units of ${itemLabel} from ${vendorLabel} were supposed to land on ${etaB}. As of today (${fmtDate(today)}), this is ${daysOverdue} day(s) overdue — confirm status with ${vendorLabel}. ${trailer}`;
   }
   if (o.next_contact && o.next_contact < today) {
     const daysOverdue = daysBetween(o.next_contact, today);
-    return `${vendorLabel} was due for a check-in on ${fmtDate(o.next_contact)} regarding ${itemLabel}${o.eta ? ` (ETA ${fmtDate(o.eta)})` : ''}. As of today (${fmtDate(today)}), this contact is ${daysOverdue} day(s) overdue — reach out now. ${trailer}`;
+    return `${vendorLabel} was due for a check-in on ${fmtDate(o.next_contact)} regarding ${itemLabel}${etaB ? ` (ETA ${etaB})` : ''}. As of today (${fmtDate(today)}), this contact is ${daysOverdue} day(s) overdue — reach out now. ${trailer}`;
   }
   if (o.eta && daysBetween(today, o.eta) <= 14 && daysBetween(today, o.eta) >= 0) {
     const daysUntil = daysBetween(today, o.eta);
-    return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are expected to land on ${fmtDate(o.eta)}, in ${daysUntil} day(s). Confirm shipment status and tracking with ${vendorLabel}. ${trailer}`;
+    return `${qtyFmt} units of ${itemLabel} from ${vendorLabel} are expected to land on ${etaB}, in ${daysUntil} day(s). Confirm shipment status and tracking with ${vendorLabel}. ${trailer}`;
   }
   // On Track: Alex wants this case specifically to summarize the last contact, its outcome, and
   // the next scheduled contact, rather than just saying "no action needed."
   const lastContactLine = o.last_contacted ? `Last contacted ${vendorLabel} on ${fmtDate(o.last_contacted)}.` : `No contact with ${vendorLabel} logged yet.`;
   const summaryLine = o.notes ? `Summary: ${o.notes}` : `No summary logged for the last communication.`;
   const nextContactLine = o.next_contact ? `Next contact scheduled for ${fmtDate(o.next_contact)}.` : `No next contact date scheduled.`;
-  return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are on track${o.eta ? `, expected ${fmtDate(o.eta)}` : ''}. ${lastContactLine} ${summaryLine} ${nextContactLine} ${placedLine} ${contactLine}`;
+  return `${qtyFmt} units of ${itemLabel} from ${vendorLabel} are on track${etaB ? `, expected ${etaB}` : ''}. ${lastContactLine} ${summaryLine} ${nextContactLine} ${placedLine} ${contactLine}`;
 }
 
 function renderPoNumberCell(o, canAct) {
@@ -718,6 +750,7 @@ function showPoNumberDetail(ledgerId) {
   const body = `
     <div style="margin-bottom:12px;">${value ? `PO Number: <strong>${value}</strong>` : 'No PO number on file for this order yet.'}</div>
     ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editPoNumber('${ledgerId}')">${value ? 'Edit' : 'Add'} PO Number</button>` : ''}
+    <button class="btn btn-ghost" style="margin-left:8px;" onclick="scrollToOrderRow('${ledgerId}')">Take me there</button>
   `;
   showDetail(`${o.product_name} — PO Number`, body);
 }
@@ -729,6 +762,7 @@ function showTrackingDetail(ledgerId) {
   const body = `
     <div style="margin-bottom:12px;">${value ? `Tracking: <strong>${value}</strong>` : 'No tracking info on file for this order yet.'}</div>
     ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editTracking('${ledgerId}')">${value ? 'Edit' : 'Add'} Tracking</button>` : ''}
+    <button class="btn btn-ghost" style="margin-left:8px;" onclick="scrollToOrderRow('${ledgerId}')">Take me there</button>
   `;
   showDetail(`${o.product_name} — Tracking`, body);
 }
@@ -769,7 +803,6 @@ function renderOpenOrderRow(o, editing) {
         ${canAct ? `
           <select onchange="handleOrderAction('${o.ledger_id}', this.value); this.value='';" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
             <option value="">Actions…</option>
-            <option value="edit">Edit</option>
             <option value="split">Split</option>
             <option value="delay">Delay</option>
             <option value="${o.order_status === 'paused' ? 'resume' : 'pause'}">${o.order_status === 'paused' ? 'Resume' : 'Pause'}</option>
@@ -778,14 +811,14 @@ function renderOpenOrderRow(o, editing) {
           </select>
         ` : '<span class="muted" style="font-size:12px;">view only</span>'}
       </td>
-      <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
+      <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}" title="Committed = this order is confirmed and in motion; not paused/on hold.">${o.order_status === 'paused' ? 'Paused' : 'Committed'}</span></td>
       <td>${renderPoNumberCell(o, canAct)}</td>
       <td>${o.vendor_name || '—'}</td>
-      <td>${o.qty ?? '—'}</td>
-      <td>${fmtDate(o.eta)}</td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
       <td style="white-space:normal; max-width:160px; word-break:break-word;">${renderTrackingCell(o, canAct)}</td>
-      <td>${fmtDate(o.last_contacted)}</td>
-      <td>${fmtDate(o.next_contact)}</td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${fmtDate(o.last_contacted)}</td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${fmtDate(o.next_contact)}</td>
     </tr>
   `;
 }
