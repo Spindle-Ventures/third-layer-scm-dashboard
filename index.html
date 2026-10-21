@@ -302,12 +302,7 @@ async function renderOverview() {
     </div>
 
     <div class="section-label">Agentic Recommendations — Validate or Dismiss</div>
-    <div class="card" style="padding:0; overflow-x:auto; margin-bottom:18px;">
-      <table style="white-space:nowrap;">
-        <thead><tr><th>SKU</th><th>Urgency</th><th>Problem</th><th>Decision</th></tr></thead>
-        <tbody id="overview-recs-body"></tbody>
-      </table>
-    </div>
+    <div id="recs-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:18px;"></div>
 
     <div class="section-label">Open Orders by Product — ${needsActionCount} need attention</div>
     <div class="card" style="padding: 12px 16px; margin-bottom: 10px;">
@@ -346,27 +341,28 @@ async function renderOverview() {
 
   applyOpenOrdersFilter();
 
-  const body = document.getElementById('overview-recs-body');
+  const grid = document.getElementById('recs-grid');
   if (!recs || recs.length === 0) {
-    body.innerHTML = `<tr><td colspan="4" class="empty-state">No open recommendations — nothing needs a decision today.</td></tr>`;
+    grid.innerHTML = `<div class="card empty-state" style="grid-column: 1 / -1;">No open recommendations — nothing needs a decision today.</div>`;
   } else {
-    body.innerHTML = recs.map(r => `
-      <tr>
-        <td><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></td>
-        <td><span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span></td>
-        <td>
+    grid.innerHTML = recs.map(r => `
+      <div class="card" style="padding:12px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
+          <div><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></div>
+          <span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
           <span class="pill clickable-pill watch" onclick="showDetail('${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}', '${r.shortfall_qty} units projected short by ${fmtDate(r.shortfall_month)}. ${fmtMoney2(r.cash_at_risk)} at risk. Place order by ${fmtDate(r.last_responsible_date)} (${r.days_until_deadline < 0 ? 'OVERDUE by ' + (-r.days_until_deadline) + ' days' : r.days_until_deadline + ' days remaining'}).')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
-        </td>
-        <td>
-          ${canEdit() ? `
-            <select onchange="decideRecommendation('${r.id}', this.value)" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
-              <option value="pending" ${r.decision === 'pending' ? 'selected' : ''}>Pending</option>
-              <option value="approved" ${r.decision === 'approved' ? 'selected' : ''}>Approved</option>
-              <option value="dismissed" ${r.decision === 'dismissed' ? 'selected' : ''}>Dismissed</option>
-            </select>
-          ` : `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}">${r.decision}</span>`}
-        </td>
-      </tr>
+          <span class="muted" style="font-size:12px;">Current inventory: <strong>${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
+        </div>
+        ${canEdit() ? `
+          <select onchange="decideRecommendation('${r.id}', this.value)" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
+            <option value="pending" ${r.decision === 'pending' ? 'selected' : ''}>Pending</option>
+            <option value="approved" ${r.decision === 'approved' ? 'selected' : ''}>Approved</option>
+            <option value="dismissed" ${r.decision === 'dismissed' ? 'selected' : ''}>Dismissed</option>
+          </select>
+        ` : `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}">${r.decision}</span>`}
+      </div>
     `).join('');
   }
 }
@@ -411,7 +407,7 @@ function applyOpenOrdersFilter() {
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
       <table style="white-space:nowrap;">
-        <thead><tr><th>Order Type</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Status</th><th>Action Needed</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Order Type</th><th>Action Needed</th><th>Actions</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Status</th></tr></thead>
         <tbody>
           ${group.rows.map(o => renderOpenOrderRow(o)).join('')}
         </tbody>
@@ -435,13 +431,13 @@ function renderOpenOrderRow(o, editing) {
     return `
       <tr id="row-${o.ledger_id}">
         <td><span class="pill watch">${orderTypeLabel}</span></td>
+        <td colspan="2"></td>
         <td>${o.vendor_name || '—'}</td>
         <td><input type="number" id="edit-qty-${o.ledger_id}" value="${o.qty ?? ''}" style="width:70px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="text" id="edit-tracking-${o.ledger_id}" value="${o.tracking_info || ''}" style="width:110px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
-        <td colspan="2"></td>
         <td>
           <button class="btn btn-primary" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
           <button class="btn btn-ghost" onclick="applyOpenOrdersFilter()">Cancel</button>
@@ -452,13 +448,6 @@ function renderOpenOrderRow(o, editing) {
   return `
     <tr id="row-${o.ledger_id}">
       <td><span class="pill watch">${orderTypeLabel}</span></td>
-      <td>${o.vendor_name || '—'}</td>
-      <td>${o.qty ?? '—'}</td>
-      <td>${fmtDate(o.eta)}</td>
-      <td>${o.tracking_info || '—'}</td>
-      <td>${fmtDate(o.last_contacted)}</td>
-      <td>${fmtDate(o.next_contact)}</td>
-      <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
       <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showDetail('${o.product_name} — ${orderTypeLabel}', '${detailJson}')">${o.action_needed}</span></td>
       <td>
         ${canAct ? `
@@ -473,6 +462,13 @@ function renderOpenOrderRow(o, editing) {
           </select>
         ` : '<span class="muted" style="font-size:12px;">view only</span>'}
       </td>
+      <td>${o.vendor_name || '—'}</td>
+      <td>${o.qty ?? '—'}</td>
+      <td>${fmtDate(o.eta)}</td>
+      <td>${o.tracking_info || '—'}</td>
+      <td>${fmtDate(o.last_contacted)}</td>
+      <td>${fmtDate(o.next_contact)}</td>
+      <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
     </tr>
   `;
 }
