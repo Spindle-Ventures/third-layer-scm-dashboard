@@ -286,16 +286,17 @@ const PROBLEM_LABELS = {
   overdue_contact: 'Contact Due',
 };
 
-function showDetail(title, body) {
+function showDetail(title, body, size) {
   const existing = document.getElementById('detail-modal-backdrop');
   if (existing) existing.remove();
   const el = document.createElement('div');
   el.id = 'detail-modal-backdrop';
   el.className = 'detail-modal-backdrop';
   el.onclick = (e) => { if (e.target === el) el.remove(); };
+  const maxWidth = size === 'wide' ? '960px' : '640px';
   el.innerHTML = `
-    <div class="detail-modal">
-      <div style="font-weight:700; margin-bottom:8px;">${title}</div>
+    <div class="detail-modal" style="max-width:${maxWidth};">
+      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${title}</div>
       <div style="font-size:14px; color:var(--ink); line-height:1.5;">${body}</div>
       <button class="btn btn-ghost" style="margin-top:16px;" onclick="document.getElementById('detail-modal-backdrop').remove()">Close</button>
     </div>
@@ -318,10 +319,11 @@ function showRecommendationDetail(recId) {
 
 function kpiTable(headers, rows) {
   if (rows.length === 0) return '<div class="muted">Nothing here right now.</div>';
+  const lastIdx = headers.length - 1;
   return `
-    <table style="width:100%; font-size:13px;">
-      <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
+    <table style="width:100%; font-size:13px; border-collapse:collapse;">
+      <thead><tr>${headers.map(h => `<th style="padding:8px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)'};">${r.map((c, ci) => `<td style="padding:8px 10px; border-bottom:1px solid var(--border); white-space:${ci === lastIdx ? 'normal' : 'nowrap'}; ${ci === lastIdx ? 'min-width:280px;' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody>
     </table>
   `;
 }
@@ -339,16 +341,14 @@ function showRecsKpiDetail() {
 
 function showOverdueKpiDetail() {
   const { overdueOrders } = window._kpiContext || { overdueOrders: [] };
-  const today = new Date().toISOString().slice(0, 10);
   const rows = overdueOrders.map(o => [
-    o.product_name,
-    o.vendor_name || '—',
+    `<strong>${o.product_name}</strong>`,
+    o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>',
     o.qty ?? '—',
     fmtDate(o.eta),
-    Math.round((new Date(today) - new Date(o.eta)) / 86400000),
-    o.internal_ref || o.vendor_po_number || '—',
+    buildActionDetail(o),
   ]);
-  showDetail('Overdue Orders', kpiTable(['Product', 'Vendor', 'Qty', 'ETA', 'Days Overdue', 'PO #'], rows));
+  showDetail('Overdue Orders', kpiTable(['Product', 'PO #', 'Qty', 'ETA', 'Why It\'s Overdue'], rows), 'wide');
 }
 
 function showContactsKpiDetail() {
@@ -359,18 +359,16 @@ function showContactsKpiDetail() {
     .sort((a, b) => (a.next_contact || '').localeCompare(b.next_contact || ''))
     .map(o => {
       const overdue = o.next_contact < today;
-      const why = overdue
-        ? `Contact overdue — regarding ${o.order_type === 'componentry' ? (o.component_name || 'component') : 'finished good'} (ETA ${fmtDate(o.eta)})`
-        : `Scheduled check-in — regarding ${o.order_type === 'componentry' ? (o.component_name || 'component') : 'finished good'} (ETA ${fmtDate(o.eta)})`;
       return [
         o.vendor_name || '—',
-        o.product_name,
-        o.internal_ref || o.vendor_po_number || '—',
-        why,
+        `<strong>${o.product_name}</strong>`,
+        o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>',
+        fmtDate(o.eta),
         `<span class="pill ${overdue ? 'bad' : 'watch'}">${fmtDate(o.next_contact)}</span>`,
+        buildActionDetail(o),
       ];
     });
-  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'PO #', 'Why', 'Next Contact'], rows));
+  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'PO #', 'ETA', 'Next Contact', 'Why'], rows), 'wide');
 }
 
 function showQcKpiDetail() {
@@ -450,34 +448,37 @@ async function renderOverview() {
 
   const monthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   window._kpiContext = { activeRecs, overdueOrders, contactsDueOrSoon, lastQc };
-  const pacingCard = (channel, label) => {
+  const pacingRow = (channel, label) => {
     const p = revenuePacing[channel];
     if (p.noForecast) {
       return `
-        <div class="card kpi-card">
-          <div class="kpi-label">${label} Revenue MTD vs Forecast</div>
-          <div class="pill watch" style="margin-top:6px;">No forecast set for ${monthLabel}</div>
-          <div class="muted" style="font-size:12px; margin-top:4px;">MTD actual: ${fmtMoney(p.mtd)} — set a forecast to see pacing.</div>
+        <div style="display:flex; align-items:center; gap:10px; padding:6px 0;">
+          <div style="width:70px; font-size:12px; font-weight:600;">${label}</div>
+          <div style="flex:1; font-size:12px;" class="muted">No forecast set for ${monthLabel} — MTD actual ${fmtMoney(p.mtd)}</div>
+          <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="editRevenueForecast('${channel}')">+ Set forecast</button>
         </div>
       `;
     }
-    const pillClass = p.pctOfPace >= 95 ? 'good' : (p.pctOfPace >= 80 ? 'watch' : 'bad');
+    const barColor = p.pctOfPace >= 95 ? 'var(--good-text)' : (p.pctOfPace >= 80 ? 'var(--watch-text)' : 'var(--bad-text)');
+    const fillPct = Math.min(100, p.pctOfPace);
     return `
-      <div class="card kpi-card">
-        <div style="display:flex; justify-content:space-between; align-items:baseline;">
-          <div class="kpi-label">${label} Revenue MTD vs Forecast</div>
-          <div class="kpi-value" style="font-size:20px;">${p.pctOfPace.toFixed(0)}%</div>
+      <div style="display:flex; align-items:center; gap:10px; padding:6px 0;">
+        <div style="width:70px; font-size:12px; font-weight:600;">${label}</div>
+        <div style="flex:1; background:var(--border); border-radius:6px; height:10px; overflow:hidden;">
+          <div style="width:${fillPct}%; background:${barColor}; height:100%;"></div>
         </div>
-        <div class="pill ${pillClass}">${p.pctOfPace >= 100 ? 'ahead of pace' : 'behind pace'} — ${fmtMoney(p.mtd)} of ${fmtMoney(p.expectedPace)} expected</div>
+        <div style="width:42px; text-align:right; font-size:13px; font-weight:700; color:${barColor};">${p.pctOfPace.toFixed(0)}%</div>
+        <div class="muted" style="font-size:11px; width:190px;">${fmtMoney(p.mtd)} of ${fmtMoney(p.expectedPace)} pace</div>
+        <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="editRevenueForecast('${channel}')">✎</button>
       </div>
     `;
   };
 
   el.innerHTML = `
-    <div class="section-label">Revenue Pacing — ${monthLabel}</div>
-    <div class="kpi-grid" style="margin-bottom:18px;">
-      ${pacingCard('shopify', 'Shopify')}
-      ${pacingCard('amazon', 'Amazon')}
+    <div class="card" style="padding:10px 14px; margin-bottom:14px;">
+      <div class="section-label" style="margin:0 0 2px;">Revenue Pacing — ${monthLabel}</div>
+      ${pacingRow('shopify', 'Shopify')}
+      ${pacingRow('amazon', 'Amazon')}
     </div>
 
     <div class="section-label">At a Glance</div>
@@ -533,6 +534,7 @@ async function renderOverview() {
         <label style="font-size:13px; font-weight:500; display:flex; align-items:center; gap:6px;">
           <input type="checkbox" id="filter-needs-action" checked onchange="applyOpenOrdersFilter()" /> Only show items needing attention
         </label>
+        <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide PO Number and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} PO # / Tracking</button>
       </div>
     </div>
     <div id="open-orders-groups"></div>
@@ -635,7 +637,7 @@ function applyOpenOrdersFilter() {
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
       <table style="white-space:nowrap;">
-        <thead><tr><th>Order Type</th><th>Action Needed</th><th>Actions</th><th>PO Number</th><th>Vendor</th><th>Qty</th><th>ETA</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Status</th></tr></thead>
+        <thead><tr><th>Order Type</th><th>Action Needed</th><th>Actions</th><th>Status</th><th>PO Number</th><th>Vendor</th><th>Qty</th><th>ETA</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
         <tbody>
           ${group.rows.map(o => renderOpenOrderRow(o)).join('')}
         </tbody>
@@ -689,6 +691,55 @@ function buildActionDetail(o) {
   return `${o.qty ?? 'An unknown quantity of'} units of ${itemLabel} from ${vendorLabel} are on track${o.eta ? `, expected ${fmtDate(o.eta)}` : ''}. ${lastContactLine} ${summaryLine} ${nextContactLine} ${placedLine} ${contactLine}`;
 }
 
+function renderPoNumberCell(o, canAct) {
+  const value = o.internal_ref || o.vendor_po_number || null;
+  if (window._revealOrderData) {
+    return canAct
+      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" onclick="editPoNumber('${o.ledger_id}')">${value || '+ Add'}</button>`
+      : (value || '—');
+  }
+  return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showPoNumberDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
+}
+
+function renderTrackingCell(o, canAct) {
+  const value = o.tracking_info || null;
+  if (window._revealOrderData) {
+    return canAct
+      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px; white-space:normal; word-break:break-word;" onclick="editTracking('${o.ledger_id}')">${value || '+ Add'}</button>`
+      : (value || '—');
+  }
+  return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showTrackingDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
+}
+
+function showPoNumberDetail(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const value = o.internal_ref || o.vendor_po_number || null;
+  const body = `
+    <div style="margin-bottom:12px;">${value ? `PO Number: <strong>${value}</strong>` : 'No PO number on file for this order yet.'}</div>
+    ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editPoNumber('${ledgerId}')">${value ? 'Edit' : 'Add'} PO Number</button>` : ''}
+  `;
+  showDetail(`${o.product_name} — PO Number`, body);
+}
+
+function showTrackingDetail(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const value = o.tracking_info || null;
+  const body = `
+    <div style="margin-bottom:12px;">${value ? `Tracking: <strong>${value}</strong>` : 'No tracking info on file for this order yet.'}</div>
+    ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editTracking('${ledgerId}')">${value ? 'Edit' : 'Add'} Tracking</button>` : ''}
+  `;
+  showDetail(`${o.product_name} — Tracking`, body);
+}
+
+function toggleRevealOrderData() {
+  window._revealOrderData = !window._revealOrderData;
+  const btn = document.getElementById('reveal-order-data-btn');
+  if (btn) btn.textContent = `👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} PO # / Tracking`;
+  applyOpenOrdersFilter();
+}
+
 function renderOpenOrderRow(o, editing) {
   const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
   const canAct = canEdit();
@@ -696,7 +747,7 @@ function renderOpenOrderRow(o, editing) {
     return `
       <tr id="row-${o.ledger_id}">
         <td><span class="pill watch">${orderTypeLabel}</span></td>
-        <td colspan="3"></td>
+        <td colspan="4"></td>
         <td>${o.vendor_name || '—'}</td>
         <td><input type="number" id="edit-qty-${o.ledger_id}" value="${o.qty ?? ''}" style="width:70px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
@@ -727,14 +778,14 @@ function renderOpenOrderRow(o, editing) {
           </select>
         ` : '<span class="muted" style="font-size:12px;">view only</span>'}
       </td>
-      <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" onclick="editPoNumber('${o.ledger_id}')">${o.internal_ref || o.vendor_po_number || '+ Add'}</button>` : (o.internal_ref || o.vendor_po_number || '—')}</td>
+      <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
+      <td>${renderPoNumberCell(o, canAct)}</td>
       <td>${o.vendor_name || '—'}</td>
       <td>${o.qty ?? '—'}</td>
       <td>${fmtDate(o.eta)}</td>
-      <td style="white-space:normal; max-width:160px; word-break:break-word;">${canAct ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px; white-space:normal; word-break:break-word;" onclick="editTracking('${o.ledger_id}')">${o.tracking_info || '+ Add'}</button>` : (o.tracking_info || '—')}</td>
+      <td style="white-space:normal; max-width:160px; word-break:break-word;">${renderTrackingCell(o, canAct)}</td>
       <td>${fmtDate(o.last_contacted)}</td>
       <td>${fmtDate(o.next_contact)}</td>
-      <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
     </tr>
   `;
 }
@@ -815,6 +866,23 @@ async function editTracking(ledgerId) {
   const newVal = prompt('Tracking info:', o.tracking_info || '');
   if (newVal === null) return;
   const { error } = await sb.from('inventory_ledger').update({ tracking_info: newVal || null }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
+}
+
+async function editRevenueForecast(channel) {
+  const monthStartIso = new Date().toISOString().slice(0, 7) + '-01';
+  const monthLabel = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const current = (window._revenuePacing || {})[channel];
+  const existingVal = current && !current.noForecast ? current.forecastFullMonth : '';
+  const input = prompt(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} full-month revenue forecast for ${monthLabel} ($):`, existingVal);
+  if (input === null) return;
+  const val = Number(input.replace(/[^0-9.]/g, ''));
+  if (!val || val <= 0) { alert('Enter a positive number.'); return; }
+  const { error } = await sb.from('revenue_forecasts').upsert(
+    { channel, forecast_month: monthStartIso, forecast_revenue: val, created_by: currentUserRow?.email || 'dashboard' },
+    { onConflict: 'channel,forecast_month' }
+  );
   if (error) { alert('Failed: ' + error.message); return; }
   await renderOverview();
 }
