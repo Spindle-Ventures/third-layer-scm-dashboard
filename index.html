@@ -319,18 +319,28 @@ function showRecommendationDetail(recId) {
 // ---------- Overview ----------
 async function renderOverview() {
   const el = document.getElementById('tab-overview');
-  const [{ data: recs }, { data: pos }, { data: openOrders }, { data: qcRuns }] = await Promise.all([
+  const [{ data: recs }, { data: pos }, { data: openOrders }, { data: qcRuns }, { data: invSnapshot }] = await Promise.all([
     sb.from('agent_recommendations').select('*, products(sku_code, display_name)').neq('decision', 'dismissed').order('days_until_deadline', { ascending: true }),
     sb.from('purchase_orders').select('*').in('status', ['draft', 'pending_approval', 'approved', 'placed', 'in_transit']),
     sb.from('open_orders_by_product').select('*'),
     sb.from('qc_runs').select('*').order('run_at', { ascending: false }).limit(1),
+    sb.from('product_inventory_snapshot').select('*, products(sku_code)'),
   ]);
+
+  window._invSnapshotBySku = {};
+  (invSnapshot || []).forEach(s => {
+    const sku = s.products?.sku_code;
+    if (!sku) return;
+    if (!window._invSnapshotBySku[sku]) window._invSnapshotBySku[sku] = {};
+    window._invSnapshotBySku[sku][s.channel] = s.qty;
+  });
 
   const activeRecs = (recs || []).filter(r => r.urgency !== 'OK');
   const criticalCount = activeRecs.filter(r => r.urgency === 'CRITICAL').length;
-  const openComponentryCount = (openOrders || []).filter(o => o.order_type === 'componentry').length;
+  const overdueCount = (openOrders || []).filter(o => o.action_needed === 'Overdue').length;
+  const contactDueCount = (openOrders || []).filter(o => o.action_needed === 'Contact Due').length;
   const lastQc = (qcRuns && qcRuns[0]) || null;
-  const needsActionCount = (openOrders || []).filter(o => o.action_needed !== 'On track — no action needed').length;
+  const needsActionCount = (openOrders || []).filter(o => o.action_needed !== 'On Track').length;
 
   el.innerHTML = `
     <div class="section-label">At a Glance</div>
@@ -344,17 +354,17 @@ async function renderOverview() {
       </div>
       <div class="card kpi-card">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
-          <div class="kpi-label">Open Purchase Orders</div>
-          <div class="kpi-value" style="font-size:20px;">${(pos || []).length}</div>
+          <div class="kpi-label">Overdue Orders</div>
+          <div class="kpi-value" style="font-size:20px;">${overdueCount}</div>
         </div>
-        <div class="muted" style="font-size:12px;">draft → in transit</div>
+        <div class="pill ${overdueCount > 0 ? 'bad' : 'good'}">${overdueCount > 0 ? 'past ETA, not landed' : 'none overdue'}</div>
       </div>
       <div class="card kpi-card">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
-          <div class="kpi-label">Open Componentry Orders</div>
-          <div class="kpi-value" style="font-size:20px;">${openComponentryCount}</div>
+          <div class="kpi-label">Vendor Contacts Due</div>
+          <div class="kpi-value" style="font-size:20px;">${contactDueCount}</div>
         </div>
-        <div class="muted" style="font-size:12px;">not yet landed</div>
+        <div class="pill ${contactDueCount > 0 ? 'watch' : 'good'}">${contactDueCount > 0 ? 'reach out now' : 'all current'}</div>
       </div>
       <div class="card kpi-card">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
@@ -465,20 +475,29 @@ function applyOpenOrdersFilter() {
     byProduct.get(o.product_sku).rows.push(o);
   });
 
-  groupsEl.innerHTML = [...byProduct.entries()].map(([sku, group]) => `
+  groupsEl.innerHTML = [...byProduct.entries()].map(([sku, group]) => {
+    const inv = (window._invSnapshotBySku || {})[sku] || {};
+    const shopifyQty = inv.shopify != null ? inv.shopify.toLocaleString() : '—';
+    const amazonQty = inv.amazon != null ? inv.amazon.toLocaleString() : 'not connected';
+    return `
     <div class="card" style="padding:0; margin-bottom:10px; overflow-x:auto;">
-      <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap;">
-        <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
+      <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+          <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
+          <span class="muted" style="font-size:12px;">Current Inventory — Shopify: <strong>${shopifyQty}</strong></span>
+          <span class="muted" style="font-size:12px;">Amazon: <strong>${amazonQty}</strong></span>
+        </div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
       <table style="white-space:nowrap;">
-        <thead><tr><th>Order Type</th><th>Action Needed</th><th>Actions</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Status</th></tr></thead>
+        <thead><tr><th>Order Type</th><th>Action Needed</th><th>Actions</th><th>PO Number</th><th>Vendor</th><th>Qty</th><th>ETA</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Status</th></tr></thead>
         <tbody>
           ${group.rows.map(o => renderOpenOrderRow(o)).join('')}
         </tbody>
       </table>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function actionPillClass(action) {
@@ -519,7 +538,7 @@ function renderOpenOrderRow(o, editing) {
     return `
       <tr id="row-${o.ledger_id}">
         <td><span class="pill watch">${orderTypeLabel}</span></td>
-        <td colspan="2"></td>
+        <td colspan="3"></td>
         <td>${o.vendor_name || '—'}</td>
         <td><input type="number" id="edit-qty-${o.ledger_id}" value="${o.qty ?? ''}" style="width:70px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
@@ -550,10 +569,11 @@ function renderOpenOrderRow(o, editing) {
           </select>
         ` : '<span class="muted" style="font-size:12px;">view only</span>'}
       </td>
+      <td>${o.internal_ref || o.vendor_po_number || '—'}</td>
       <td>${o.vendor_name || '—'}</td>
       <td>${o.qty ?? '—'}</td>
       <td>${fmtDate(o.eta)}</td>
-      <td>${o.tracking_info || '—'}</td>
+      <td style="white-space:normal; max-width:160px; word-break:break-word;">${o.tracking_info || '—'}</td>
       <td>${fmtDate(o.last_contacted)}</td>
       <td>${fmtDate(o.next_contact)}</td>
       <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
