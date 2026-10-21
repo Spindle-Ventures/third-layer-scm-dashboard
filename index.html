@@ -32,40 +32,40 @@
   }
   .serif { font-family: 'Playfair Display', serif; }
   header {
-    padding: 28px 40px 0 40px;
+    padding: 18px 40px 0 40px;
   }
   .brand { font-size: 13px; font-weight: 700; letter-spacing: 0.12em; color: var(--ink); }
-  h1.title { font-size: 32px; font-weight: 600; margin: 4px 0 2px 0; }
-  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 18px; }
+  h1.title { font-size: 26px; font-weight: 600; margin: 2px 0 2px 0; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
   .top-row { display: flex; justify-content: space-between; align-items: flex-start; }
   .snapshot-pill {
     background: var(--card); border: 1px solid var(--border); border-radius: 999px;
-    padding: 6px 14px; font-size: 12px; color: var(--muted);
+    padding: 5px 12px; font-size: 12px; color: var(--muted);
   }
   nav.tabs {
-    display: flex; gap: 28px; border-bottom: 1px solid var(--border);
-    padding: 0 40px; margin-top: 10px;
+    display: flex; gap: 24px; border-bottom: 1px solid var(--border);
+    padding: 0 40px; margin-top: 6px;
   }
   nav.tabs button {
     background: none; border: none; font-family: 'Inter'; font-size: 14px; font-weight: 500;
-    color: var(--muted); padding: 12px 0; cursor: pointer; border-bottom: 2px solid transparent;
+    color: var(--muted); padding: 9px 0; cursor: pointer; border-bottom: 2px solid transparent;
   }
   nav.tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
-  main { padding: 28px 40px 60px 40px; max-width: 1400px; margin: 0 auto; }
+  main { padding: 18px 40px 40px 40px; max-width: 1500px; margin: 0 auto; }
   .section-label {
     font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--muted);
-    margin: 28px 0 10px 0; text-transform: uppercase;
+    margin: 18px 0 8px 0; text-transform: uppercase;
   }
   .card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    padding: 20px 22px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px;
   }
   .kpi-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;
   }
-  .kpi-card { display: flex; flex-direction: column; gap: 6px; }
+  .kpi-card { display: flex; flex-direction: column; gap: 4px; }
   .kpi-label { font-size: 12px; color: var(--muted); font-weight: 500; }
-  .kpi-value { font-size: 28px; font-weight: 700; }
+  .kpi-value { font-size: 24px; font-weight: 700; }
   .pill {
     display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600;
     padding: 3px 9px; border-radius: 999px; width: fit-content;
@@ -75,8 +75,8 @@
   .pill.watch { background: var(--watch-bg); color: var(--watch-text); }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase;
-       letter-spacing: 0.04em; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-  td { padding: 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+       letter-spacing: 0.04em; padding: 7px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   tr:last-child td { border-bottom: none; }
   .urgency-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; letter-spacing: 0.03em; }
   .urgency-CRITICAL { background: var(--bad-bg); color: var(--bad-text); }
@@ -106,6 +106,16 @@
   .role-badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 3px 9px; border-radius: 999px; }
   .top-actions { display: flex; align-items: center; gap: 10px; }
   .empty-state { color: var(--muted); font-size: 14px; padding: 30px; text-align: center; }
+  .clickable-pill { cursor: pointer; }
+  .clickable-pill:hover { filter: brightness(0.95); }
+  .detail-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(44,42,38,0.35); display: flex; align-items: center;
+    justify-content: center; z-index: 1000;
+  }
+  .detail-modal {
+    background: var(--card); border-radius: 14px; padding: 22px 26px; max-width: 400px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+  }
 </style>
 </head>
 <body>
@@ -219,11 +229,28 @@ function fmtDate(d) {
   return `${m}-${day}-${y}`;
 }
 const PROBLEM_LABELS = {
-  shortfall: 'Projected Shortfall',
+  shortfall: 'Shortfall',
   vendor_delay: 'Vendor Delay',
-  safety_stock_review: 'Safety Stock Review Due',
-  overdue_contact: 'Overdue Vendor Contact',
+  safety_stock_review: 'Review Due',
+  overdue_contact: 'Contact Due',
 };
+
+function showDetail(title, body) {
+  const existing = document.getElementById('detail-modal-backdrop');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div class="detail-modal">
+      <div style="font-weight:700; margin-bottom:8px;">${title}</div>
+      <div style="font-size:14px; color:var(--ink); line-height:1.5;">${body}</div>
+      <button class="btn btn-ghost" style="margin-top:16px;" onclick="document.getElementById('detail-modal-backdrop').remove()">Close</button>
+    </div>
+  `;
+  document.body.appendChild(el);
+}
 
 // ---------- Overview ----------
 async function renderOverview() {
@@ -245,40 +272,56 @@ async function renderOverview() {
     <div class="section-label">At a Glance</div>
     <div class="kpi-grid">
       <div class="card kpi-card">
-        <div class="kpi-label">Open Recommendations</div>
-        <div class="kpi-value">${activeRecs.length}</div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <div class="kpi-label">Open Recommendations</div>
+          <div class="kpi-value" style="font-size:20px;">${activeRecs.length}</div>
+        </div>
         <div class="pill ${criticalCount > 0 ? 'bad' : 'good'}">${criticalCount} critical</div>
       </div>
       <div class="card kpi-card">
-        <div class="kpi-label">Open Purchase Orders</div>
-        <div class="kpi-value">${(pos || []).length}</div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <div class="kpi-label">Open Purchase Orders</div>
+          <div class="kpi-value" style="font-size:20px;">${(pos || []).length}</div>
+        </div>
         <div class="muted" style="font-size:12px;">draft → in transit</div>
       </div>
       <div class="card kpi-card">
-        <div class="kpi-label">Open Componentry Orders</div>
-        <div class="kpi-value">${openComponentryCount}</div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <div class="kpi-label">Open Componentry Orders</div>
+          <div class="kpi-value" style="font-size:20px;">${openComponentryCount}</div>
+        </div>
         <div class="muted" style="font-size:12px;">not yet landed</div>
       </div>
       <div class="card kpi-card">
-        <div class="kpi-label">Data Last Updated</div>
-        <div class="kpi-value" style="font-size:18px;">${lastQc ? new Date(lastQc.run_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}</div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <div class="kpi-label">Data Last Updated</div>
+          <div class="kpi-value" style="font-size:14px;">${lastQc ? new Date(lastQc.run_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}</div>
+        </div>
         <div class="pill ${lastQc && lastQc.all_clear ? 'good' : 'bad'}">${lastQc ? (lastQc.all_clear ? 'QC: all clear' : 'QC: discrepancy found') : 'no QC run yet'}</div>
       </div>
     </div>
 
+    <div class="section-label">Agentic Recommendations — Validate or Dismiss</div>
+    <div class="card" style="padding:0; overflow-x:auto; margin-bottom:18px;">
+      <table style="white-space:nowrap;">
+        <thead><tr><th>SKU</th><th>Urgency</th><th>Problem</th><th>Decision</th></tr></thead>
+        <tbody id="overview-recs-body"></tbody>
+      </table>
+    </div>
+
     <div class="section-label">Open Orders by Product — ${needsActionCount} need attention</div>
-    <div class="card" style="padding: 16px 22px; margin-bottom: 14px;">
+    <div class="card" style="padding: 12px 16px; margin-bottom: 10px;">
       <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
         <label style="font-size:13px; font-weight:500;">Product:
           <select id="filter-product" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
             <option value="all">All products</option>
           </select>
         </label>
-        <label style="font-size:13px; font-weight:500;">Type:
+        <label style="font-size:13px; font-weight:500;">Order Type:
           <select id="filter-type" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
             <option value="all">All types</option>
-            <option value="finished_good">Purchase Orders (finished goods)</option>
-            <option value="componentry">Componentry</option>
+            <option value="finished_good">Finished Good</option>
+            <option value="componentry">Component</option>
           </select>
         </label>
         <label style="font-size:13px; font-weight:500; display:flex; align-items:center; gap:6px;">
@@ -287,21 +330,19 @@ async function renderOverview() {
       </div>
     </div>
     <div id="open-orders-groups"></div>
-
-    <div class="section-label" style="margin-top:28px;">Agentic Recommendations — Validate or Dismiss</div>
-    <div class="card" style="padding:0; overflow-x:auto;">
-      <table style="white-space:nowrap;">
-        <thead><tr><th>SKU</th><th>Urgency</th><th>Problem</th><th>Decision</th></tr></thead>
-        <tbody id="overview-recs-body"></tbody>
-      </table>
-    </div>
   `;
 
   window._openOrdersCache = openOrders || [];
   const productSelect = document.getElementById('filter-product');
   const uniqueProducts = [...new Map((openOrders || []).map(o => [o.product_sku, o.product_name])).entries()];
   uniqueProducts.sort((a, b) => a[0].localeCompare(b[0]));
-  productSelect.innerHTML = '<option value="all">All products</option>' + uniqueProducts.map(([sku, name]) => `<option value="${sku}">${name} (${sku})</option>`).join('');
+  // Preserve filter selections across re-renders (e.g. after an action) instead of resetting them.
+  const prevProduct = window._filterState?.product || 'all';
+  const prevType = window._filterState?.type || 'all';
+  const prevNeedsAction = window._filterState?.needsAction ?? true;
+  productSelect.innerHTML = '<option value="all">All products</option>' + uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${sku === prevProduct ? 'selected' : ''}>${name} (${sku})</option>`).join('');
+  document.getElementById('filter-type').value = prevType;
+  document.getElementById('filter-needs-action').checked = prevNeedsAction;
 
   applyOpenOrdersFilter();
 
@@ -314,8 +355,7 @@ async function renderOverview() {
         <td><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></td>
         <td><span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span></td>
         <td>
-          <span class="pill watch">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
-          <span class="muted" style="font-size:12px;">— ${r.shortfall_qty} units by ${fmtDate(r.shortfall_month)}, ${fmtMoney2(r.cash_at_risk)} at risk</span>
+          <span class="pill clickable-pill watch" onclick="showDetail('${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}', '${r.shortfall_qty} units projected short by ${fmtDate(r.shortfall_month)}. ${fmtMoney2(r.cash_at_risk)} at risk. Place order by ${fmtDate(r.last_responsible_date)} (${r.days_until_deadline < 0 ? 'OVERDUE by ' + (-r.days_until_deadline) + ' days' : r.days_until_deadline + ' days remaining'}).')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
         </td>
         <td>
           ${canEdit() ? `
@@ -343,11 +383,12 @@ function applyOpenOrdersFilter() {
   const productFilter = document.getElementById('filter-product').value;
   const typeFilter = document.getElementById('filter-type').value;
   const onlyAction = document.getElementById('filter-needs-action').checked;
+  window._filterState = { product: productFilter, type: typeFilter, needsAction: onlyAction };
 
   const filtered = all.filter(o => {
     if (productFilter !== 'all' && o.product_sku !== productFilter) return false;
     if (typeFilter !== 'all' && o.order_type !== typeFilter) return false;
-    if (onlyAction && o.action_needed === 'On track — no action needed') return false;
+    if (onlyAction && o.action_needed === 'On Track') return false;
     return true;
   });
 
@@ -364,8 +405,8 @@ function applyOpenOrdersFilter() {
   });
 
   groupsEl.innerHTML = [...byProduct.entries()].map(([sku, group]) => `
-    <div class="card" style="padding:0; margin-bottom:14px; overflow-x:auto;">
-      <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap;">
+    <div class="card" style="padding:0; margin-bottom:10px; overflow-x:auto;">
+      <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap;">
         <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
@@ -379,10 +420,17 @@ function applyOpenOrdersFilter() {
   `).join('');
 }
 
+function actionPillClass(action) {
+  if (action === 'Overdue') return 'bad';
+  if (action === 'On Track') return 'good';
+  if (action === 'Paused') return 'watch';
+  return 'watch'; // Contact Due, ETA Soon
+}
+
 function renderOpenOrderRow(o, editing) {
-  const needsAction = o.action_needed !== 'On track — no action needed' && o.order_status !== 'paused';
   const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
   const canAct = canEdit();
+  const detailJson = JSON.stringify(o.action_detail || '').replace(/"/g, '&quot;');
   if (editing) {
     return `
       <tr id="row-${o.ledger_id}">
@@ -411,21 +459,33 @@ function renderOpenOrderRow(o, editing) {
       <td>${fmtDate(o.last_contacted)}</td>
       <td>${fmtDate(o.next_contact)}</td>
       <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}">${o.order_status === 'paused' ? 'Paused' : 'Active'}</span></td>
-      <td><span class="pill ${needsAction ? (o.action_needed.startsWith('OVERDUE') ? 'bad' : 'watch') : 'good'}">${o.action_needed}</span></td>
+      <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showDetail('${o.product_name} — ${orderTypeLabel}', '${detailJson}')">${o.action_needed}</span></td>
       <td>
         ${canAct ? `
-          <button class="btn btn-ghost" onclick="editOpenOrderRow('${o.ledger_id}')">Edit</button>
-          <button class="btn btn-ghost" onclick="splitOrder('${o.ledger_id}')">Split</button>
-          <button class="btn btn-ghost" onclick="delayOrder('${o.ledger_id}')">Delay</button>
-          ${o.order_status === 'paused'
-            ? `<button class="btn btn-ghost" onclick="resumeOrder('${o.ledger_id}')">Resume</button>`
-            : `<button class="btn btn-ghost" onclick="pauseOrder('${o.ledger_id}')">Pause</button>`}
-          <button class="btn btn-ghost" onclick="cancelOrder('${o.ledger_id}')">Cancel</button>
-          <button class="btn btn-primary" onclick="markLanded('${o.ledger_id}')">Mark Landed</button>
+          <select onchange="handleOrderAction('${o.ledger_id}', this.value); this.value='';" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
+            <option value="">Actions…</option>
+            <option value="edit">Edit</option>
+            <option value="split">Split</option>
+            <option value="delay">Delay</option>
+            <option value="${o.order_status === 'paused' ? 'resume' : 'pause'}">${o.order_status === 'paused' ? 'Resume' : 'Pause'}</option>
+            <option value="cancel">Cancel</option>
+            <option value="land">Mark Landed</option>
+          </select>
         ` : '<span class="muted" style="font-size:12px;">view only</span>'}
       </td>
     </tr>
   `;
+}
+
+function handleOrderAction(ledgerId, action) {
+  if (!action) return;
+  if (action === 'edit') return editOpenOrderRow(ledgerId);
+  if (action === 'split') return splitOrder(ledgerId);
+  if (action === 'delay') return delayOrder(ledgerId);
+  if (action === 'pause') return pauseOrder(ledgerId);
+  if (action === 'resume') return resumeOrder(ledgerId);
+  if (action === 'cancel') return cancelOrder(ledgerId);
+  if (action === 'land') return markLanded(ledgerId);
 }
 
 function editOpenOrderRow(ledgerId) {
@@ -658,7 +718,14 @@ async function renderVendors() {
 }
 
 // ---------- Boot ----------
-sb.auth.onAuthStateChange((event, session) => { if (session) loadApp(session); });
+// Only (re)render the whole app on an actual sign-in — NOT on every auth event. Supabase fires
+// TOKEN_REFRESHED periodically (including when the browser tab regains focus/visibility), and
+// re-running loadApp() on that event was wiping all filter selections every time Alex switched
+// away and back to the tab (found 2026-10-21). SIGNED_IN/INITIAL_SESSION only fire once per
+// actual login, which is the only time we need a full rebuild.
+sb.auth.onAuthStateChange((event, session) => {
+  if (session && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) loadApp(session);
+});
 checkSession();
 </script>
 </body>
