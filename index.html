@@ -323,7 +323,7 @@ function scrollToOrderRow(ledgerId) {
   document.getElementById('filter-type').value = 'all';
   window._needsActionFilter = false;
   const toggleBtn = document.getElementById('needs-action-toggle-btn');
-  if (toggleBtn) { toggleBtn.textContent = '⚑ Showing: all orders'; toggleBtn.className = 'btn btn-ghost'; }
+  if (toggleBtn) { toggleBtn.textContent = '⚑ Show Needs-Attention Only'; toggleBtn.className = 'btn btn-ghost'; }
   applyOpenOrdersFilter();
   const row = document.getElementById('row-' + ledgerId);
   if (!row) return;
@@ -588,7 +588,7 @@ async function renderOverview() {
             <option value="componentry">Component</option>
           </select>
         </label>
-        <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleNeedsActionFilter()">⚑ ${window._needsActionFilter !== false ? 'Showing: needs attention only' : 'Showing: all orders'}</button>
+        <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
         <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
       </div>
     </div>
@@ -598,7 +598,7 @@ async function renderOverview() {
   window._openOrdersCache = openOrders || [];
   const productSelect = document.getElementById('filter-product');
   const uniqueProducts = [...new Map((openOrders || []).map(o => [o.product_sku, o.product_name])).entries()];
-  uniqueProducts.sort((a, b) => a[0].localeCompare(b[0]));
+  uniqueProducts.sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
   // Preserve filter selections across re-renders (e.g. after an action) instead of resetting them.
   const prevProduct = window._filterState?.product || 'all';
   const prevType = window._filterState?.type || 'all';
@@ -658,7 +658,7 @@ function applyOpenOrdersFilter() {
 
   const groupsEl = document.getElementById('open-orders-groups');
   if (filtered.length === 0) {
-    groupsEl.innerHTML = `<div class="card empty-state">Nothing matches these filters${onlyAction ? ' — try the "Showing: needs attention only" button to see all orders' : ''}.</div>`;
+    groupsEl.innerHTML = `<div class="card empty-state">Nothing matches these filters${onlyAction ? ' — try the "Show All Orders" button' : ''}.</div>`;
     return;
   }
 
@@ -668,7 +668,7 @@ function applyOpenOrdersFilter() {
     byProduct.get(o.product_sku).rows.push(o);
   });
 
-  groupsEl.innerHTML = [...byProduct.entries()].map(([sku, group]) => {
+  groupsEl.innerHTML = [...byProduct.entries()].sort((a, b) => productSortRank(a[1].name) - productSortRank(b[1].name) || a[1].name.localeCompare(b[1].name)).map(([sku, group]) => {
     const inv = (window._invSnapshotBySku || {})[sku] || {};
     const safetyStock = (window._safetyStockBySku || {})[sku];
     const invColor = (qty) => {
@@ -703,6 +703,15 @@ function applyOpenOrdersFilter() {
 function showSafetyStockDetail(sku) {
   const basis = (window._safetyStockBasisBySku || {})[sku] || 'No rationale on file — this product may not have enough sales history yet for the calculation.';
   showDetail(`${sku} — Safety Stock Rationale`, basis);
+}
+
+function productSortRank(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('night oil')) return 0;
+  if (n.includes('day spray')) return 1;
+  if (n.includes('mud') || n.includes('armpit mud')) return 2;
+  if (n.includes('deodorant')) return 3;
+  return 4;
 }
 
 function componentShortLabel(name) {
@@ -886,7 +895,8 @@ function toggleNeedsActionFilter() {
   window._needsActionFilter = window._needsActionFilter === false ? true : false;
   const btn = document.getElementById('needs-action-toggle-btn');
   if (btn) {
-    btn.textContent = `⚑ ${window._needsActionFilter !== false ? 'Showing: needs attention only' : 'Showing: all orders'}`;
+    btn.textContent = `⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}`;
+    btn.title = window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order';
     btn.className = `btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}`;
   }
   applyOpenOrdersFilter();
@@ -1099,7 +1109,8 @@ async function renderInventory() {
     <div class="kpi-grid" id="inventory-cards"></div>
   `;
   const cardsEl = document.getElementById('inventory-cards');
-  cardsEl.innerHTML = (products || []).map(p => {
+  const sortedProducts = [...(products || [])].sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name));
+  cardsEl.innerHTML = sortedProducts.map(p => {
     const projRows = (projections || []).filter(m => m.product_id === p.product_id).sort((a, b) => a.projection_month.localeCompare(b.projection_month));
     const belowSafety = p.qty_on_hand < p.safety_stock_qty;
     const canvasId = 'spark-' + p.product_id;
