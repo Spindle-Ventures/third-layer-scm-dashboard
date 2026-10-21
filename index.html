@@ -681,25 +681,60 @@ function applyOpenOrdersFilter() {
     const shopifyQty = inv.shopify != null ? inv.shopify.toLocaleString() : '—';
     const amazonQty = inv.amazon != null ? inv.amazon.toLocaleString() : 'not connected';
     const shopifyColor = invColor(inv.shopify);
+
+    const fgRows = group.rows.filter(o => o.order_type !== 'componentry');
+    const compRows = group.rows.filter(o => o.order_type === 'componentry');
+
+    const fgTable = fgRows.length === 0 ? '' : `
+      <div class="muted" style="font-size:11px; font-weight:600; padding:8px 14px 2px; text-transform:uppercase; letter-spacing:0.03em;">Finished Good Orders</div>
+      <table style="white-space:nowrap;">
+        <thead><tr><th>Order Health</th><th>ETA</th><th></th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
+        <tbody>${fgRows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
+      </table>`;
+
+    const compTable = compRows.length === 0 ? '' : `
+      <div class="muted" style="font-size:11px; font-weight:600; padding:8px 14px 2px; text-transform:uppercase; letter-spacing:0.03em;">Componentry Orders</div>
+      <table style="white-space:nowrap;">
+        <thead><tr><th>Component</th><th>Order Health</th><th>ETA</th><th></th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
+        <tbody>${compRows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
+      </table>`;
+
     return `
     <div class="card" style="padding:0; margin-bottom:10px; overflow-x:auto;">
       <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap; flex-wrap:wrap; gap:8px;">
         <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
           <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
-          <span style="font-size:13px;">Current Inventory — Shopify: <strong style="font-size:15px; color:${shopifyColor};">${shopifyQty}</strong>${safetyStock != null ? ` <span class="muted" style="font-size:11px; cursor:help; text-decoration:underline dotted;" title="${(window._safetyStockBasisBySku || {})[sku] || 'Calculated via Z x sigma x sqrt(lead time) -- see spec Section 7.'}">(safety stock ${safetyStock.toLocaleString()})</span>` : ''}</span>
+          <span style="font-size:13px;">Current Inventory — Shopify: <strong style="font-size:15px; color:${shopifyColor};">${shopifyQty}</strong>${safetyStock != null ? ` <span class="pill clickable-pill watch" style="font-size:11px;" onclick="showSafetyStockDetail('${sku}')">safety stock ${safetyStock.toLocaleString()}</span>` : ''}</span>
           <span style="font-size:13px;">Amazon: <strong style="font-size:15px; color:var(--ink);">${amazonQty}</strong></span>
         </div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
-      <table style="white-space:nowrap;">
-        <thead><tr><th>Component</th><th>Order Type</th><th>Order Health</th><th>ETA</th><th>Actions</th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
-        <tbody>
-          ${group.rows.map(o => renderOpenOrderRow(o)).join('')}
-        </tbody>
-      </table>
+      ${fgTable}
+      ${compTable}
     </div>
   `;
   }).join('');
+}
+
+function showSafetyStockDetail(sku) {
+  const basis = (window._safetyStockBasisBySku || {})[sku] || 'No rationale on file — this product may not have enough sales history yet for the calculation.';
+  showDetail(`${sku} — Safety Stock Rationale`, basis);
+}
+
+function componentShortLabel(name) {
+  if (!name) return '—';
+  const n = name.toLowerCase();
+  if (n.includes('dropper')) return 'Droppers';
+  if (n.includes('bottle')) return 'Bottles';
+  if (n.includes('jar')) return 'Jars';
+  if (n.includes('label')) return 'Labels';
+  if (n.includes('lid')) return 'Lids';
+  if (n.includes('stopper')) return 'Stoppers';
+  if (n.includes('ring')) return 'Rings';
+  if (n.includes('cap')) return 'Caps';
+  if (n.includes('patch')) return 'Patches';
+  if (n.includes('pump')) return 'Pumps';
+  return name.split(' ').pop();
 }
 
 function actionPillClass(action) {
@@ -714,46 +749,38 @@ function buildActionDetail(o) {
   const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
   const vendorLabel = o.vendor_name || 'the vendor';
   const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
-  const qtyFmt = o.qty != null ? o.qty.toLocaleString() : 'unknown qty';
+  const qtyFmt = o.qty != null ? o.qty.toLocaleString() : 'an unknown number of';
   const contactWho = o.vendor_contact_name || o.vendor_contact_email
-    ? `${o.vendor_contact_name || ''}${o.vendor_contact_name && o.vendor_contact_email ? ' — ' : ''}${o.vendor_contact_email || ''}`
+    ? `${o.vendor_contact_name || ''}${o.vendor_contact_name && o.vendor_contact_email ? ' at ' : ''}${o.vendor_contact_email || ''}`
     : vendorLabel;
 
-  // "What's late/what's the order": one line, no repetition later.
-  const whatLine = `<strong>${qtyFmt} ${itemLabel}</strong>${o.eta ? `, ETA <strong>${fmtDate(o.eta)}</strong>` : ''}${o.placed_date ? ` (placed ${fmtDate(o.placed_date)})` : ''}`;
-
-  // "What was the last update, and does it explain the delay?" -- pull from notes if present,
-  // otherwise say plainly that nothing's logged, instead of restating the order details again.
-  const lastUpdateDate = o.last_contacted || o.placed_date;
-  let updateLine;
-  if (o.notes) {
-    updateLine = `Last update${lastUpdateDate ? ` (${fmtDate(lastUpdateDate)})` : ''}: "${o.notes}"`;
-  } else {
-    updateLine = `No update logged since it was placed${o.placed_date ? ` on ${fmtDate(o.placed_date)}` : ''}.`;
-  }
+  const whatOrder = `${qtyFmt} units of ${itemLabel}`;
+  const updateClause = o.notes
+    ? `The last update we have${o.last_contacted ? ` (${fmtDate(o.last_contacted)})` : ''} is: "${o.notes}."`
+    : `There's no update logged${o.placed_date ? ` since it was placed on ${fmtDate(o.placed_date)}` : ''}.`;
 
   if (o.order_status === 'paused') {
-    return `${whatLine}<br>Paused — on hold, won't trigger overdue or contact alerts until resumed.<br>${updateLine}`;
+    return `${whatOrder} — this order is paused, so it won't trigger overdue or contact alerts until it's resumed. ${updateClause}`;
   }
 
   if (o.eta && o.eta < today && !o.landed) {
     const daysOverdue = daysBetween(o.eta, today);
-    return `${whatLine} — <strong>${daysOverdue} day(s) overdue</strong>.<br>${updateLine}<br>Next step: confirm status with ${contactWho}.`;
+    return `${whatOrder} were due <strong>${fmtDate(o.eta)}</strong> and still haven't landed — that's <strong>${daysOverdue} day(s) late</strong>. ${updateClause} Worth confirming with ${contactWho} to see what's actually going on.`;
   }
 
   if (o.next_contact && o.next_contact < today) {
     const daysOverdue = daysBetween(o.next_contact, today);
-    return `${whatLine}<br>Vendor check-in was due ${fmtDate(o.next_contact)} — <strong>${daysOverdue} day(s) overdue</strong>.<br>${updateLine}<br>Next step: reach out to ${contactWho} now.`;
+    return `We were supposed to check in with ${vendorLabel} about ${itemLabel} by <strong>${fmtDate(o.next_contact)}</strong>, and that's now <strong>${daysOverdue} day(s) overdue</strong>. ${updateClause} Worth reaching out to ${contactWho} now.`;
   }
 
   if (o.eta && daysBetween(today, o.eta) <= 14 && daysBetween(today, o.eta) >= 0) {
     const daysUntil = daysBetween(today, o.eta);
-    return `${whatLine} — landing in ${daysUntil} day(s).<br>${updateLine}<br>Next step: confirm shipment/tracking with ${contactWho} before it lands.`;
+    return `${whatOrder} are expected to land <strong>${fmtDate(o.eta)}</strong> — about ${daysUntil} day(s) out. ${updateClause} Worth confirming shipment/tracking with ${contactWho} before it lands.`;
   }
 
   // On Track
-  const nextContactLine = o.next_contact ? `Next check-in scheduled ${fmtDate(o.next_contact)}.` : `No next check-in scheduled.`;
-  return `${whatLine} — on track.<br>${updateLine}<br>${nextContactLine}`;
+  const nextContactPhrase = o.next_contact ? `we've got a check-in scheduled for ${fmtDate(o.next_contact)}.` : `there's no next check-in scheduled yet.`;
+  return `${whatOrder} are on track${o.eta ? `, expected ${fmtDate(o.eta)}` : ''}. ${updateClause} Looking ahead, ${nextContactPhrase}`;
 }
 
 function renderPoNumberCell(o, canAct) {
@@ -808,13 +835,12 @@ function toggleRevealOrderData() {
 }
 
 function renderOpenOrderRow(o, editing) {
-  const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
   const canAct = canEdit();
+  const compCell = o.order_type === 'componentry' ? `<td>${componentShortLabel(o.component_name)}</td>` : '';
   if (editing) {
     return `
       <tr id="row-${o.ledger_id}">
-        <td>${o.order_type === 'componentry' ? (o.component_name || '—') : '—'}</td>
-        <td><span class="pill watch">${orderTypeLabel}</span></td>
+        ${compCell ? '<td></td>' : ''}
         <td></td>
         <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td>
@@ -833,22 +859,10 @@ function renderOpenOrderRow(o, editing) {
   }
   return `
     <tr id="row-${o.ledger_id}">
-      <td>${o.order_type === 'componentry' ? (o.component_name || '—') : '—'}</td>
-      <td><span class="pill watch">${orderTypeLabel}</span></td>
+      ${compCell}
       <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showOpenOrderDetail('${o.ledger_id}')">${o.action_needed}</span></td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
-      <td>
-        ${canAct ? `
-          <select onchange="handleOrderAction('${o.ledger_id}', this.value); this.value='';" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
-            <option value="">Actions…</option>
-            <option value="split">Split</option>
-            <option value="delay">Delay</option>
-            <option value="${o.order_status === 'paused' ? 'resume' : 'pause'}">${o.order_status === 'paused' ? 'Resume' : 'Pause'}</option>
-            <option value="cancel">Cancel</option>
-            <option value="land">Mark Landed</option>
-          </select>
-        ` : '<span class="muted" style="font-size:12px;">view only</span>'}
-      </td>
+      <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}')" title="Actions">⋯</button>` : ''}</td>
       <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}" title="Committed = this order is confirmed and in motion; not paused/on hold.">${o.order_status === 'paused' ? 'Paused' : 'Committed'}</span></td>
       <td>${renderPoNumberCell(o, canAct)}</td>
       <td>${o.vendor_name || '—'}</td>
@@ -858,6 +872,20 @@ function renderOpenOrderRow(o, editing) {
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${fmtDate(o.next_contact)}</td>
     </tr>
   `;
+}
+
+function showOrderActionsMenu(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const btn = (label, action) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px;" onclick="document.getElementById('detail-modal-backdrop').remove(); handleOrderAction('${ledgerId}', '${action}')">${label}</button>`;
+  const body = `
+    ${btn('Split', 'split')}
+    ${btn('Delay', 'delay')}
+    ${btn(o.order_status === 'paused' ? 'Resume' : 'Pause', o.order_status === 'paused' ? 'resume' : 'pause')}
+    ${btn('Cancel', 'cancel')}
+    ${btn('Mark Landed', 'land')}
+  `;
+  showDetail(`${o.product_name} — Actions`, body);
 }
 
 function handleOrderAction(ledgerId, action) {
