@@ -682,23 +682,6 @@ function applyOpenOrdersFilter() {
     const amazonQty = inv.amazon != null ? inv.amazon.toLocaleString() : 'not connected';
     const shopifyColor = invColor(inv.shopify);
 
-    const fgRows = group.rows.filter(o => o.order_type !== 'componentry');
-    const compRows = group.rows.filter(o => o.order_type === 'componentry');
-
-    const fgTable = fgRows.length === 0 ? '' : `
-      <div class="muted" style="font-size:11px; font-weight:600; padding:8px 14px 2px; text-transform:uppercase; letter-spacing:0.03em;">Finished Good Orders</div>
-      <table style="white-space:nowrap;">
-        <thead><tr><th>Order Health</th><th>ETA</th><th></th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
-        <tbody>${fgRows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
-      </table>`;
-
-    const compTable = compRows.length === 0 ? '' : `
-      <div class="muted" style="font-size:11px; font-weight:600; padding:8px 14px 2px; text-transform:uppercase; letter-spacing:0.03em;">Componentry Orders</div>
-      <table style="white-space:nowrap;">
-        <thead><tr><th>Component</th><th>Order Health</th><th>ETA</th><th></th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
-        <tbody>${compRows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
-      </table>`;
-
     return `
     <div class="card" style="padding:0; margin-bottom:10px; overflow-x:auto;">
       <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap; flex-wrap:wrap; gap:8px;">
@@ -709,8 +692,10 @@ function applyOpenOrdersFilter() {
         </div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
-      ${fgTable}
-      ${compTable}
+      <table style="white-space:nowrap;">
+        <thead><tr><th></th><th>Component</th><th>Order Health</th><th>ETA</th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
+        <tbody>${group.rows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
+      </table>
     </div>
   `;
   }).join('');
@@ -836,17 +821,17 @@ function toggleRevealOrderData() {
 
 function renderOpenOrderRow(o, editing) {
   const canAct = canEdit();
-  const compCell = o.order_type === 'componentry' ? `<td>${componentShortLabel(o.component_name)}</td>` : '';
+  const componentText = o.order_type === 'componentry' ? componentShortLabel(o.component_name) : '—';
   if (editing) {
     return `
       <tr id="row-${o.ledger_id}">
-        ${compCell ? '<td></td>' : ''}
-        <td></td>
-        <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td>
           <button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
           <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="applyOpenOrdersFilter()">Cancel</button>
         </td>
+        <td>${componentText}</td>
+        <td></td>
+        <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td></td>
         <td></td>
         <td>${o.vendor_name || '—'}</td>
@@ -859,10 +844,10 @@ function renderOpenOrderRow(o, editing) {
   }
   return `
     <tr id="row-${o.ledger_id}">
-      ${compCell}
+      <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}')" title="Actions">⋯</button>` : ''}</td>
+      <td>${componentText}</td>
       <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showOpenOrderDetail('${o.ledger_id}')">${o.action_needed}</span></td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
-      <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}')" title="Actions">⋯</button>` : ''}</td>
       <td><span class="pill ${o.order_status === 'paused' ? 'watch' : 'good'}" title="Committed = this order is confirmed and in motion; not paused/on hold.">${o.order_status === 'paused' ? 'Paused' : 'Committed'}</span></td>
       <td>${renderPoNumberCell(o, canAct)}</td>
       <td>${o.vendor_name || '—'}</td>
