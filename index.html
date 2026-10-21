@@ -315,6 +315,14 @@ function showOpenOrderDetail(ledgerId) {
 function scrollToOrderRow(ledgerId) {
   const modal = document.getElementById('detail-modal-backdrop');
   if (modal) modal.remove();
+  // Override whatever filters are active so the target row is guaranteed visible, per Alex's
+  // explicit request -- "Take me there" should never land on a filtered-out empty result.
+  const overviewTabBtn = document.querySelector('.tab-btn[data-tab="overview"]');
+  if (overviewTabBtn && !overviewTabBtn.classList.contains('active')) overviewTabBtn.click();
+  document.getElementById('filter-product').value = 'all';
+  document.getElementById('filter-type').value = 'all';
+  document.getElementById('filter-needs-action').checked = false;
+  applyOpenOrdersFilter();
   const row = document.getElementById('row-' + ledgerId);
   if (!row) return;
   row.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -343,11 +351,13 @@ function showRecommendationDetail(recId) {
   showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, body);
 }
 
-function kpiTable(headers, rows, wrapIdx, colWidths) {
+function kpiTable(headers, rows, wrapIdx, colWidths, noWrapCols) {
   if (rows.length === 0) return '<div class="muted">Nothing here right now.</div>';
   const idx = wrapIdx != null ? wrapIdx : headers.length - 1;
+  const noWrapSet = new Set(noWrapCols || []);
   const colgroup = colWidths ? `<colgroup>${colWidths.map(w => `<col style="width:${w || 'auto'};">`).join('')}</colgroup>` : '';
   const cellStyle = (ci) => {
+    if (noWrapSet.has(ci)) return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap;`;
     if (colWidths && colWidths[ci]) return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:normal; word-break:break-word;`;
     return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:${ci === idx ? 'normal' : 'nowrap'}; ${ci === idx ? 'min-width:380px;' : ''}`;
   };
@@ -382,9 +392,10 @@ function showOverdueKpiDetail() {
     `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
   ]);
   showDetail('Overdue Orders', kpiTable(
-    ['Product', 'PO #', 'Qty', 'ETA', "Why It's Overdue", ''],
+    ['Product', 'Order #', 'Qty', 'ETA', "Why It's Overdue", ''],
     rows, 4,
-    ['110px', '90px', '55px', '75px', null, '120px']
+    ['110px', '90px', '65px', '85px', null, '120px'],
+    [2, 3]
   ), 'wide');
 }
 
@@ -406,7 +417,7 @@ function showContactsKpiDetail() {
         `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
       ];
     });
-  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'PO #', 'ETA', 'Next Contact', 'Why', ''], rows, 5), 'wide');
+  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'Order #', 'ETA', 'Next Contact', 'Why', ''], rows, 5, null, [3]), 'wide');
 }
 
 function showQcKpiDetail() {
@@ -434,7 +445,7 @@ async function renderOverview() {
     sb.from('open_orders_by_product').select('*'),
     sb.from('qc_runs').select('*').order('run_at', { ascending: false }).limit(1),
     sb.from('product_inventory_snapshot').select('*, products(sku_code)'),
-    sb.from('product_qoh').select('sku_code, safety_stock_qty'),
+    sb.from('product_qoh').select('sku_code, safety_stock_qty, safety_stock_basis'),
     sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', monthStartIso).lte('revenue_date', todayIso),
     sb.from('revenue_forecasts').select('channel, forecast_revenue').eq('forecast_month', monthStartIso),
   ]);
@@ -447,7 +458,11 @@ async function renderOverview() {
     window._invSnapshotBySku[sku][s.channel] = s.qty;
   });
   window._safetyStockBySku = {};
-  (qohRows || []).forEach(r => { window._safetyStockBySku[r.sku_code] = r.safety_stock_qty; });
+  window._safetyStockBasisBySku = {};
+  (qohRows || []).forEach(r => {
+    window._safetyStockBySku[r.sku_code] = r.safety_stock_qty;
+    window._safetyStockBasisBySku[r.sku_code] = r.safety_stock_basis;
+  });
 
   // Revenue MTD vs forecast pace -- same methodology as daily_digest.py's get_revenue_pacing():
   // pro-rate the full-month forecast by days-elapsed-so-far and compare to actual MTD gross
@@ -574,7 +589,7 @@ async function renderOverview() {
         <label style="font-size:13px; font-weight:500; display:flex; align-items:center; gap:6px;">
           <input type="checkbox" id="filter-needs-action" checked onchange="applyOpenOrdersFilter()" /> Only show items needing attention
         </label>
-        <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide PO Number and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} PO # / Tracking</button>
+        <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
       </div>
     </div>
     <div id="open-orders-groups"></div>
@@ -671,13 +686,13 @@ function applyOpenOrdersFilter() {
       <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap; flex-wrap:wrap; gap:8px;">
         <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
           <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
-          <span style="font-size:13px;">Current Inventory — Shopify: <strong style="font-size:15px; color:${shopifyColor};">${shopifyQty}</strong>${safetyStock != null ? ` <span class="muted" style="font-size:11px;">(safety stock ${safetyStock.toLocaleString()})</span>` : ''}</span>
+          <span style="font-size:13px;">Current Inventory — Shopify: <strong style="font-size:15px; color:${shopifyColor};">${shopifyQty}</strong>${safetyStock != null ? ` <span class="muted" style="font-size:11px; cursor:help; text-decoration:underline dotted;" title="${(window._safetyStockBasisBySku || {})[sku] || 'Calculated via Z x sigma x sqrt(lead time) -- see spec Section 7.'}">(safety stock ${safetyStock.toLocaleString()})</span>` : ''}</span>
           <span style="font-size:13px;">Amazon: <strong style="font-size:15px; color:var(--ink);">${amazonQty}</strong></span>
         </div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
       <table style="white-space:nowrap;">
-        <thead><tr><th>Order Type</th><th>Action Needed</th><th>Actions</th><th>Status</th><th>PO Number</th><th>Vendor</th><th>Qty</th><th>ETA</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
+        <thead><tr><th>Component</th><th>Order Type</th><th>Order Health</th><th>ETA</th><th>Actions</th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Last Contact</th><th>Next Contact</th></tr></thead>
         <tbody>
           ${group.rows.map(o => renderOpenOrderRow(o)).join('')}
         </tbody>
@@ -699,38 +714,46 @@ function buildActionDetail(o) {
   const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
   const vendorLabel = o.vendor_name || 'the vendor';
   const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
-  const qtyFmt = o.qty != null ? o.qty.toLocaleString() : 'an unknown quantity of';
-  const etaB = o.eta ? `<strong>${fmtDate(o.eta)}</strong>` : null;
+  const qtyFmt = o.qty != null ? o.qty.toLocaleString() : 'unknown qty';
+  const contactWho = o.vendor_contact_name || o.vendor_contact_email
+    ? `${o.vendor_contact_name || ''}${o.vendor_contact_name && o.vendor_contact_email ? ' — ' : ''}${o.vendor_contact_email || ''}`
+    : vendorLabel;
 
-  const contactLine = (o.vendor_contact_name || o.vendor_contact_email)
-    ? `Contact: ${o.vendor_contact_name || ''}${o.vendor_contact_name && o.vendor_contact_email ? ' — ' : ''}${o.vendor_contact_email || ''}${o.vendor_contact_channel ? ` (prefers ${o.vendor_contact_channel})` : ''}.`
-    : '';
-  const placedLine = o.placed_date ? `Placed on ${fmtDate(o.placed_date)}.` : (o.po_id ? `No placed date on record yet.` : '');
-  const contentsLine = `Contains: ${qtyFmt} units of ${itemLabel}${o.po_status ? ` (PO status: ${o.po_status})` : ''}.`;
-  const notesLine = o.notes ? `Notes: ${o.notes}` : '';
-  const trailer = [placedLine, contentsLine, contactLine, notesLine].filter(Boolean).join(' ');
+  // "What's late/what's the order": one line, no repetition later.
+  const whatLine = `<strong>${qtyFmt} ${itemLabel}</strong>${o.eta ? `, ETA <strong>${fmtDate(o.eta)}</strong>` : ''}${o.placed_date ? ` (placed ${fmtDate(o.placed_date)})` : ''}`;
+
+  // "What was the last update, and does it explain the delay?" -- pull from notes if present,
+  // otherwise say plainly that nothing's logged, instead of restating the order details again.
+  const lastUpdateDate = o.last_contacted || o.placed_date;
+  let updateLine;
+  if (o.notes) {
+    updateLine = `Last update${lastUpdateDate ? ` (${fmtDate(lastUpdateDate)})` : ''}: "${o.notes}"`;
+  } else {
+    updateLine = `No update logged since it was placed${o.placed_date ? ` on ${fmtDate(o.placed_date)}` : ''}.`;
+  }
 
   if (o.order_status === 'paused') {
-    return `This order is paused — it will not generate overdue or contact alerts until you resume it. ${trailer}`;
+    return `${whatLine}<br>Paused — on hold, won't trigger overdue or contact alerts until resumed.<br>${updateLine}`;
   }
+
   if (o.eta && o.eta < today && !o.landed) {
     const daysOverdue = daysBetween(o.eta, today);
-    return `${qtyFmt} units of ${itemLabel} from ${vendorLabel} were supposed to land on ${etaB}. As of today (${fmtDate(today)}), this is ${daysOverdue} day(s) overdue — confirm status with ${vendorLabel}. ${trailer}`;
+    return `${whatLine} — <strong>${daysOverdue} day(s) overdue</strong>.<br>${updateLine}<br>Next step: confirm status with ${contactWho}.`;
   }
+
   if (o.next_contact && o.next_contact < today) {
     const daysOverdue = daysBetween(o.next_contact, today);
-    return `${vendorLabel} was due for a check-in on ${fmtDate(o.next_contact)} regarding ${itemLabel}${etaB ? ` (ETA ${etaB})` : ''}. As of today (${fmtDate(today)}), this contact is ${daysOverdue} day(s) overdue — reach out now. ${trailer}`;
+    return `${whatLine}<br>Vendor check-in was due ${fmtDate(o.next_contact)} — <strong>${daysOverdue} day(s) overdue</strong>.<br>${updateLine}<br>Next step: reach out to ${contactWho} now.`;
   }
+
   if (o.eta && daysBetween(today, o.eta) <= 14 && daysBetween(today, o.eta) >= 0) {
     const daysUntil = daysBetween(today, o.eta);
-    return `${qtyFmt} units of ${itemLabel} from ${vendorLabel} are expected to land on ${etaB}, in ${daysUntil} day(s). Confirm shipment status and tracking with ${vendorLabel}. ${trailer}`;
+    return `${whatLine} — landing in ${daysUntil} day(s).<br>${updateLine}<br>Next step: confirm shipment/tracking with ${contactWho} before it lands.`;
   }
-  // On Track: Alex wants this case specifically to summarize the last contact, its outcome, and
-  // the next scheduled contact, rather than just saying "no action needed."
-  const lastContactLine = o.last_contacted ? `Last contacted ${vendorLabel} on ${fmtDate(o.last_contacted)}.` : `No contact with ${vendorLabel} logged yet.`;
-  const summaryLine = o.notes ? `Summary: ${o.notes}` : `No summary logged for the last communication.`;
-  const nextContactLine = o.next_contact ? `Next contact scheduled for ${fmtDate(o.next_contact)}.` : `No next contact date scheduled.`;
-  return `${qtyFmt} units of ${itemLabel} from ${vendorLabel} are on track${etaB ? `, expected ${etaB}` : ''}. ${lastContactLine} ${summaryLine} ${nextContactLine} ${placedLine} ${contactLine}`;
+
+  // On Track
+  const nextContactLine = o.next_contact ? `Next check-in scheduled ${fmtDate(o.next_contact)}.` : `No next check-in scheduled.`;
+  return `${whatLine} — on track.<br>${updateLine}<br>${nextContactLine}`;
 }
 
 function renderPoNumberCell(o, canAct) {
@@ -758,11 +781,11 @@ function showPoNumberDetail(ledgerId) {
   if (!o) return;
   const value = o.internal_ref || o.vendor_po_number || null;
   const body = `
-    <div style="margin-bottom:12px;">${value ? `PO Number: <strong>${value}</strong>` : 'No PO number on file for this order yet.'}</div>
-    ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editPoNumber('${ledgerId}')">${value ? 'Edit' : 'Add'} PO Number</button>` : ''}
+    <div style="margin-bottom:12px;">${value ? `Order #: <strong>${value}</strong>` : 'No order number on file for this order yet.'}</div>
+    ${canEdit() ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editPoNumber('${ledgerId}')">${value ? 'Edit' : 'Add'} Order #</button>` : ''}
     <button class="btn btn-ghost" style="margin-left:8px;" onclick="scrollToOrderRow('${ledgerId}')">Take me there</button>
   `;
-  showDetail(`${o.product_name} — PO Number`, body);
+  showDetail(`${o.product_name} — Order #`, body);
 }
 
 function showTrackingDetail(ledgerId) {
@@ -780,7 +803,7 @@ function showTrackingDetail(ledgerId) {
 function toggleRevealOrderData() {
   window._revealOrderData = !window._revealOrderData;
   const btn = document.getElementById('reveal-order-data-btn');
-  if (btn) btn.textContent = `👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} PO # / Tracking`;
+  if (btn) btn.textContent = `👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking`;
   applyOpenOrdersFilter();
 }
 
@@ -790,25 +813,30 @@ function renderOpenOrderRow(o, editing) {
   if (editing) {
     return `
       <tr id="row-${o.ledger_id}">
+        <td>${o.order_type === 'componentry' ? (o.component_name || '—') : '—'}</td>
         <td><span class="pill watch">${orderTypeLabel}</span></td>
-        <td colspan="4"></td>
+        <td></td>
+        <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td>
+          <button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
+          <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="applyOpenOrdersFilter()">Cancel</button>
+        </td>
+        <td></td>
+        <td></td>
         <td>${o.vendor_name || '—'}</td>
         <td><input type="number" id="edit-qty-${o.ledger_id}" value="${o.qty ?? ''}" style="width:70px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
-        <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="text" id="edit-tracking-${o.ledger_id}" value="${o.tracking_info || ''}" style="width:110px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td><input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
-        <td>
-          <button class="btn btn-primary" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
-          <button class="btn btn-ghost" onclick="applyOpenOrdersFilter()">Cancel</button>
-        </td>
       </tr>
     `;
   }
   return `
     <tr id="row-${o.ledger_id}">
+      <td>${o.order_type === 'componentry' ? (o.component_name || '—') : '—'}</td>
       <td><span class="pill watch">${orderTypeLabel}</span></td>
       <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showOpenOrderDetail('${o.ledger_id}')">${o.action_needed}</span></td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
       <td>
         ${canAct ? `
           <select onchange="handleOrderAction('${o.ledger_id}', this.value); this.value='';" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
@@ -825,7 +853,6 @@ function renderOpenOrderRow(o, editing) {
       <td>${renderPoNumberCell(o, canAct)}</td>
       <td>${o.vendor_name || '—'}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
-      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
       <td style="white-space:normal; max-width:160px; word-break:break-word;">${renderTrackingCell(o, canAct)}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${fmtDate(o.last_contacted)}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${fmtDate(o.next_contact)}</td>
@@ -895,8 +922,8 @@ async function splitOrder(ledgerId) {
 async function editPoNumber(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  if (!o.po_id) { alert('This order has no linked purchase order to attach a PO number to yet.'); return; }
-  const newVal = prompt('PO Number (internal reference):', o.internal_ref || '');
+  if (!o.po_id) { alert('This order has no linked PO/componentry order to attach a number to yet.'); return; }
+  const newVal = prompt('Order # (PO or componentry order reference):', o.internal_ref || '');
   if (newVal === null) return;
   const { error } = await sb.from('purchase_orders').update({ internal_ref: newVal || null }).eq('id', o.po_id);
   if (error) { alert('Failed: ' + error.message); return; }
