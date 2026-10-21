@@ -256,14 +256,28 @@ async function renderOverview() {
     </div>
 
     <div class="section-label">Open Orders by Product — ${needsActionCount} need attention</div>
-    <div class="card" style="padding:0; margin-bottom:24px;">
-      <table>
-        <thead><tr><th>Product</th><th>Type</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Action Needed</th></tr></thead>
-        <tbody id="open-orders-body"></tbody>
-      </table>
+    <div class="card" style="padding: 16px 22px; margin-bottom: 14px;">
+      <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+        <label style="font-size:13px; font-weight:500;">Product:
+          <select id="filter-product" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
+            <option value="all">All products</option>
+          </select>
+        </label>
+        <label style="font-size:13px; font-weight:500;">Type:
+          <select id="filter-type" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
+            <option value="all">All types</option>
+            <option value="finished_good">Purchase Orders (finished goods)</option>
+            <option value="componentry">Componentry</option>
+          </select>
+        </label>
+        <label style="font-size:13px; font-weight:500; display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="filter-needs-action" checked onchange="applyOpenOrdersFilter()" /> Only show items needing attention
+        </label>
+      </div>
     </div>
+    <div id="open-orders-groups"></div>
 
-    <div class="section-label">Agentic Recommendations — Validate or Dismiss</div>
+    <div class="section-label" style="margin-top:28px;">Agentic Recommendations — Validate or Dismiss</div>
     <div class="card" style="padding:0;">
       <table>
         <thead><tr><th>SKU</th><th>Urgency</th><th>Shortfall</th><th>Deadline</th><th>Cash at Risk</th><th>Decision</th><th></th></tr></thead>
@@ -272,26 +286,13 @@ async function renderOverview() {
     </div>
   `;
 
-  const ooBody = document.getElementById('open-orders-body');
-  if (!openOrders || openOrders.length === 0) {
-    ooBody.innerHTML = `<tr><td colspan="9" class="empty-state">No open orders.</td></tr>`;
-  } else {
-    ooBody.innerHTML = openOrders.map(o => {
-      const needsAction = o.action_needed !== 'On track — no action needed';
-      return `
-      <tr>
-        <td><strong>${o.product_sku}</strong><br><span class="muted" style="font-size:12px;">${o.product_name}</span></td>
-        <td><span class="pill watch">${o.order_type === 'componentry' ? o.component_name || 'componentry' : 'finished good'}</span></td>
-        <td>${o.vendor_name || '—'}</td>
-        <td>${o.qty ?? '—'}</td>
-        <td>${o.eta || '—'}</td>
-        <td>${o.tracking_info || '—'}</td>
-        <td>${o.last_contacted || '—'}</td>
-        <td>${o.next_contact || '—'}</td>
-        <td><span class="pill ${needsAction ? (o.action_needed.startsWith('OVERDUE') ? 'bad' : 'watch') : 'good'}">${o.action_needed}</span></td>
-      </tr>
-    `}).join('');
-  }
+  window._openOrdersCache = openOrders || [];
+  const productSelect = document.getElementById('filter-product');
+  const uniqueProducts = [...new Map((openOrders || []).map(o => [o.product_sku, o.product_name])).entries()];
+  uniqueProducts.sort((a, b) => a[0].localeCompare(b[0]));
+  productSelect.innerHTML = '<option value="all">All products</option>' + uniqueProducts.map(([sku, name]) => `<option value="${sku}">${name} (${sku})</option>`).join('');
+
+  applyOpenOrdersFilter();
 
   const body = document.getElementById('overview-recs-body');
   if (!recs || recs.length === 0) {
@@ -299,7 +300,7 @@ async function renderOverview() {
   } else {
     body.innerHTML = recs.map(r => `
       <tr>
-        <td><strong>${r.products.sku_code}</strong><br><span class="muted" style="font-size:12px;">${r.products.display_name}</span></td>
+        <td><strong>${r.products.display_name}</strong><br><span class="muted" style="font-size:12px;">${r.products.sku_code}</span></td>
         <td><span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span></td>
         <td>${r.shortfall_qty} units<br><span class="muted" style="font-size:12px;">by ${r.shortfall_month}</span></td>
         <td>${r.last_responsible_date}<br><span class="muted" style="font-size:12px;">${r.days_until_deadline < 0 ? 'OVERDUE ' + (-r.days_until_deadline) + 'd' : r.days_until_deadline + ' days left'}</span></td>
@@ -321,6 +322,69 @@ function canEdit() {
 }
 function canDelete() {
   return currentUserRow && currentUserRow.role === 'admin';
+}
+
+function applyOpenOrdersFilter() {
+  const all = window._openOrdersCache || [];
+  const productFilter = document.getElementById('filter-product').value;
+  const typeFilter = document.getElementById('filter-type').value;
+  const onlyAction = document.getElementById('filter-needs-action').checked;
+
+  const filtered = all.filter(o => {
+    if (productFilter !== 'all' && o.product_sku !== productFilter) return false;
+    if (typeFilter !== 'all' && o.order_type !== typeFilter) return false;
+    if (onlyAction && o.action_needed === 'On track — no action needed') return false;
+    return true;
+  });
+
+  const groupsEl = document.getElementById('open-orders-groups');
+  if (filtered.length === 0) {
+    groupsEl.innerHTML = `<div class="card empty-state">Nothing matches these filters${onlyAction ? ' — try unchecking "only show items needing attention"' : ''}.</div>`;
+    return;
+  }
+
+  // Group by product, preserving product_name as the primary label (per Alex's feedback:
+  // display name first, SKU as the secondary/muted line, not the other way around).
+  const byProduct = new Map();
+  filtered.forEach(o => {
+    if (!byProduct.has(o.product_sku)) byProduct.set(o.product_sku, { name: o.product_name, rows: [] });
+    byProduct.get(o.product_sku).rows.push(o);
+  });
+
+  groupsEl.innerHTML = [...byProduct.entries()].map(([sku, group]) => `
+    <div class="card" style="padding:0; margin-bottom:14px;">
+      <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+        <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
+        <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
+      </div>
+      <table>
+        <thead><tr><th>Type</th><th>Vendor</th><th>Qty</th><th>ETA</th><th>Tracking</th><th>Last Contact</th><th>Next Contact</th><th>Action Needed</th><th></th></tr></thead>
+        <tbody>
+          ${group.rows.map(o => {
+            const needsAction = o.action_needed !== 'On track — no action needed';
+            return `
+            <tr>
+              <td><span class="pill watch">${o.order_type === 'componentry' ? (o.component_name || 'componentry') : 'finished good'}</span></td>
+              <td>${o.vendor_name || '—'}</td>
+              <td>${o.qty ?? '—'}</td>
+              <td>${o.eta || '—'}</td>
+              <td>${o.tracking_info || '—'}</td>
+              <td>${o.last_contacted || '—'}</td>
+              <td>${o.next_contact || '—'}</td>
+              <td><span class="pill ${needsAction ? (o.action_needed.startsWith('OVERDUE') ? 'bad' : 'watch') : 'good'}">${o.action_needed}</span></td>
+              <td>${canEdit() ? `<button class="btn btn-ghost" onclick="markLanded('${o.ledger_id}')">Mark Landed</button>` : ''}</td>
+            </tr>
+          `}).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+}
+
+async function markLanded(ledgerId) {
+  const { error } = await sb.from('inventory_ledger').update({ landed: true, date_landed: new Date().toISOString().slice(0, 10) }).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
 }
 
 async function decideRecommendation(id, decision) {
@@ -348,7 +412,7 @@ async function renderInventory() {
     const canvasId = 'spark-' + p.product_id;
     return `
       <div class="card kpi-card">
-        <div class="kpi-label">${p.sku_code} — ${p.display_name}</div>
+        <div class="kpi-label">${p.display_name}<br><span style="font-weight:400;">${p.sku_code}</span></div>
         <div class="kpi-value">${p.qty_on_hand.toLocaleString()}</div>
         <div class="pill ${belowSafety ? 'bad' : 'good'}">safety stock ${p.safety_stock_qty.toLocaleString()}</div>
         <div class="sparkline-wrap"><canvas id="${canvasId}"></canvas></div>
