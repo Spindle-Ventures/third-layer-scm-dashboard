@@ -244,14 +244,10 @@ function fmtDateTime(ts) {
 }
 // Prompts the user for a date in MM/DD/YYYY (matching Alex's display-format requirement) and
 // converts it to the ISO YYYY-MM-DD format Postgres date columns need internally.
-function promptDateMMDDYYYY(message, currentIso) {
-  const defaultVal = currentIso ? fmtDate(currentIso) : '';
-  const input = prompt(`${message} (MM/DD/YYYY):`, defaultVal);
+async function promptDateMMDDYYYY(message, currentIso) {
+  const input = await showPromptModal(message, null, currentIso || '', 'date');
   if (!input) return null;
-  const match = input.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!match) { alert('Please enter a date as MM/DD/YYYY, e.g. 11/30/2026.'); return null; }
-  const [, mm, dd, yyyy] = match;
-  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  return input;
 }
 function monthName(isoDate) {
   const [y, m] = isoDate.split('-');
@@ -308,6 +304,68 @@ function showDetail(title, body, size) {
     </div>
   `;
   document.body.appendChild(el);
+}
+
+// Styled replacements for window.prompt()/confirm() -- same detail-modal visual language as the
+// rest of the dashboard, matching Alex's request (2026-10-21) to drop the browser-chrome dialogs.
+function showPromptModal(title, message, defaultValue, inputType) {
+  return new Promise(resolve => {
+    document.getElementById('detail-modal-backdrop')?.remove();
+    const el = document.createElement('div');
+    el.id = 'detail-modal-backdrop';
+    el.className = 'detail-modal-backdrop';
+    const finish = (val) => { el.remove(); resolve(val); };
+    el.onclick = (e) => { if (e.target === el) finish(null); };
+    const safeDefault = defaultValue != null ? String(defaultValue).replace(/"/g, '&quot;') : '';
+    const isTextarea = inputType === 'textarea';
+    el.innerHTML = `
+      <div class="detail-modal" style="max-width:480px;">
+        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${title}</div>
+        ${message ? `<div style="font-size:13px; color:var(--muted); margin-bottom:10px; line-height:1.4;">${message}</div>` : ''}
+        ${isTextarea
+          ? `<textarea id="prompt-modal-input" rows="3" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:14px; font-family:inherit;">${safeDefault}</textarea>`
+          : `<input id="prompt-modal-input" type="${inputType || 'text'}" value="${safeDefault}" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:14px;" />`}
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary" id="prompt-modal-ok">OK</button>
+          <button class="btn btn-ghost" id="prompt-modal-cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    const input = document.getElementById('prompt-modal-input');
+    input.focus();
+    if (input.select) input.select();
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !isTextarea) { e.preventDefault(); finish(input.value); }
+      if (e.key === 'Escape') finish(null);
+    });
+    document.getElementById('prompt-modal-ok').onclick = () => finish(input.value);
+    document.getElementById('prompt-modal-cancel').onclick = () => finish(null);
+  });
+}
+
+function showConfirmModal(title, message, confirmLabel) {
+  return new Promise(resolve => {
+    document.getElementById('detail-modal-backdrop')?.remove();
+    const el = document.createElement('div');
+    el.id = 'detail-modal-backdrop';
+    el.className = 'detail-modal-backdrop';
+    const finish = (val) => { el.remove(); resolve(val); };
+    el.onclick = (e) => { if (e.target === el) finish(false); };
+    el.innerHTML = `
+      <div class="detail-modal" style="max-width:480px;">
+        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${title}</div>
+        <div style="font-size:14px; line-height:1.5; margin-bottom:16px;">${message}</div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary" id="confirm-modal-ok">${confirmLabel || 'Confirm'}</button>
+          <button class="btn btn-ghost" id="confirm-modal-cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    document.getElementById('confirm-modal-ok').onclick = () => finish(true);
+    document.getElementById('confirm-modal-cancel').onclick = () => finish(false);
+  });
 }
 
 function showOpenOrderDetail(ledgerId) {
@@ -848,9 +906,9 @@ function showContactScheduleDetail(ledgerId) {
 async function editLastContact(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const dateVal = promptDateMMDDYYYY('Date of this contact', o.last_contacted);
+  const dateVal = await promptDateMMDDYYYY('Date of this contact', o.last_contacted);
   if (dateVal === null) return;
-  const resultVal = prompt('Result of this contact (what did they say?):', o.notes || '');
+  const resultVal = await showPromptModal('Result of this contact', 'What did they say?', o.notes || '', 'textarea');
   if (resultVal === null) return;
   const ok = await mutateLedgerRow(ledgerId, { last_contacted: dateVal, notes: resultVal || null }, `Logged a contact for ${o.product_name}`);
   if (ok) await renderOverview();
@@ -859,7 +917,7 @@ async function editLastContact(ledgerId) {
 async function editNextContact(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const dateVal = promptDateMMDDYYYY('Next contact date', o.next_contact);
+  const dateVal = await promptDateMMDDYYYY('Next contact date', o.next_contact);
   if (dateVal === null) return;
   const ok = await mutateLedgerRow(ledgerId, { next_contact: dateVal }, `Set next contact date for ${o.product_name}`);
   if (ok) await renderOverview();
@@ -1090,7 +1148,7 @@ async function deleteOrderRow(ledgerId) {
   if (!canDelete()) { alert('Only admins can delete a row.'); return; }
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  if (!confirm(`Permanently delete this order row (${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)})? This cannot be undone from here, but you'll get an Undo option right after, and it stays restorable from the Activity Log tab. Use "Cancel" instead if you just want it to stop showing as active while keeping a record.`)) return;
+  if (!(await showConfirmModal('Delete this order row?', `${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)}.<br><br>You'll get an Undo option right after, and it stays restorable from the Activity Log tab. Use "Cancel" instead if you just want it to stop showing as active while keeping a record.`, 'Delete'))) return;
   const { data: before, error: fetchErr } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
   if (fetchErr) { alert('Failed: ' + fetchErr.message); return; }
   const { error } = await sb.from('inventory_ledger').delete().eq('id', ledgerId);
@@ -1250,14 +1308,14 @@ async function saveOrderEdit(ledgerId) {
 async function splitOrder(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const splitQtyStr = prompt(`Split ${o.qty} units — how many units go into the NEW (second) order?`, Math.floor((o.qty || 0) / 2));
+  const splitQtyStr = await showPromptModal('Split Order', `Total: ${o.qty.toLocaleString()} units. How many go into the NEW (second) order?`, Math.floor((o.qty || 0) / 2), 'number');
   if (!splitQtyStr) return;
   const splitQty = Number(splitQtyStr);
   if (!splitQty || splitQty <= 0 || splitQty >= o.qty) { alert('Enter a quantity less than the current total.'); return; }
-  const newEta = promptDateMMDDYYYY('ETA for the new (split-off) order', o.eta);
-  const newOrderNumber = prompt('Order # for the new (split-off) order — defaults to the original\'s:', o.internal_ref || '');
+  const newEta = await promptDateMMDDYYYY('ETA for the new (split-off) order', o.eta);
+  const newOrderNumber = await showPromptModal('Order # for the new (split-off) order', 'Defaults to the original\'s.', o.internal_ref || '');
   if (newOrderNumber === null) return;
-  const newTracking = prompt('Tracking info for the new (split-off) order — defaults to the original\'s:', o.tracking_info || '');
+  const newTracking = await showPromptModal('Tracking info for the new (split-off) order', 'Defaults to the original\'s.', o.tracking_info || '');
   if (newTracking === null) return;
 
   const { data: before } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
@@ -1289,7 +1347,7 @@ async function splitOrder(ledgerId) {
 async function editPoNumber(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const newVal = prompt('Order # (PO or componentry order reference):', o.internal_ref || '');
+  const newVal = await showPromptModal('Order #', 'PO or componentry order reference', o.internal_ref || '');
   if (newVal === null) return;
   const ok = await mutateLedgerRow(ledgerId, { order_number: newVal || null }, `Set order # for ${o.product_name} to "${newVal || '(cleared)'}"`);
   if (ok) await renderOverview();
@@ -1298,7 +1356,7 @@ async function editPoNumber(ledgerId) {
 async function editTracking(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const newVal = prompt('Tracking info:', o.tracking_info || '');
+  const newVal = await showPromptModal('Tracking Info', null, o.tracking_info || '');
   if (newVal === null) return;
   const ok = await mutateLedgerRow(ledgerId, { tracking_info: newVal || null }, `Set tracking for ${o.product_name}`);
   if (ok) await renderOverview();
@@ -1311,9 +1369,9 @@ async function editRevenueForecast(channel) {
   const currentMonthKey = new Date().toISOString().slice(0, 7);
   const fallback = (window._revState?.liveForecast?.[currentMonthKey] || {})[channel];
   const existingVal = (current && !current.noForecast) ? current.forecastFullMonth : (fallback || '');
-  const input = prompt(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} full-month revenue forecast for ${monthLabel} ($):`, existingVal);
+  const input = await showPromptModal(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} Revenue Forecast`, `Full-month forecast for ${monthLabel} ($)`, existingVal, 'number');
   if (input === null) return;
-  const val = Number(input.replace(/[^0-9.]/g, ''));
+  const val = Number(String(input).replace(/[^0-9.]/g, ''));
   if (!val || val <= 0) { alert('Enter a positive number.'); return; }
   const { error } = await sb.from('revenue_forecasts').upsert(
     { channel, forecast_month: monthStartIso, forecast_revenue: val, created_by: currentUserRow?.email || 'dashboard' },
@@ -1325,7 +1383,7 @@ async function editRevenueForecast(channel) {
 
 async function delayOrder(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
-  const newEta = promptDateMMDDYYYY('New ETA', o ? o.eta : null);
+  const newEta = await promptDateMMDDYYYY('New ETA', o ? o.eta : null);
   if (!newEta) return;
   const ok = await mutateLedgerRow(ledgerId, { eta: newEta }, `Delayed ${o?.product_name || 'an order'} to ${fmtDate(newEta)}`);
   if (ok) await renderOverview();
@@ -1342,7 +1400,7 @@ async function resumeOrder(ledgerId) {
   if (ok) await renderOverview();
 }
 async function cancelOrder(ledgerId) {
-  if (!confirm('Cancel this order? It will be removed from the open-orders list.')) return;
+  if (!(await showConfirmModal('Cancel this order?', 'It will be removed from the open-orders list.', 'Cancel Order'))) return;
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   const ok = await mutateLedgerRow(ledgerId, { order_status: 'cancelled' }, `Cancelled ${o?.product_name || 'an order'}`);
   if (ok) await renderOverview();
@@ -1486,7 +1544,7 @@ function canEditChannel() {
 
 async function createRevenueScenario() {
   if (!canEdit()) return;
-  const name = prompt('Name this scenario (e.g. "Holiday push", "Conservative Q1"):');
+  const name = await showPromptModal('New Scenario', 'e.g. "Holiday push", "Conservative Q1"', '');
   if (!name) return;
   const { data, error } = await sb.from('revenue_scenarios').insert({ name, status: 'draft', created_by: currentUserRow?.email || 'dashboard' }).select().single();
   if (error) { alert('Failed: ' + error.message); return; }
@@ -1510,7 +1568,7 @@ async function createRevenueScenario() {
 }
 
 async function deleteRevenueScenario(scenarioId) {
-  if (!confirm('Delete this draft scenario? This cannot be undone.')) return;
+  if (!(await showConfirmModal('Delete this draft scenario?', 'This cannot be undone.', 'Delete'))) return;
   const { error } = await sb.from('revenue_scenarios').delete().eq('id', scenarioId);
   if (error) { alert('Failed: ' + error.message); return; }
   window._revState.scenarios = window._revState.scenarios.filter(s => s.id !== scenarioId);
@@ -1520,7 +1578,7 @@ async function deleteRevenueScenario(scenarioId) {
 async function commitRevenueScenario() {
   const sc = currentScenario();
   if (!sc) return;
-  if (!confirm(`Commit "${sc.name}" as the live forecast? This will update revenue_forecasts and the monthly product-mix assumptions that drive PO/component recommendations. Changes take full effect on the next pipeline run.`)) return;
+  if (!(await showConfirmModal(`Commit "${sc.name}" as the live forecast?`, 'This will update revenue_forecasts and the monthly product-mix assumptions that drive PO/component recommendations. Changes take full effect on the next pipeline run.', 'Commit'))) return;
   const S = window._revState;
   const chanRows = [];
   S.months.forEach(m => ['shopify', 'amazon'].forEach(ch => {
@@ -1550,9 +1608,9 @@ async function editDraftChannelMonth(channel, month) {
   const S = window._revState;
   const isLive = S.selectedScenarioId === 'live';
   const current = S.draftChannel[month]?.[channel];
-  const input = prompt(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} ${isLive ? 'live forecast' : 'scenario forecast'} for ${monthLabelLong(month)} ($):`, current ?? '');
+  const input = await showPromptModal(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} Forecast`, `${isLive ? 'Live forecast' : 'Scenario forecast'} for ${monthLabelLong(month)} ($)`, current ?? '', 'number');
   if (input === null) return;
-  const val = Number(input.replace(/[^0-9.]/g, ''));
+  const val = Number(String(input).replace(/[^0-9.]/g, ''));
   if (!val || val <= 0) { alert('Enter a positive number.'); return; }
   S.draftChannel[month][channel] = val;
   if (isLive) {
@@ -1577,11 +1635,11 @@ async function editDraftMixPct(channel, productId, month) {
   const S = window._revState;
   const product = S.products.find(p => p.product_id === productId);
   const cur = S.draftMix[channel][productId]?.[month] || {};
-  const input = prompt(`${product?.display_name} — ${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue share for ${monthLabelLong(month)} (%):`, ((cur.revenue_pct || 0) * 100).toFixed(1));
+  const input = await showPromptModal(`${product?.display_name} — Revenue Share`, `${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue share for ${monthLabelLong(month)} (%)`, ((cur.revenue_pct || 0) * 100).toFixed(1), 'number');
   if (input === null) return;
   const val = Number(input);
   if (isNaN(val) || val < 0) { alert('Enter a non-negative number.'); return; }
-  const rationale = prompt('Rationale for this share (why this %? e.g. historical trend, planned promotion, new launch ramp):', cur.revenue_pct_rationale || '');
+  const rationale = await showPromptModal('Rationale', 'Why this %? e.g. historical trend, planned promotion, new launch ramp.', cur.revenue_pct_rationale || '', 'textarea');
   if (rationale === null) return;
   S.draftMix[channel][productId][month] = { ...cur, revenue_pct: val / 100, revenue_pct_rationale: rationale || null };
   await sb.from('revenue_scenario_mix').upsert(
@@ -1596,11 +1654,11 @@ async function editDraftAsp(channel, productId, month) {
   const S = window._revState;
   const product = S.products.find(p => p.product_id === productId);
   const cur = S.draftMix[channel][productId]?.[month] || {};
-  const input = prompt(`${product?.display_name} — ${channel === 'shopify' ? 'Shopify' : 'Amazon'} avg selling price for ${monthLabelLong(month)} ($):`, cur.avg_selling_price ?? '');
+  const input = await showPromptModal(`${product?.display_name} — Avg Selling Price`, `${channel === 'shopify' ? 'Shopify' : 'Amazon'} avg selling price for ${monthLabelLong(month)} ($)`, cur.avg_selling_price ?? '', 'number');
   if (input === null) return;
-  const val = Number(input.replace(/[^0-9.]/g, ''));
+  const val = Number(String(input).replace(/[^0-9.]/g, ''));
   if (!val || val <= 0) { alert('Enter a positive number.'); return; }
-  const rationale = prompt('Rationale for this ASP (e.g. current price + typical discount mix, planned price change):', cur.asp_rationale || '');
+  const rationale = await showPromptModal('Rationale', 'e.g. current price + typical discount mix, planned price change.', cur.asp_rationale || '', 'textarea');
   if (rationale === null) return;
   S.draftMix[channel][productId][month] = { ...cur, avg_selling_price: val, asp_rationale: rationale || null };
   await sb.from('revenue_scenario_mix').upsert(
@@ -1895,7 +1953,7 @@ async function approvePO(id) {
   await renderPOs();
 }
 async function cancelPO(id) {
-  if (!confirm('Cancel this PO?')) return;
+  if (!(await showConfirmModal('Cancel this PO?', '', 'Cancel PO'))) return;
   const { error } = await sb.from('purchase_orders').update({ status: 'cancelled' }).eq('id', id);
   if (error) { alert('Failed: ' + error.message); return; }
   await renderPOs();
