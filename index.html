@@ -1859,9 +1859,9 @@ async function renderRevenue() {
   const histStartIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 5); d.setDate(1); return d.toISOString().slice(0, 10); })();
   const months = nextSixMonths();
 
-  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }, { data: invSnapshot }, { data: committedScenarioPOs }] = await Promise.all([
+  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }, { data: invSnapshot }, { data: committedScenarioPOs }, { data: historicalPct }] = await Promise.all([
     sb.from('product_qoh').select('*'),
-    sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', histStartIso),
+    sb.from('revenue_actuals').select('channel, gross_revenue, shipping_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, revenue_pct_rationale, asp_rationale, product_id, products(sku_code, display_name)').eq('is_active', true),
     sb.from('open_orders_by_product').select('product_sku, qty, eta').not('eta', 'is', null),
@@ -1871,6 +1871,7 @@ async function renderRevenue() {
     sb.from('agent_recommendations').select('product_id, urgency').neq('decision', 'dismissed'),
     sb.from('product_inventory_snapshot').select('channel, qty, products(sku_code)').eq('channel', 'shopify'),
     sb.from('purchase_orders').select('*, vendors(vendor_name, default_lead_days), products(sku_code, display_name), revenue_scenarios(name)').not('source_scenario_id', 'is', null).order('created_at', { ascending: false }),
+    sb.from('historical_revenue_pct').select('product_id, channel, month, gross_sales, net_items_sold').gte('month', histStartIso).eq('channel', 'shopify'),
   ]);
 
   // Shopify's live inventory API is the canonical source of truth for finished-good QOH (same
@@ -1890,11 +1891,39 @@ async function renderRevenue() {
   );
 
   const monthlyActual = {};
+  let shopifyGrossTrailing = 0, shopifyShippingTrailing = 0;
   (revActuals || []).forEach(r => {
     const m = r.revenue_date.slice(0, 7);
     if (!monthlyActual[m]) monthlyActual[m] = { shopify: 0, amazon: 0 };
     monthlyActual[m][r.channel] = (monthlyActual[m][r.channel] || 0) + Number(r.gross_revenue || 0);
+    if (r.channel === 'shopify') {
+      shopifyGrossTrailing += Number(r.gross_revenue || 0);
+      shopifyShippingTrailing += Number(r.shipping_revenue || 0);
+    }
   });
+  // Alex (2026-10-22): "Why in the % of Revenue aren't the percentages equal to 100%? Is it due
+  // to shipping as a % of revenue?" -- yes, almost entirely. forecast_params.revenue_pct is each
+  // product's share of TOTAL (gross) Shopify revenue, same basis as the source spreadsheet, and
+  // gross revenue includes shipping -- which isn't attributed to any product line. So the SKUs'
+  // percentages summing to ~92% rather than 100% is expected, not a data error; the gap is the
+  // trailing-6-month actual shipping share. Surfaced on the Total row instead of silently
+  // flagging it red. Amazon has no separate shipping line in the ledger (already gross-only), so
+  // its gap is just rounding and is held to a tighter tolerance.
+  const shippingShareByChannel = {
+    shopify: window.RevenueLogic.computeShippingShare(shopifyGrossTrailing, shopifyShippingTrailing),
+    amazon: 0,
+  };
+  // Historical ASP, from real Shopify order data (not an assumption) -- Alex (2026-10-22): "you
+  // should have historical information to drive average selling price projections and put
+  // context into the pop up box." historical_revenue_pct already records gross_sales and
+  // net_items_sold per product per month (computed via ShopifyQL); actual ASP = gross/units.
+  const historicalAspByProduct = {}; // product_id -> [{month, asp, units}] oldest..newest, Shopify only
+  (historicalPct || []).forEach(h => {
+    if (!h.net_items_sold) return;
+    if (!historicalAspByProduct[h.product_id]) historicalAspByProduct[h.product_id] = [];
+    historicalAspByProduct[h.product_id].push({ month: h.month.slice(0, 7), asp: Number(h.gross_sales) / Number(h.net_items_sold), units: h.net_items_sold });
+  });
+  Object.values(historicalAspByProduct).forEach(arr => arr.sort((a, b) => a.month.localeCompare(b.month)));
   const liveForecast = {};
   (revForecasts || []).forEach(r => {
     const m = r.forecast_month.slice(0, 7);
@@ -1921,6 +1950,7 @@ async function renderRevenue() {
     activeRecByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r.urgency])),
     draftPOs: [],
     committedScenarioPOs: committedScenarioPOs || [],
+    shippingShareByChannel, historicalAspByProduct,
   };
 
   await selectRevenueScenario(window._revState.selectedScenarioId, true);
@@ -2153,9 +2183,24 @@ function showMixCellDetail(view, channel, productId, month) {
   const isPct = view === 'pct';
   const valueLine = isPct ? `${((cur.revenue_pct || 0) * 100).toFixed(1)}% of ${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue` : fmtMoney2(cur.avg_selling_price || 0);
   const rationale = isPct ? cur.revenue_pct_rationale : cur.asp_rationale;
+  // Alex (2026-10-22): "you should have historical information to drive average selling price
+  // projections and put context into the pop up box." Real trailing-month ASP from actual Shopify
+  // order data (gross_sales / net_items_sold, already computed by historical_revenue_pct.py) --
+  // not available for Amazon (no equivalent historical ingestion yet).
+  const history = channel === 'shopify' ? (S.historicalAspByProduct[productId] || []) : [];
+  const historyBlock = (!isPct && history.length) ? `
+    <div style="margin:12px 0; padding-top:10px; border-top:1px solid var(--border);">
+      <div class="section-label" style="margin:0 0 6px;">Actual ASP, Last ${history.length} Months (Shopify)</div>
+      <table style="width:100%; font-size:12px; border-collapse:collapse;">
+        ${history.map(h => `<tr><td style="padding:2px 6px;">${monthLabelShort(h.month)}</td><td style="padding:2px 6px; text-align:right;">${fmtMoney2(h.asp)}</td><td class="muted" style="padding:2px 6px; text-align:right;">${h.units.toLocaleString()} units sold</td></tr>`).join('')}
+      </table>
+      <div class="muted" style="font-size:11px; margin-top:6px;">Computed from real order data (gross sales ÷ net units sold), not an assumption — use it to sanity-check the projected ASP above.</div>
+    </div>
+  ` : (!isPct ? `<div class="muted" style="font-size:11px; margin:10px 0;">No historical actual-ASP data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'}.</div>` : '');
   const body = `
     <div style="font-size:14px; margin-bottom:10px;"><strong>${valueLine}</strong></div>
     <div class="muted" style="font-size:13px; line-height:1.5; margin-bottom:12px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+    ${historyBlock}
     ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); ${isPct ? 'editDraftMixPct' : 'editDraftAsp'}('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
   `;
   showDetail(`${p?.display_name} — ${monthLabelLong(month)} — ${isPct ? 'Revenue Share' : 'Avg Selling Price'}`, body);
@@ -2175,6 +2220,14 @@ function computeProjection(channelData, mixData) {
   // Delegates to the unit-tested dashboard/lib/revenue-logic.js (window.RevenueLogic) -- this
   // wrapper only adapts the live dashboard's window._revState into the plain arguments that pure
   // function expects. See test/revenue-logic.test.js for the real coverage of the math itself.
+  //
+  // monthlyActualToDate = S.monthlyActual: for the CURRENT (in-progress) month this holds actual
+  // revenue recorded so far; future months have no entry. Passing it through makes the demand
+  // calc count only the REMAINING (not-yet-happened) portion of the current month against the
+  // starting inventory -- which is a LIVE "as of today" QOH, not an official month-start count,
+  // and therefore already reflects whatever has sold so far this month. Without this, the current
+  // month's demand would be double-counted (Alex, 2026-10-22: flagged this exact mismatch between
+  // the source spreadsheet's month-start model and the dashboard's live QOH).
   const S = window._revState;
   return window.RevenueLogic.computeProjection({
     products: S.products,
@@ -2183,6 +2236,7 @@ function computeProjection(channelData, mixData) {
     mixData,
     realReceipts: S.receipts,
     draftPOs: S.draftPOs,
+    monthlyActualToDate: S.monthlyActual,
   });
 }
 
@@ -2190,8 +2244,13 @@ function showThroughputDetail(productId, month) {
   const S = window._revState;
   const p = S.products.find(pr => pr.product_id === productId);
   const monthIdx = S.months.indexOf(month);
+  const isCurrentMonth = monthIdx === 0;
   const projection = computeProjection(S.draftChannel, S.draftMix);
-  const startingInv = monthIdx === 0 ? p.qty_on_hand : projection[p.sku_code][monthIdx - 1];
+  // "Starting inventory" for the CURRENT month is a LIVE count as of right now -- not an official
+  // month-start snapshot the way the source spreadsheet modeled it (Alex, 2026-10-22). Label it
+  // explicitly as "as of today" so it's never confused with a month-start figure. For every later
+  // month, "starting inventory" genuinely IS last month's calculated end-of-month result.
+  const startingInv = isCurrentMonth ? p.qty_on_hand : projection[p.sku_code][monthIdx - 1];
   const realReceipts = (S.receipts[p.sku_code] || {})[month] || 0;
   const draftReceiptsHere = (S.draftPOs || []).filter(po => po.product_id === productId && po.eta_month.slice(0, 7) === month);
   const draftReceiptsQty = draftReceiptsHere.reduce((s, po) => s + po.qty, 0);
@@ -2201,31 +2260,54 @@ function showThroughputDetail(productId, month) {
     const mix = S.draftMix[ch][productId]?.[month];
     const chanRev = S.draftChannel[month]?.[ch];
     if (!mix || chanRev == null) return null;
-    const units = (chanRev * mix.revenue_pct) / mix.avg_selling_price;
     const basis = channelMonthBasis(month, ch);
-    return { channel: ch === 'shopify' ? 'Shopify' : 'Amazon', chanRev, pct: mix.revenue_pct, asp: mix.avg_selling_price, units, basis };
+    const actualToDate = isCurrentMonth ? (S.monthlyActual[month]?.[ch] || 0) : 0;
+    // Only the REMAINING (not-yet-happened) revenue drives remaining demand for the current
+    // month, since today's live QOH already reflects whatever already sold this month.
+    const remainingChanRev = isCurrentMonth ? Math.max(chanRev - actualToDate, 0) : chanRev;
+    const units = (remainingChanRev * mix.revenue_pct) / mix.avg_selling_price;
+    const pace = isCurrentMonth
+      ? window.RevenueLogic.computeMtdPaceUnits({ mtdActualRevenue: actualToDate, revenuePct: mix.revenue_pct, avgSellingPrice: mix.avg_selling_price, fullMonthProjectedUnits: (chanRev * mix.revenue_pct) / mix.avg_selling_price })
+      : null;
+    return { channel: ch === 'shopify' ? 'Shopify' : 'Amazon', chanRev, remainingChanRev, pct: mix.revenue_pct, asp: mix.avg_selling_price, units, basis, pace };
   }).filter(Boolean);
   const totalUnits = channelRows.reduce((s, r) => s + r.units, 0);
-  const totalRevenue = channelRows.reduce((s, r) => s + r.chanRev * r.pct, 0);
+  const totalRemainingRevenue = channelRows.reduce((s, r) => s + r.remainingChanRev * r.pct, 0);
   const endingInv = startingInv - totalUnits + receipts;
 
   const body = `
     <div style="font-size:13px; line-height:1.7;">
+      ${isCurrentMonth ? `
+        <div class="muted" style="font-size:11px; margin-bottom:10px; padding:8px; background:#F7F4EE; border-radius:6px;">
+          This month is in progress. <strong>Starting inventory below is today's live count</strong>, which already
+          reflects everything sold so far this month — so only the <em>remaining</em> (not-yet-happened) demand for
+          the rest of ${monthLabelLong(month)} is subtracted from it, not the full month's demand.
+        </div>
+      ` : ''}
       ${channelRows.map(r => `
         <div style="padding:8px 0; border-bottom:1px solid var(--border);">
           <div style="display:flex; justify-content:space-between;"><strong>${r.channel}</strong><span class="pill ${r.basis.tag === 'actual' ? 'good' : (r.basis.tag === 'MTD actual' ? 'watch' : '')}" title="${r.basis.detail}">${r.basis.tag}</span></div>
           <div class="muted" style="font-size:12px; margin-top:2px;">
-            ${fmtMoney(r.chanRev)} channel revenue × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units</strong> (${fmtMoney(r.chanRev * r.pct)})
+            ${isCurrentMonth
+              ? `${fmtMoney(r.chanRev)} full-month forecast − ${fmtMoney(S.monthlyActual[month]?.[r.channel === 'Shopify' ? 'shopify' : 'amazon'] || 0)} already actual = ${fmtMoney(r.remainingChanRev)} remaining × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units still to come</strong>`
+              : `${fmtMoney(r.chanRev)} channel revenue × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units</strong> (${fmtMoney(r.chanRev * r.pct)})`
+            }
           </div>
+          ${r.pace && r.pace.pctOfProjected != null ? `
+            <div class="muted" style="font-size:11px; margin-top:4px;">
+              Month-to-date pace: ~${Math.round(r.pace.impliedUnits).toLocaleString()} units implied from actual revenue so far
+              (${r.pace.pctOfProjected.toFixed(0)}% of this month's full projection) — a rough read using the assumed mix %, not a measured unit count.
+            </div>
+          ` : ''}
         </div>
       `).join('')}
       <div style="padding:8px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between;">
-        <span>Total implied demand</span><strong>${Math.round(totalUnits).toLocaleString()} units (${fmtMoney(totalRevenue)})</strong>
+        <span>${isCurrentMonth ? 'Remaining demand (rest of month)' : 'Total implied demand'}</span><strong>${Math.round(totalUnits).toLocaleString()} units (${fmtMoney(totalRemainingRevenue)})</strong>
       </div>
-      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>Starting inventory (${monthIdx === 0 ? 'current QOH' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
-      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>+ Incoming receipts this month${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
+      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>Starting inventory (${isCurrentMonth ? 'today, live' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
+      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>+ Incoming receipts${isCurrentMonth ? ' (rest of month)' : ' this month'}${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
       <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
-      <div style="padding:10px 0 0; display:flex; justify-content:space-between; font-size:15px;"><span><strong>= Ending inventory</strong></span><strong style="color:${endingInv < (p.safety_stock_qty || 0) ? 'var(--bad-text)' : 'var(--good-text)'};">${Math.round(endingInv).toLocaleString()}</strong></div>
+      <div style="padding:10px 0 0; display:flex; justify-content:space-between; font-size:15px;"><span><strong>= Projected end-of-month</strong></span><strong style="color:${endingInv < (p.safety_stock_qty || 0) ? 'var(--bad-text)' : 'var(--good-text)'};">${Math.round(endingInv).toLocaleString()}</strong></div>
       <div class="muted" style="font-size:11px; margin-top:4px;">Safety stock: ${(p.safety_stock_qty || 0).toLocaleString()}</div>
       ${draftReceiptsHere.length ? `
         <div style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);">
@@ -2245,7 +2327,7 @@ function showThroughputDetail(productId, month) {
       ` : ''}
     </div>
   `;
-  showDetail(`${p.display_name} — ${monthLabelLong(month)}`, body);
+  showDetail(`${p.display_name} — ${monthLabelLong(month)}${isCurrentMonth ? ' (in progress)' : ' (projected EOM)'}`, body);
 }
 
 function checkComponentFeasibility(productSku, qty) {
@@ -2406,12 +2488,18 @@ function renderRevenueBody() {
     return window.RevenueLogic.productMixMetrics({ channel, product: p, months, draftMix: S.draftMix, draftChannel: S.draftChannel });
   }
 
-  const mixSortOptions = [
-    { key: 'revenue', label: 'Revenue (6-mo total)' },
-    { key: 'units', label: 'Units (6-mo total)' },
-    { key: 'pct', label: '% Share' },
-    { key: 'name', label: 'Product Name' },
-  ];
+  // Alex (2026-10-22): "the sort by picklist values don't make sense in combination with some of
+  // the different views" -- e.g. sorting by "% Share" while looking at the Units view doesn't
+  // correspond to what's on screen. Options are now scoped to what's actually visible in the
+  // current view (plus Revenue/Name, which are always meaningful regardless of view), and the
+  // sort key auto-follows the view when you switch views (see setRevenueMixView) unless you've
+  // deliberately picked something else since.
+  const mixSortOptionsByView = {
+    pct: [{ key: 'pct', label: '% Share (current month)' }, { key: 'revenue', label: 'Revenue (6-mo total)' }, { key: 'name', label: 'Product Name' }],
+    asp: [{ key: 'asp', label: 'Avg Selling Price (current)' }, { key: 'revenue', label: 'Revenue (6-mo total)' }, { key: 'name', label: 'Product Name' }],
+    units: [{ key: 'units', label: 'Units (6-mo total)' }, { key: 'revenue', label: 'Revenue (6-mo total)' }, { key: 'name', label: 'Product Name' }],
+  };
+  const mixSortOptions = mixSortOptionsByView[mixView] || mixSortOptionsByView.units;
 
   const mixFilterBar = `
     <input id="mix-filter-input" type="text" placeholder="Filter products by name or SKU…" value="${(S.mixFilterText || '').replace(/"/g, '&quot;')}"
@@ -2438,9 +2526,13 @@ function renderRevenueBody() {
     let prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id]);
     if (mixFilterText) prods = prods.filter(p => p.display_name.toLowerCase().includes(mixFilterText) || (p.sku_code || '').toLowerCase().includes(mixFilterText));
     const withMetrics = prods.map(p => ({ p, metrics: productMixMetrics(channel, p) }));
+    // sort.key may be left over from a different view (e.g. 'pct' while now viewing ASP) if the
+    // user switched views via setRevenueMixView's "don't clobber a deliberate choice" rule after
+    // having picked something odd; fall back to this view's primary metric rather than erroring.
+    const effectiveSortKey = mixSortOptions.some(o => o.key === sort.key) ? sort.key : mixSortOptions[0].key;
     const orderedProds = window.RevenueLogic.sortByMetric(
       withMetrics.map(x => ({ item: x.p, metrics: x.metrics })),
-      { key: sort.key, dir: sort.dir, nameOf: (item) => item.display_name, fallbackRank: (item) => productSortRank(item.display_name) }
+      { key: effectiveSortKey, dir: sort.dir, nameOf: (item) => item.display_name, fallbackRank: (item) => productSortRank(item.display_name) }
     );
     if (!orderedProds.length) return mixSortControls(channel) + `<div class="empty-state" style="padding:10px; font-size:12px;">No products match this filter.</div>`;
     const rows = orderedProds.map(p => [
@@ -2462,9 +2554,23 @@ function renderRevenueBody() {
     ]);
     if (mixView === 'pct') {
       const totals = months.map(m => orderedProds.reduce((s, p) => s + (S.draftMix[channel][p.product_id]?.[m]?.revenue_pct || 0), 0) * 100);
+      // Alex (2026-10-22): "Why ... aren't the percentages equal to 100%? Is it due to shipping?"
+      // Yes (for Shopify) -- revenue_pct is each product's share of TOTAL gross revenue, and gross
+      // revenue includes shipping, which no product line claims a share of. Show the expected
+      // shipping/other share alongside the product total instead of just flagging a bare "bad" pill
+      // whenever product-only % falls short of 100 by roughly that amount.
+      const shippingPct = (S.shippingShareByChannel?.[channel] || 0) * 100;
+      const expectedTotal = 100 - shippingPct;
       rows.push([
-        '<em>Total (should ≈ 100%)</em>',
-        ...totals.map(t => `<span class="pill ${Math.abs(t - 100) < 1.5 ? 'good' : 'bad'}">${t.toFixed(1)}%</span>`),
+        `<em>Product Total</em>${shippingPct > 0.5 ? `<br><span class="muted" style="font-size:10px;">+ ~${shippingPct.toFixed(1)}% shipping/other (trailing actual, not in any product's %)</span>` : ''}`,
+        ...totals.map(t => {
+          const diffFromExpected = Math.abs(t - expectedTotal);
+          const ok = diffFromExpected < 2.5;
+          const title = shippingPct > 0.5
+            ? `${t.toFixed(1)}% product + ~${shippingPct.toFixed(1)}% shipping ≈ ${(t + shippingPct).toFixed(1)}% of gross revenue`
+            : `${t.toFixed(1)}% of gross revenue`;
+          return `<span class="pill ${ok ? 'good' : 'bad'}" title="${title}">${t.toFixed(1)}%</span>`;
+        }),
       ]);
     }
     return mixSortControls(channel) + kpiTable(['Product', ...months.map(monthLabelShort)], rows, null, monthColWidths, [1, 2, 3, 4, 5, 6]);
@@ -2485,10 +2591,17 @@ function renderRevenueBody() {
       return ua - ub || (productSortRank(a.display_name) - productSortRank(b.display_name));
     });
   const projections = computeProjection(S.draftChannel, S.draftMix);
+  // Alex (2026-10-22): "it's unclear to me what those numbers represent — are they ending month
+  // inventory numbers? ... [and confusion about] starting month inventory and now you can pull
+  // starting inventory as of today." Answer: yes, every month column is a projected
+  // END-of-month figure (headers now say "EOM" explicitly) -- and a separate, non-projected
+  // "Today" column shows the live current QOH those projections start from, so the live snapshot
+  // is never confused with either a month-start or month-end number.
   const outlookRows = outlookProducts.map(p => {
     const series = projections[p.sku_code] || [];
     const urgency = S.activeRecByProduct[p.product_id];
     const nameCell = `<strong>${p.display_name}</strong>${urgency ? ` <span class="urgency-badge urgency-${urgency}" style="margin-left:4px; font-size:9px; padding:1px 5px;">${urgency}</span>` : ''}`;
+    const todayCell = `<div style="text-align:center; font-size:11px;"><strong>${Math.round(p.qty_on_hand || 0).toLocaleString()}</strong><br><span class="muted" style="font-size:9px;">live, today</span></div>`;
     const cells = months.map((m, i) => {
       const eom = series[i];
       const hasDraft = (S.draftPOs || []).some(po => po.product_id === p.product_id && po.eta_month.slice(0, 7) === m);
@@ -2496,18 +2609,19 @@ function renderRevenueBody() {
       const safety = p.safety_stock_qty || 0;
       const bg = eom < 0 ? 'var(--bad-bg)' : (eom < safety ? '#EFEAE2' : 'transparent');
       const color = eom < 0 ? 'var(--bad-text)' : (eom < safety ? 'var(--accent-light)' : 'inherit');
-      return `<button class="btn btn-ghost" style="padding:4px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}">
+      return `<button class="btn btn-ghost" style="padding:4px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
         <span><strong>${Math.round(eom).toLocaleString()}</strong></span>
+        ${i === 0 ? '<span style="font-size:9px;">in progress</span>' : ''}
         ${hasDraft ? '<span style="font-size:9px;">+draft</span>' : ''}
       </button>`;
     });
     const actionCell = isEditable()
       ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="openDraftPoModal('${p.product_id}', '${months[0]}')">+ Draft PO</button>`
       : '<span class="muted" style="font-size:10px;">—</span>';
-    return [nameCell, ...cells, actionCell];
+    return [nameCell, todayCell, ...cells, actionCell];
   });
   const outlookTable = outlookRows.length
-    ? kpiTable(['Product', ...months.map(monthLabelShort), ''], outlookRows, null, [...monthColWidths, '110px'], [1, 2, 3, 4, 5, 6, 7])
+    ? kpiTable(['Product', 'Today', ...months.map(m => `EOM ${monthLabelShort(m)}`), ''], outlookRows, null, [monthColWidths[0], '80px', ...monthColWidths.slice(1), '110px'], [1, 2, 3, 4, 5, 6, 7, 8])
     : `<div class="empty-state" style="padding:10px; font-size:12px;">No products to show.</div>`;
 
   // ---------- Committed POs record (Alex, 2026-10-22: "I'd like to see a record of it") ----------
@@ -2564,7 +2678,12 @@ function renderRevenueBody() {
       <div class="section-label" style="margin:0 0 2px;">Inventory Outlook &amp; Draft POs</div>
       <div class="muted" style="font-size:11px; margin-bottom:8px;">
         Root products only (bundles have no QOH or PO of their own — see their root products' rows).
-        One row per product, current QOH projected 6 months out under the forecast above.
+        <strong>"Today"</strong> is each product's live current quantity on hand — not an official
+        month-start count. <strong>Every "EOM" column is a projected end-of-month figure</strong>,
+        built forward from "Today" using the forecast above (the first "EOM" month is still in
+        progress, so it projects only the <em>remaining</em> demand for the rest of this month on
+        top of today's count — click it for the breakdown). Every later "EOM" month is a full
+        month's projected demand against the prior month's projected end.
         ${isEditable() ? 'Red/amber cells project below safety stock — click "+ Draft PO" to model a hypothetical order and immediately see its effect here. Draft POs only become real purchase orders when you commit this scenario.' : 'Select or create a draft scenario to model hypothetical POs against this outlook.'}
         Sorted CRITICAL/WARNING/WATCH first (same urgency as the Overview tab).
       </div>
@@ -2587,7 +2706,16 @@ function renderRevenueBody() {
 }
 
 function setRevenueMixView(view) {
-  window._revState.mixView = view;
+  const S = window._revState;
+  // Alex (2026-10-22): sort should make sense for the view you're looking at -- auto-switch the
+  // sort key to match the newly selected view's primary metric, so the picklist and the visible
+  // numbers are in sync by default. (Direction is left as-is; user can still override the key.)
+  const primaryKeyByView = { pct: 'pct', asp: 'asp', units: 'units' };
+  const newPrimaryKey = primaryKeyByView[view];
+  if (S.mixSort && newPrimaryKey) {
+    ['shopify', 'amazon'].forEach(ch => { if (S.mixSort[ch]) S.mixSort[ch].key = newPrimaryKey; });
+  }
+  S.mixView = view;
   renderRevenueBody();
 }
 
