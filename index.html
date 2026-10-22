@@ -1317,6 +1317,16 @@ async function editDraftMixProduct(channel, productId) {
   renderRevenueBody();
 }
 
+function channelMonthBasis(month, channel) {
+  const S = window._revState;
+  const now = new Date();
+  const currentKey = now.toISOString().slice(0, 7);
+  const hasActual = !!(S.monthlyActual[month] && S.monthlyActual[month][channel]);
+  if (month < currentKey) return hasActual ? { tag: 'actual', detail: 'Closed month — full actual revenue.' } : { tag: 'no data', detail: 'No actuals recorded for this month yet.' };
+  if (month === currentKey) return hasActual ? { tag: 'MTD actual', detail: 'Blends actual revenue so far this month with the assumption for the remainder — tightens daily as more actuals land.' } : { tag: 'assumption', detail: 'No actuals yet this month — this is a manual assumption.' };
+  return { tag: 'assumption', detail: 'Future month — manual assumption until it becomes the current month, at which point actuals start anchoring it.' };
+}
+
 function computeProjection(channelData, mixData) {
   // Returns { [product_sku]: [eom_m0, eom_m1, ...] } using the same direct_units formula as
   // demand_engine.py (channel_revenue * revenue_pct / ASP), without bundle expansion -- a
@@ -1342,6 +1352,49 @@ function computeProjection(channelData, mixData) {
   return out;
 }
 
+function showThroughputDetail(productId, month) {
+  const S = window._revState;
+  const p = S.products.find(pr => pr.product_id === productId);
+  const monthIdx = S.months.indexOf(month);
+  const projection = computeProjection(S.draftChannel, S.draftMix);
+  const startingInv = monthIdx === 0 ? p.qty_on_hand : projection[p.sku_code][monthIdx - 1];
+  const receipts = (S.receipts[p.sku_code] || {})[month] || 0;
+
+  const channelRows = ['shopify', 'amazon'].map(ch => {
+    const mix = S.draftMix[ch][productId]?.[month];
+    const chanRev = S.draftChannel[month]?.[ch];
+    if (!mix || chanRev == null) return null;
+    const units = (chanRev * mix.revenue_pct) / mix.avg_selling_price;
+    const basis = channelMonthBasis(month, ch);
+    return { channel: ch === 'shopify' ? 'Shopify' : 'Amazon', chanRev, pct: mix.revenue_pct, asp: mix.avg_selling_price, units, basis };
+  }).filter(Boolean);
+  const totalUnits = channelRows.reduce((s, r) => s + r.units, 0);
+  const totalRevenue = channelRows.reduce((s, r) => s + r.chanRev * r.pct, 0);
+  const endingInv = startingInv - totalUnits + receipts;
+
+  const body = `
+    <div style="font-size:13px; line-height:1.7;">
+      ${channelRows.map(r => `
+        <div style="padding:8px 0; border-bottom:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between;"><strong>${r.channel}</strong><span class="pill ${r.basis.tag === 'actual' ? 'good' : (r.basis.tag === 'MTD actual' ? 'watch' : '')}" title="${r.basis.detail}">${r.basis.tag}</span></div>
+          <div class="muted" style="font-size:12px; margin-top:2px;">
+            ${fmtMoney(r.chanRev)} channel revenue × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units</strong> (${fmtMoney(r.chanRev * r.pct)})
+          </div>
+        </div>
+      `).join('')}
+      <div style="padding:8px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between;">
+        <span>Total implied demand</span><strong>${Math.round(totalUnits).toLocaleString()} units (${fmtMoney(totalRevenue)})</strong>
+      </div>
+      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>Starting inventory (${monthIdx === 0 ? 'current QOH' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
+      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>+ Incoming receipts this month</span><strong>${receipts.toLocaleString()}</strong></div>
+      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
+      <div style="padding:10px 0 0; display:flex; justify-content:space-between; font-size:15px;"><span><strong>= Ending inventory</strong></span><strong style="color:${endingInv < (p.safety_stock_qty || 0) ? 'var(--bad-text)' : 'var(--good-text)'};">${Math.round(endingInv).toLocaleString()}</strong></div>
+      <div class="muted" style="font-size:11px; margin-top:4px;">Safety stock: ${(p.safety_stock_qty || 0).toLocaleString()}</div>
+    </div>
+  `;
+  showDetail(`${p.display_name} — ${monthLabelLong(month)}`, body);
+}
+
 function renderRevenueBody() {
   const S = window._revState;
   const el = document.getElementById('tab-revenue');
@@ -1355,14 +1408,18 @@ function renderRevenueBody() {
   ].join('');
 
   const channelRow = (channel, label) => `
-    <div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+    <div style="display:flex; align-items:center; gap:6px; padding:4px 0; flex-wrap:wrap;">
       <div style="width:64px; font-size:12px; font-weight:600;">${label}</div>
-      ${months.map(m => `
-        <button class="btn ${editable ? 'btn-ghost' : ''}" style="padding:4px 8px; font-size:11px; ${editable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
-          onclick="${editable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)}">
-          ${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}
+      ${months.map(m => {
+        const basis = channelMonthBasis(m, channel);
+        return `
+        <button class="btn ${editable ? 'btn-ghost' : ''}" style="padding:4px 8px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${editable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
+          onclick="${editable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
+          <span>${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}</span>
+          <span class="muted" style="font-size:9px;">${basis.tag}</span>
         </button>
-      `).join('')}
+      `;
+      }).join('')}
     </div>
   `;
 
@@ -1411,6 +1468,22 @@ function renderRevenueBody() {
     .map(p => `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px; ${editable ? '' : 'cursor:default;'}" ${editable ? `onclick="editDraftMixProduct('${channel}','${p.product_id}')"` : 'disabled'}>${editable ? '✎ ' : ''}${p.display_name}</button>`)
     .join(' ');
 
+  const throughputTable = (channel) => {
+    const prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id])
+      .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
+    const rows = prods.map(p => [
+      `<strong>${p.display_name}</strong>`,
+      ...months.map(m => {
+        const mix = S.draftMix[channel][p.product_id]?.[m];
+        const chanRev = S.draftChannel[m]?.[channel];
+        if (!mix || chanRev == null) return '<span class="muted">—</span>';
+        const units = Math.round((chanRev * mix.revenue_pct) / mix.avg_selling_price);
+        return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong></button>`;
+      }),
+    ]);
+    return kpiTable(['Product', ...months.map(monthLabelShort)], rows, null, null, [1, 2, 3, 4, 5, 6]);
+  };
+
   el.innerHTML = `
     <div class="card" style="padding:12px 16px; margin-bottom:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <div class="section-label" style="margin:0;">Scenario:</div>
@@ -1424,25 +1497,33 @@ function renderRevenueBody() {
     </div>
 
     <div class="card" style="padding:14px 16px; margin-bottom:12px;">
-      <div class="section-label" style="margin:0 0 2px;">Revenue by Channel — next 6 months</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">${editable ? 'Click a month to edit this scenario\'s forecast.' : 'Switch to a draft scenario to edit.'}</div>
-      <div style="height:170px; margin-bottom:10px;"><canvas id="revenue-channel-chart"></canvas></div>
+      <div class="section-label" style="margin:0 0 2px;">Top-Line Revenue by Channel</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">${editable ? 'Click a month to edit this scenario\'s assumption.' : 'Switch to a draft scenario to edit.'} Tag under each value shows whether it's real actuals, blended MTD, or a manual assumption — assumptions sharpen into actuals as each month closes.</div>
       ${channelRow('shopify', 'Shopify')}
       ${channelRow('amazon', 'Amazon')}
     </div>
 
     <div class="card" style="padding:14px 16px; margin-bottom:12px;">
-      <div class="section-label" style="margin:0 0 2px;">Product Mix Evolution</div>
+      <div class="section-label" style="margin:0 0 2px;">Product Mix → Inventory Throughput</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">This is the number that matters: implied units sold per product per month, derived from the channel revenue and mix assumptions above. Click any number to see exactly how it was built — revenue × mix share ÷ ASP, plus the resulting inventory waterfall — the same way your source sheet breaks it down.</div>
+      <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
+      ${throughputTable('shopify')}
+      <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
+      ${throughputTable('amazon')}
+    </div>
+
+    <div class="card" style="padding:14px 16px; margin-bottom:12px;">
+      <div class="section-label" style="margin:0 0 2px;">Mix Share Evolution</div>
       <div class="muted" style="font-size:11px; margin-bottom:8px;">How each product's share of channel revenue is modeled to shift over the next 6 months. ${editable ? 'Click a product below to edit its monthly share.' : 'Switch to a draft scenario to edit.'}</div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
         <div>
           <div style="font-weight:600; font-size:12px; margin-bottom:4px;">Shopify</div>
-          <div style="height:180px;"><canvas id="mix-chart-shopify"></canvas></div>
+          <div style="height:160px;"><canvas id="mix-chart-shopify"></canvas></div>
           <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">${mixLegendButtons('shopify')}</div>
         </div>
         <div>
           <div style="font-weight:600; font-size:12px; margin-bottom:4px;">Amazon</div>
-          <div style="height:180px;"><canvas id="mix-chart-amazon"></canvas></div>
+          <div style="height:160px;"><canvas id="mix-chart-amazon"></canvas></div>
           <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">${mixLegendButtons('amazon')}</div>
         </div>
       </div>
@@ -1450,7 +1531,7 @@ function renderRevenueBody() {
 
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 2px;">Projected Impact — this scenario vs. live forecast</div>
-      <div class="muted" style="font-size:11px; margin-bottom:10px;">Projected end-of-month inventory per product, using the same channel-revenue × mix-share ÷ ASP math as the demand engine (bundle expansion omitted from this fast preview). Shows whether this scenario pushes a safety-stock breach earlier, later, or avoids/introduces one entirely.</div>
+      <div class="muted" style="font-size:11px; margin-bottom:10px;">Projected end-of-month inventory per product (bundle expansion omitted from this fast preview). Shows whether this scenario pushes a safety-stock breach earlier, later, or avoids/introduces one entirely.</div>
       <div class="kpi-grid">${impactCards}</div>
     </div>
   `;
@@ -1462,24 +1543,6 @@ function renderRevenueCharts(projection, liveProjection) {
   const S = window._revState;
   const months = S.months;
   const labels = months.map(monthLabelShort);
-
-  const chanCanvas = document.getElementById('revenue-channel-chart');
-  if (chanCanvas) {
-    new Chart(chanCanvas, {
-      data: {
-        labels,
-        datasets: [
-          { label: 'Shopify', type: 'bar', data: months.map(m => S.draftChannel[m]?.shopify ?? null), backgroundColor: '#C9A876' },
-          { label: 'Amazon', type: 'bar', data: months.map(m => S.draftChannel[m]?.amazon ?? null), backgroundColor: '#8A7257' },
-        ],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
-        scales: { y: { ticks: { callback: v => '$' + (v / 1000) + 'k', font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } },
-      },
-    });
-  }
 
   const palette = ['#C9A876', '#8A7257', '#A3B18A', '#588157', '#BC6C25', '#606C38', '#DDA15E', '#283618'];
   ['shopify', 'amazon'].forEach(channel => {
