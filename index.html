@@ -791,6 +791,7 @@ async function showSafetyStockDetail(sku) {
       <div><strong>Projected sell-through (next 180 days):</strong> ${Math.round(next6).toLocaleString()} units.</div>
     </div>
     <div style="height:110px; margin-top:14px;"><canvas id="safety-stock-chart"></canvas></div>
+    <div id="safety-stock-action" style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border); font-size:13px;"></div>
   `;
   const el = document.getElementById('safety-stock-sellthrough');
   if (el) el.innerHTML = textHtml;
@@ -812,6 +813,18 @@ async function showSafetyStockDetail(sku) {
         scales: { x: { ticks: { font: { size: 10 } } }, y: { ticks: { font: { size: 11 } } } },
       },
     });
+  }
+
+  // Recommended action -- driven by the same recommendation engine behind the Overview tab,
+  // so this never disagrees with it; not a separately-derived heuristic.
+  const actionEl = document.getElementById('safety-stock-action');
+  if (actionEl) {
+    const activeRec = (window._recsCache || []).find(r => r.products?.sku_code === sku && r.urgency !== 'OK');
+    if (activeRec) {
+      actionEl.innerHTML = `<strong>Recommended action:</strong> Consider placing a PO — order ${(activeRec.recommended_order_qty || 0).toLocaleString()} units by ${fmtDate(activeRec.last_responsible_date)}${activeRec.days_until_deadline < 0 ? ` (already ${-activeRec.days_until_deadline} day(s) overdue)` : ''}. <span class="pill clickable-pill watch" onclick="document.getElementById('detail-modal-backdrop').remove(); showRecommendationDetail('${activeRec.id}')">See full recommendation</span>`;
+    } else {
+      actionEl.innerHTML = `<strong>Recommended action:</strong> None — the recommendation engine isn't flagging a shortfall for this product right now.`;
+    }
   }
 }
 
