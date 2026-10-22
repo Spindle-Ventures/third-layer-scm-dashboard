@@ -151,6 +151,7 @@
     <button class="tab-btn" data-tab="inventory">Inventory</button>
     <button class="tab-btn" data-tab="pos">Purchase Orders</button>
     <button class="tab-btn" data-tab="vendors">Vendors &amp; Comms</button>
+    <button class="tab-btn" data-tab="activity">Activity Log</button>
   </nav>
 </header>
 
@@ -160,6 +161,7 @@
   <div id="tab-inventory" class="tab-panel hidden"></div>
   <div id="tab-pos" class="tab-panel hidden"></div>
   <div id="tab-vendors" class="tab-panel hidden"></div>
+  <div id="tab-activity" class="tab-panel hidden"></div>
 </main>
 </div>
 
@@ -210,7 +212,7 @@ async function loadApp(session) {
   document.getElementById('subtitle-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   document.getElementById('snapshot-pill').textContent = 'Snapshot · updated on page load';
 
-  await Promise.all([renderOverview(), renderRevenue(), renderInventory(), renderPOs(), renderVendors()]);
+  await Promise.all([renderOverview(), renderRevenue(), renderInventory(), renderPOs(), renderVendors(), renderActivityLog()]);
 }
 
 // ---------- Tabs ----------
@@ -847,9 +849,8 @@ async function editLastContact(ledgerId) {
   if (dateVal === null) return;
   const resultVal = prompt('Result of this contact (what did they say?):', o.notes || '');
   if (resultVal === null) return;
-  const { error } = await sb.from('inventory_ledger').update({ last_contacted: dateVal, notes: resultVal || null }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const ok = await mutateLedgerRow(ledgerId, { last_contacted: dateVal, notes: resultVal || null }, `Logged a contact for ${o.product_name}`);
+  if (ok) await renderOverview();
 }
 
 async function editNextContact(ledgerId) {
@@ -857,9 +858,8 @@ async function editNextContact(ledgerId) {
   if (!o) return;
   const dateVal = promptDateMMDDYYYY('Next contact date', o.next_contact);
   if (dateVal === null) return;
-  const { error } = await sb.from('inventory_ledger').update({ next_contact: dateVal }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const ok = await mutateLedgerRow(ledgerId, { next_contact: dateVal }, `Set next contact date for ${o.product_name}`);
+  if (ok) await renderOverview();
 }
 
 function showPoNumberDetail(ledgerId) {
@@ -979,9 +979,12 @@ async function deleteOrderRow(ledgerId) {
   if (!canDelete()) { alert('Only admins can delete a row.'); return; }
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  if (!confirm(`Permanently delete this order row (${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)})? This cannot be undone. Use "Cancel" instead if you just want it to stop showing as active while keeping a record.`)) return;
+  if (!confirm(`Permanently delete this order row (${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)})? This cannot be undone from here, but you'll get an Undo option right after, and it stays restorable from the Activity Log tab. Use "Cancel" instead if you just want it to stop showing as active while keeping a record.`)) return;
+  const { data: before, error: fetchErr } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
+  if (fetchErr) { alert('Failed: ' + fetchErr.message); return; }
   const { error } = await sb.from('inventory_ledger').delete().eq('id', ledgerId);
   if (error) { alert('Failed: ' + error.message); return; }
+  await logAction('inventory_ledger', ledgerId, 'delete', `Deleted order: ${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)}`, before, null);
   await renderOverview();
 }
 
@@ -989,6 +992,75 @@ function editOpenOrderRow(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
   document.getElementById('row-' + ledgerId).outerHTML = renderOpenOrderRow(o, true);
+}
+
+// ---------- Activity log / undo ----------
+async function logAction(tableName, recordId, action, description, beforeData, afterData) {
+  const { data, error } = await sb.from('activity_log').insert({
+    table_name: tableName, record_id: recordId, action, description,
+    before_data: beforeData, after_data: afterData, performed_by: currentUserRow?.email || 'dashboard',
+  }).select().single();
+  if (!error && data) showUndoToast(data.id, description);
+}
+
+function showUndoToast(logId, description) {
+  document.getElementById('undo-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.id = 'undo-toast';
+  toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2b2420; color:#fff; padding:10px 16px; border-radius:8px; font-size:13px; display:flex; align-items:center; gap:12px; z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,0.35); max-width:520px;';
+  toast.innerHTML = `<span>${description}</span><button style="background:#fff; color:#2b2420; padding:4px 10px; font-size:12px; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" onclick="undoAction('${logId}')">Undo</button>`;
+  document.body.appendChild(toast);
+  setTimeout(() => { if (document.getElementById('undo-toast') === toast) toast.remove(); }, 10000);
+}
+
+async function undoAction(logId) {
+  const { data: log, error } = await sb.from('activity_log').select('*').eq('id', logId).single();
+  if (error || !log) { alert('Could not load this action.'); return; }
+  if (log.undone) { alert('This action was already undone.'); return; }
+  document.getElementById('undo-toast')?.remove();
+
+  if (log.action === 'delete') {
+    const { error: insErr } = await sb.from(log.table_name).insert(log.before_data);
+    if (insErr) { alert('Undo failed: ' + insErr.message); return; }
+  } else if (log.action === 'split') {
+    await sb.from(log.table_name).update({ qty_in: log.before_data.qty_in }).eq('id', log.record_id);
+    if (log.after_data?.new_row_id) await sb.from(log.table_name).delete().eq('id', log.after_data.new_row_id);
+  } else {
+    const { id, ...rest } = log.before_data;
+    await sb.from(log.table_name).update(rest).eq('id', log.record_id);
+  }
+  await sb.from('activity_log').update({ undone: true, undone_at: new Date().toISOString(), undone_by: currentUserRow?.email || 'dashboard' }).eq('id', logId);
+  await renderOverview();
+  const activityTab = document.getElementById('tab-activity');
+  if (activityTab && !activityTab.classList.contains('hidden')) await renderActivityLog();
+}
+
+async function mutateLedgerRow(ledgerId, payload, description) {
+  const { data: before, error: fetchErr } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
+  if (fetchErr) { alert('Failed: ' + fetchErr.message); return false; }
+  const { error } = await sb.from('inventory_ledger').update(payload).eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return false; }
+  await logAction('inventory_ledger', ledgerId, 'update', description, before, { ...before, ...payload });
+  return true;
+}
+
+async function renderActivityLog() {
+  const el = document.getElementById('tab-activity');
+  const { data: log } = await sb.from('activity_log').select('*').order('performed_at', { ascending: false }).limit(200);
+  const rows = (log || []).map(l => [
+    fmtDateTime(l.performed_at),
+    `<span class="pill ${l.action === 'delete' ? 'bad' : (l.undone ? 'watch' : '')}">${l.action}</span>`,
+    l.description,
+    l.performed_by || '—',
+    l.undone ? `<span class="muted">Undone ${fmtDateTime(l.undone_at)} by ${l.undone_by || '—'}</span>` : (canEdit() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="undoAction('${l.id}')">${l.action === 'delete' ? 'Restore' : 'Undo'}</button>` : ''),
+  ]);
+  el.innerHTML = `
+    <div class="card" style="padding:14px 16px;">
+      <div class="section-label" style="margin:0 0 4px;">Activity Log</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">Every edit, cancel, pause/resume, delay, split, and delete made from this dashboard, newest first. Deleted rows can be restored here even after the undo banner has disappeared.</div>
+      ${kpiTable(['When', 'Action', 'What happened', 'By', ''], rows, 2)}
+    </div>
+  `;
 }
 
 async function saveOrderEdit(ledgerId) {
@@ -999,9 +1071,9 @@ async function saveOrderEdit(ledgerId) {
     last_contacted: document.getElementById('edit-lastcontact-' + ledgerId).value || null,
     next_contact: document.getElementById('edit-nextcontact-' + ledgerId).value || null,
   };
-  const { error } = await sb.from('inventory_ledger').update(payload).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  const ok = await mutateLedgerRow(ledgerId, payload, `Edited order details for ${o?.product_name || 'an order'}`);
+  if (ok) await renderOverview();
 }
 
 async function splitOrder(ledgerId) {
@@ -1013,10 +1085,11 @@ async function splitOrder(ledgerId) {
   if (!splitQty || splitQty <= 0 || splitQty >= o.qty) { alert('Enter a quantity less than the current total.'); return; }
   const newEta = promptDateMMDDYYYY('ETA for the new (split-off) order', o.eta);
 
+  const { data: before } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
   // Reduce the original row, then insert a new ledger row carrying the remainder.
   const { error: err1 } = await sb.from('inventory_ledger').update({ qty_in: o.qty - splitQty }).eq('id', ledgerId);
   if (err1) { alert('Failed: ' + err1.message); return; }
-  const { error: err2 } = await sb.from('inventory_ledger').insert({
+  const { data: inserted, error: err2 } = await sb.from('inventory_ledger').insert({
     event_date: new Date().toISOString().slice(0, 10),
     event_type: o.order_type === 'componentry' ? 'component_order' : 'production_run',
     product_id: o.order_type === 'componentry' ? null : o.product_id,
@@ -1028,8 +1101,11 @@ async function splitOrder(ledgerId) {
     order_status: 'open',
     eta: newEta || o.eta,
     notes: `Split from original order ${ledgerId} via dashboard`,
-  });
+  }).select().single();
   if (err2) { alert('Original order was reduced, but creating the split-off order failed: ' + err2.message); }
+  else if (before) {
+    await logAction('inventory_ledger', ledgerId, 'split', `Split ${o.product_name} into ${(o.qty - splitQty).toLocaleString()} + ${splitQty.toLocaleString()} units`, before, { new_row_id: inserted?.id });
+  }
   await renderOverview();
 }
 
@@ -1038,9 +1114,8 @@ async function editPoNumber(ledgerId) {
   if (!o) return;
   const newVal = prompt('Order # (PO or componentry order reference):', o.internal_ref || '');
   if (newVal === null) return;
-  const { error } = await sb.from('inventory_ledger').update({ order_number: newVal || null }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const ok = await mutateLedgerRow(ledgerId, { order_number: newVal || null }, `Set order # for ${o.product_name} to "${newVal || '(cleared)'}"`);
+  if (ok) await renderOverview();
 }
 
 async function editTracking(ledgerId) {
@@ -1048,9 +1123,8 @@ async function editTracking(ledgerId) {
   if (!o) return;
   const newVal = prompt('Tracking info:', o.tracking_info || '');
   if (newVal === null) return;
-  const { error } = await sb.from('inventory_ledger').update({ tracking_info: newVal || null }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const ok = await mutateLedgerRow(ledgerId, { tracking_info: newVal || null }, `Set tracking for ${o.product_name}`);
+  if (ok) await renderOverview();
 }
 
 async function editRevenueForecast(channel) {
@@ -1076,32 +1150,31 @@ async function delayOrder(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   const newEta = promptDateMMDDYYYY('New ETA', o ? o.eta : null);
   if (!newEta) return;
-  const { error } = await sb.from('inventory_ledger').update({ eta: newEta }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const ok = await mutateLedgerRow(ledgerId, { eta: newEta }, `Delayed ${o?.product_name || 'an order'} to ${fmtDate(newEta)}`);
+  if (ok) await renderOverview();
 }
 
 async function pauseOrder(ledgerId) {
-  const { error } = await sb.from('inventory_ledger').update({ order_status: 'paused' }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  const ok = await mutateLedgerRow(ledgerId, { order_status: 'paused' }, `Paused ${o?.product_name || 'an order'}`);
+  if (ok) await renderOverview();
 }
 async function resumeOrder(ledgerId) {
-  const { error } = await sb.from('inventory_ledger').update({ order_status: 'open' }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  const ok = await mutateLedgerRow(ledgerId, { order_status: 'open' }, `Resumed ${o?.product_name || 'an order'}`);
+  if (ok) await renderOverview();
 }
 async function cancelOrder(ledgerId) {
   if (!confirm('Cancel this order? It will be removed from the open-orders list.')) return;
-  const { error } = await sb.from('inventory_ledger').update({ order_status: 'cancelled' }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  const ok = await mutateLedgerRow(ledgerId, { order_status: 'cancelled' }, `Cancelled ${o?.product_name || 'an order'}`);
+  if (ok) await renderOverview();
 }
 
 async function markLanded(ledgerId) {
-  const { error } = await sb.from('inventory_ledger').update({ landed: true, date_landed: new Date().toISOString().slice(0, 10) }).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
-  await renderOverview();
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  const ok = await mutateLedgerRow(ledgerId, { landed: true, date_landed: new Date().toISOString().slice(0, 10) }, `Marked ${o?.product_name || 'an order'} as landed`);
+  if (ok) await renderOverview();
 }
 
 async function decideRecommendation(id, decision) {
