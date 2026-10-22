@@ -1213,7 +1213,7 @@ async function createNewOrder(type) {
   document.getElementById('detail-modal-backdrop')?.remove();
   const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
   await logAction('inventory_ledger', inserted.id, 'create', `Added new ${type === 'componentry' ? 'component' : 'finished-good'} order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
-  await Promise.all([renderOverview(), renderComponents()]);
+  await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
 }
 
 function showOrderActionsMenu(ledgerId) {
@@ -1724,6 +1724,44 @@ async function orderComponentFromComponentsTab(componentId, productId) {
   if (productSel && productId) { productSel.value = productId; refreshAddOrderComponents(); }
   const compSel = document.getElementById('add-order-component');
   if (compSel) compSel.value = componentId;
+}
+
+// Alex (2026-10-22): "Outside of scenarios I should be able to initiate a draft and commit a PO
+// to see how that solves the problem" -- answered via clarify: committed directly against LIVE,
+// no scenario wrapper, as its own separate creation path. Reuses the exact same Add Order flow
+// used elsewhere (Overview "+ Add Order", Components "+ Order") -- a real inventory_ledger row,
+// visible immediately with full vendor/tracking info in the Overview tab's Open Orders list, and
+// correctly picked up as a real finished-good receipt in this tab's own projection (the
+// order_type='finished_good' filter fixed earlier this session). Optionally pre-filled with a
+// recommended qty/month/vendor -- "If the Status is Issue it should also come with a recommended
+// PO initiation with all info filled out."
+async function initiateLivePoFromOutlook(productId, recommendedQty, recommendedMonth, recommendedVendorId) {
+  if (!canEdit()) { alert('You do not have permission to create orders.'); return; }
+  if (!window._addOrderLookups) {
+    const [{ data: products }, { data: vendors }] = await Promise.all([
+      sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
+      sb.from('vendors').select('id, vendor_name').order('vendor_name'),
+    ]);
+    window._addOrderLookups = {
+      products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
+      vendors: vendors || [],
+    };
+  }
+  await showAddOrderForm('finished_good');
+  const productSel = document.getElementById('add-order-product');
+  if (productSel) productSel.value = productId;
+  if (recommendedQty) document.getElementById('add-order-qty').value = recommendedQty;
+  if (recommendedMonth) document.getElementById('add-order-eta').value = recommendedMonth + '-01';
+  const vendorSel = document.getElementById('add-order-vendor');
+  if (vendorSel && recommendedVendorId) vendorSel.value = recommendedVendorId;
+  if (recommendedQty || recommendedMonth) {
+    const note = document.createElement('div');
+    note.className = 'muted';
+    note.style.cssText = 'font-size:11px; margin-bottom:-4px;';
+    note.textContent = 'Pre-filled from the Inventory Outlook recommendation — review and adjust before saving.';
+    const container = document.getElementById('add-order-product')?.closest('label')?.parentElement;
+    if (container) container.insertBefore(note, container.firstChild);
+  }
 }
 
 async function renderActivityLog() {
@@ -2392,6 +2430,15 @@ function showOutlookStatusDetail(productId) {
   const safety = p.safety_stock_qty || 0;
   const outlookStatus = window.RevenueLogic.computeOutlookStatus({ series, safetyStock: safety });
   const backendRec = S.activeRecFullByProduct?.[productId];
+  const isLiveView = S.selectedScenarioId === 'live';
+  // Prefer the real PO-recommendation engine's numbers when an active one exists; otherwise fall
+  // back to this tab's own quick estimate (computeRecommendedPoQty) -- either way, "If the Status
+  // is Issue it should come with a recommended PO initiation with all info filled out" (Alex).
+  const fallbackQty = window.RevenueLogic.computeRecommendedPoQty({ series, firstIssueIndex: outlookStatus.firstIssueIndex, safetyStock: safety });
+  const recommendedQty = backendRec ? (backendRec.recommended_order_qty || 0) : fallbackQty;
+  const recommendedMonth = backendRec?.shortfall_month
+    ? backendRec.shortfall_month.slice(0, 7)
+    : (outlookStatus.firstIssueIndex != null ? months[outlookStatus.firstIssueIndex] : months[0]);
 
   const narrative = outlookStatus.status === 'HEALTHY'
     ? `Projected inventory stays at or above safety stock (${safety.toLocaleString()} units) across the full 6-month outlook — no action needed right now.`
@@ -2419,9 +2466,15 @@ function showOutlookStatusDetail(productId) {
         </div>
         <div style="font-size:12px; margin-bottom:8px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>
       ` : outlookStatus.status === 'ISSUE' ? `
-        <div class="muted" style="font-size:12px; margin-bottom:8px;">No active recommendation from the Overview tab's engine yet — this status reflects this tab's own simplified 6-month projection.</div>
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">No active recommendation from the Overview tab's engine yet — the ${recommendedQty.toLocaleString()}-unit suggestion below is this tab's own quick estimate (enough to bring ${monthLabelShort(months[outlookStatus.firstIssueIndex])}'s projection back up to safety stock).</div>
       ` : ''}
-      ${isEditable() ? `<button class="btn btn-primary" style="padding:6px 12px; font-size:12px; margin-bottom:4px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${outlookStatus.firstIssueIndex != null ? months[outlookStatus.firstIssueIndex] : months[0]}')">+ Draft a PO</button>` : ''}
+      ${canEdit() && outlookStatus.status === 'ISSUE' ? `
+        <button class="btn btn-primary" style="padding:6px 12px; font-size:12px; margin-bottom:4px;" onclick="document.getElementById('detail-modal-backdrop').remove(); ${
+          isLiveView
+            ? `initiateLivePoFromOutlook('${productId}', ${recommendedQty || 'null'}, '${recommendedMonth}', null)`
+            : `openDraftPoModal('${productId}', '${recommendedMonth}')`
+        }">${isLiveView ? '+ Initiate Recommended PO' : '+ Draft a PO'}</button>
+      ` : ''}
       <details>
         <summary>Show the 6-month projection</summary>
         <table style="width:100%; font-size:12px; border-collapse:collapse;">
@@ -2728,9 +2781,17 @@ function renderRevenueBody() {
     const statusCell = `<button class="btn btn-ghost" style="padding:0;" onclick="showOutlookStatusDetail('${p.product_id}')">
       <span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span>
     </button>`;
-    const actionCell = isEditable()
-      ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="openDraftPoModal('${p.product_id}', '${months[0]}')">+ Draft PO</button>`
-      : '<span class="muted" style="font-size:10px;">—</span>';
+    // Alex (2026-10-22): "Outside of scenarios I should be able to initiate a draft and commit a
+    // PO to see how that solves the problem" -- answered via clarify: committed directly against
+    // live (no scenario wrapper), as its own separate path from the scenario-based draft PO flow
+    // above. On "Live Forecast" this button creates a REAL order immediately; on a draft scenario
+    // it still models a hypothetical via openDraftPoModal as before.
+    const isLiveView = S.selectedScenarioId === 'live';
+    const actionCell = !canEdit()
+      ? '<span class="muted" style="font-size:10px;">—</span>'
+      : isLiveView
+      ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="initiateLivePoFromOutlook('${p.product_id}', null, '${months[0]}', null)">+ Initiate PO</button>`
+      : (isEditable() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="openDraftPoModal('${p.product_id}', '${months[0]}')">+ Draft PO</button>` : '<span class="muted" style="font-size:10px;">—</span>');
     return [nameCell, todayCell, ...cells, statusCell, actionCell];
   });
   const outlookTable = outlookRows.length
