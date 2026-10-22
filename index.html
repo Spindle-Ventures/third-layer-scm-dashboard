@@ -124,10 +124,11 @@
      screen"). Fixed position so it survives tab switches -- lives outside #main, inside #app. */
   #manny-chat-fab {
     position: fixed; bottom: 22px; right: 22px; width: 54px; height: 54px; border-radius: 50%;
-    background: var(--accent); color: #fff; border: none; cursor: pointer; font-size: 22px;
+    background: #E31837; color: #fff; border: 2px solid #FFB612; cursor: pointer; font-size: 22px;
     box-shadow: 0 6px 18px rgba(0,0,0,0.25); z-index: 2000; display: flex; align-items: center;
-    justify-content: center; transition: transform 0.15s ease;
+    justify-content: center; transition: transform 0.15s ease; padding: 6px;
   }
+  #manny-chat-fab img { width: 100%; height: 100%; object-fit: contain; }
   #manny-chat-fab:hover { transform: scale(1.06); }
   #manny-chat-panel {
     position: fixed; bottom: 86px; right: 22px; width: 340px; max-width: calc(100vw - 32px);
@@ -225,7 +226,7 @@
 <!-- Floating Manny chat widget -- lives at the #app level (not inside any tab-panel), so it's
      present and in the same state no matter which tab is active. See renderMannyChat* functions
      and migrations/023_dashboard_chat.sql for the full design. -->
-<button id="manny-chat-fab" onclick="toggleMannyChat()" title="Chat with Manny">💬</button>
+<button id="manny-chat-fab" onclick="toggleMannyChat()" title="Chat with Manny"><img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/Kansas_City_Chiefs_logo.svg" alt="Chat with Manny"></button>
 <div id="manny-chat-panel" class="hidden">
   <div id="manny-chat-header">
     <div><strong>Manny</strong><div class="muted" style="font-size:10px; color:#C9BFAF;">Ask about anything on this dashboard</div></div>
