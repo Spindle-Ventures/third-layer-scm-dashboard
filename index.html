@@ -101,6 +101,23 @@
     font-family: 'Inter'; font-size: 14px; margin: 14px 0; box-sizing: border-box;
   }
   .muted { color: var(--muted); font-size: 13px; }
+
+  /* Hover-only info icon + tooltip (Alex, 2026-10-22: "move the text ... to an information icon
+     that pops up when hovered over") -- pure CSS, no JS needed; works anywhere via
+     <span class="info-icon">ⓘ<span class="info-tooltip">...</span></span> */
+  .info-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%; background: var(--border);
+    color: var(--muted); font-size: 11px; font-style: normal; cursor: help; position: relative;
+    flex-shrink: 0;
+  }
+  .info-icon .info-tooltip {
+    display: none; position: absolute; z-index: 50; top: 22px; left: 0;
+    width: 320px; max-width: 70vw; background: #2B2622; color: #F4EFE6;
+    padding: 10px 12px; border-radius: 8px; font-size: 11px; line-height: 1.5;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25); text-align: left; font-weight: 400;
+  }
+  .info-icon:hover .info-tooltip { display: block; }
   .sparkline-wrap { width: 100%; height: 36px; margin-top: 6px; }
   .hidden { display: none !important; }
   .role-badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 3px 9px; border-radius: 999px; }
@@ -419,6 +436,12 @@ function showRecommendationDetail(recId) {
   if (!r) return;
   const body = `${buildRecommendationNarrative(r)}<div style="margin-top:14px;"><button class="btn btn-ghost" onclick="scrollToRecCard('${recId}')">Take me there</button></div>`;
   showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, body);
+}
+
+// Hover-only info icon (Alex, 2026-10-22: "move the text ... to an information icon that pops up
+// when hovered over") -- pure CSS tooltip, no click/JS state needed. `html` may contain markup.
+function infoIcon(html) {
+  return `<span class="info-icon">ⓘ<span class="info-tooltip">${html}</span></span>`;
 }
 
 function kpiTable(headers, rows, wrapIdx, colWidths, noWrapCols) {
@@ -1868,7 +1891,7 @@ async function renderRevenue() {
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
     sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
     sb.from('component_qoh').select('*'),
-    sb.from('agent_recommendations').select('product_id, urgency').neq('decision', 'dismissed'),
+    sb.from('agent_recommendations').select('product_id, urgency, shortfall_month, shortfall_qty, last_responsible_date, recommended_order_qty, problem_type').neq('decision', 'dismissed'),
     sb.from('product_inventory_snapshot').select('channel, qty, products(sku_code)').eq('channel', 'shopify'),
     sb.from('purchase_orders').select('*, vendors(vendor_name, default_lead_days), products(sku_code, display_name), revenue_scenarios(name)').not('source_scenario_id', 'is', null).order('created_at', { ascending: false }),
     sb.from('historical_revenue_pct').select('product_id, channel, month, gross_sales, net_items_sold').gte('month', histStartIso).eq('channel', 'shopify'),
@@ -1948,6 +1971,7 @@ async function renderRevenue() {
     draftChannel: null, draftMix: null,
     vendors: vendors || [], componentQoh: componentQoh || [],
     activeRecByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r.urgency])),
+    activeRecFullByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r])),
     draftPOs: [],
     committedScenarioPOs: committedScenarioPOs || [],
     shippingShareByChannel, historicalAspByProduct,
@@ -2274,14 +2298,23 @@ function showThroughputDetail(productId, month) {
   const totalUnits = channelRows.reduce((s, r) => s + r.units, 0);
   const totalRemainingRevenue = channelRows.reduce((s, r) => s + r.remainingChanRev * r.pct, 0);
   const endingInv = startingInv - totalUnits + receipts;
+  // Alex (2026-10-22): "it's a little unclear to me as to what was the full month's throughput vs
+  // what's been sold so far vs what's planned to be sold with any inventory landing ... I'd love
+  // for it to be a little more simply said." One plain summary line, computed once, shown before
+  // the per-channel math detail (kept below for anyone who wants to see how it was built).
+  const soldSoFarUnits = isCurrentMonth ? channelRows.reduce((s, r) => s + (r.pace?.impliedUnits || 0), 0) : null;
+  const fullMonthUnits = isCurrentMonth ? soldSoFarUnits + totalUnits : null;
 
   const body = `
     <div style="font-size:13px; line-height:1.7;">
       ${isCurrentMonth ? `
-        <div class="muted" style="font-size:11px; margin-bottom:10px; padding:8px; background:#F7F4EE; border-radius:6px;">
-          This month is in progress. <strong>Starting inventory below is today's live count</strong>, which already
-          reflects everything sold so far this month — so only the <em>remaining</em> (not-yet-happened) demand for
-          the rest of ${monthLabelLong(month)} is subtracted from it, not the full month's demand.
+        <div style="margin-bottom:14px; padding:12px; background:#F7F4EE; border-radius:8px;">
+          <div style="font-weight:600; margin-bottom:8px; font-size:12px;">This month, in plain terms:</div>
+          <div style="display:flex; justify-content:space-between; padding:3px 0;"><span class="muted">Full month's target</span><strong>${Math.round(fullMonthUnits).toLocaleString()} units</strong></div>
+          <div style="display:flex; justify-content:space-between; padding:3px 0;"><span class="muted">— Already sold so far this month</span><strong>${Math.round(soldSoFarUnits).toLocaleString()} units</strong></div>
+          <div style="display:flex; justify-content:space-between; padding:3px 0; border-top:1px solid var(--border); margin-top:3px; padding-top:6px;"><span class="muted">= Still planned to sell (rest of month)</span><strong>${Math.round(totalUnits).toLocaleString()} units</strong></div>
+          <div style="display:flex; justify-content:space-between; padding:3px 0;"><span class="muted">+ Inventory landing this month</span><strong>${receipts.toLocaleString()} units</strong></div>
+          <div class="muted" style="font-size:10px; margin-top:6px;">"Already sold so far" is implied from actual revenue recorded this month at the assumed mix %, not a directly measured unit count — see the per-channel math below for detail.</div>
         </div>
       ` : ''}
       ${channelRows.map(r => `
@@ -2293,12 +2326,6 @@ function showThroughputDetail(productId, month) {
               : `${fmtMoney(r.chanRev)} channel revenue × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units</strong> (${fmtMoney(r.chanRev * r.pct)})`
             }
           </div>
-          ${r.pace && r.pace.pctOfProjected != null ? `
-            <div class="muted" style="font-size:11px; margin-top:4px;">
-              Month-to-date pace: ~${Math.round(r.pace.impliedUnits).toLocaleString()} units implied from actual revenue so far
-              (${r.pace.pctOfProjected.toFixed(0)}% of this month's full projection) — a rough read using the assumed mix %, not a measured unit count.
-            </div>
-          ` : ''}
         </div>
       `).join('')}
       <div style="padding:8px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between;">
@@ -2328,6 +2355,54 @@ function showThroughputDetail(productId, month) {
     </div>
   `;
   showDetail(`${p.display_name} — ${monthLabelLong(month)}${isCurrentMonth ? ' (in progress)' : ' (projected EOM)'}`, body);
+}
+
+function showOutlookStatusDetail(productId) {
+  const S = window._revState;
+  const p = S.products.find(pr => pr.product_id === productId);
+  const months = S.months;
+  const projections = computeProjection(S.draftChannel, S.draftMix);
+  const series = projections[p.sku_code] || [];
+  const safety = p.safety_stock_qty || 0;
+  const outlookStatus = window.RevenueLogic.computeOutlookStatus({ series, safetyStock: safety });
+  const backendRec = S.activeRecFullByProduct?.[productId];
+
+  const narrative = outlookStatus.status === 'HEALTHY'
+    ? `Projected inventory stays at or above safety stock (${safety.toLocaleString()} units) across the full 6-month outlook — no action needed right now.`
+    : (outlookStatus.reason === 'negative'
+        ? `Projected to go <strong>negative</strong> by ${monthLabelLong(months[outlookStatus.firstIssueIndex])} (${Math.round(series[outlookStatus.firstIssueIndex]).toLocaleString()} units) — a stockout, not just a dip below safety stock.`
+        : `Projected to fall <strong>below safety stock</strong> (${safety.toLocaleString()} units) by ${monthLabelLong(months[outlookStatus.firstIssueIndex])} (${Math.round(series[outlookStatus.firstIssueIndex]).toLocaleString()} units projected).`);
+
+  const seriesRows = months.map((m, i) => {
+    const v = series[i];
+    const flag = v == null ? '' : (v < 0 ? ' ⚠ negative' : (v < safety ? ' ⚠ below safety' : ''));
+    return `<tr><td style="padding:3px 8px;">${monthLabelShort(m)}</td><td style="padding:3px 8px; text-align:right; ${v < safety ? 'color:var(--bad-text);' : ''}">${v == null ? '—' : Math.round(v).toLocaleString()}${flag}</td></tr>`;
+  }).join('');
+
+  const body = `
+    <div style="font-size:13px; line-height:1.6;">
+      <div style="margin-bottom:10px;"><span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}" style="font-size:12px;">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span></div>
+      <div class="muted" style="font-size:12px; margin-bottom:12px;">${narrative} Safety stock: ${safety.toLocaleString()} units.</div>
+      <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:12px;">
+        <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month (EOM)</th><th style="text-align:right; padding:3px 8px; border-bottom:1px solid var(--border);">Projected</th></tr></thead>
+        <tbody>${seriesRows}</tbody>
+      </table>
+      <div class="section-label" style="margin:12px 0 6px;">Recommendation</div>
+      ${backendRec ? `
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">
+          The full PO-recommendation engine (Overview tab) already has an active
+          <span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:9px;">${backendRec.urgency}</span>
+          recommendation for this product — shortfall of ${(backendRec.shortfall_qty || 0).toLocaleString()} units by
+          ${fmtDate(backendRec.shortfall_month)}.
+        </div>
+        <div style="font-size:12px; margin-bottom:10px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>
+      ` : outlookStatus.status === 'ISSUE' ? `
+        <div class="muted" style="font-size:12px; margin-bottom:10px;">No active recommendation from the Overview tab's engine yet for this product — this status reflects this tab's own simplified 6-month projection against the live forecast.</div>
+      ` : ''}
+      ${isEditable() ? `<button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${outlookStatus.firstIssueIndex != null ? months[outlookStatus.firstIssueIndex] : months[0]}')">+ Draft a PO</button>` : ''}
+    </div>
+  `;
+  showDetail(`${p.display_name} — Status`, body);
 }
 
 function checkComponentFeasibility(productSku, qty) {
@@ -2479,6 +2554,7 @@ function renderRevenueBody() {
     { key: 'pct', label: '% of Revenue' },
     { key: 'asp', label: 'Avg Selling Price' },
     { key: 'units', label: 'Units (Throughput)' },
+    { key: 'outlook', label: 'Inventory Outlook' },
   ].map(v => `<button class="btn ${mixView === v.key ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 10px; font-size:12px;" onclick="setRevenueMixView('${v.key}')">${v.label}</button>`).join(' ');
 
   if (!S.mixSort) S.mixSort = { shopify: { key: 'revenue', dir: 'desc' }, amazon: { key: 'revenue', dir: 'desc' } };
@@ -2581,9 +2657,11 @@ function renderRevenueBody() {
   // bundles ... we don't create POs per the bundle." Bundles (product_type='bundle', e.g. the
   // Day+Night Set) have no QOH/PO of their own; their inventory depends entirely on the root
   // products they're built from, which already appear in this table on their own rows.
-  const outlookProducts = S.products
+  let outlookProducts = S.products
     .filter(p => p.product_type === 'root')
-    .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id])
+    .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id]);
+  if (mixFilterText) outlookProducts = outlookProducts.filter(p => p.display_name.toLowerCase().includes(mixFilterText) || (p.sku_code || '').toLowerCase().includes(mixFilterText));
+  outlookProducts = outlookProducts
     .slice()
     .sort((a, b) => {
       const ua = window.RevenueLogic.urgencyRank(S.activeRecByProduct[a.product_id]);
@@ -2615,14 +2693,20 @@ function renderRevenueBody() {
         ${hasDraft ? '<span style="font-size:9px;">+draft</span>' : ''}
       </button>`;
     });
+    // Alex (2026-10-22): "to the right of EOM Mar 27 let's have a Status where it'll show healthy
+    // or an issue and then a pop up box with the recommendations."
+    const outlookStatus = window.RevenueLogic.computeOutlookStatus({ series, safetyStock: p.safety_stock_qty || 0 });
+    const statusCell = `<button class="btn btn-ghost" style="padding:0;" onclick="showOutlookStatusDetail('${p.product_id}')">
+      <span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span>
+    </button>`;
     const actionCell = isEditable()
       ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="openDraftPoModal('${p.product_id}', '${months[0]}')">+ Draft PO</button>`
       : '<span class="muted" style="font-size:10px;">—</span>';
-    return [nameCell, todayCell, ...cells, actionCell];
+    return [nameCell, todayCell, ...cells, statusCell, actionCell];
   });
   const outlookTable = outlookRows.length
-    ? kpiTable(['Product', 'Today', ...months.map(m => `EOM ${monthLabelShort(m)}`), ''], outlookRows, null, [monthColWidths[0], '80px', ...monthColWidths.slice(1), '110px'], [1, 2, 3, 4, 5, 6, 7, 8])
-    : `<div class="empty-state" style="padding:10px; font-size:12px;">No products to show.</div>`;
+    ? kpiTable(['Product', 'Today', ...months.map(m => `EOM ${monthLabelShort(m)}`), 'Status', ''], outlookRows, null, [monthColWidths[0], '80px', ...monthColWidths.slice(1), '80px', '110px'], [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    : `<div class="empty-state" style="padding:10px; font-size:12px;">No products match this filter.</div>`;
 
   // ---------- Committed POs record (Alex, 2026-10-22: "I'd like to see a record of it") ----------
   // Every real purchase_orders row ever materialized by committing a Revenue tab scenario,
@@ -2665,29 +2749,17 @@ function renderRevenueBody() {
     </div>
 
     <div class="card" style="padding:14px 16px;">
-      <div class="section-label" style="margin:0 0 2px;">Product Mix → Inventory Throughput</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">Every number here is derived from the top-line revenue above. Switch views to see how it was built; click any value for the rationale behind it, and — on a draft scenario — to edit it.</div>
-      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${viewTabs}${mixFilterBar}</div>
-      <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
-      ${mixTable('shopify')}
-      <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
-      ${mixTable('amazon')}
-    </div>
-
-    <div class="card" style="padding:14px 16px; margin-top:12px;">
-      <div class="section-label" style="margin:0 0 2px;">Inventory Outlook &amp; Draft POs</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">
-        Root products only (bundles have no QOH or PO of their own — see their root products' rows).
-        <strong>"Today"</strong> is each product's live current quantity on hand — not an official
-        month-start count. <strong>Every "EOM" column is a projected end-of-month figure</strong>,
-        built forward from "Today" using the forecast above (the first "EOM" month is still in
-        progress, so it projects only the <em>remaining</em> demand for the rest of this month on
-        top of today's count — click it for the breakdown). Every later "EOM" month is a full
-        month's projected demand against the prior month's projected end.
-        ${isEditable() ? 'Red/amber cells project below safety stock — click "+ Draft PO" to model a hypothetical order and immediately see its effect here. Draft POs only become real purchase orders when you commit this scenario.' : 'Select or create a draft scenario to model hypothetical POs against this outlook.'}
-        Sorted CRITICAL/WARNING/WATCH first (same urgency as the Overview tab).
+      <div style="display:flex; align-items:center; gap:6px; margin:0 0 8px;">
+        <div class="section-label" style="margin:0;">Product Mix → Inventory Throughput &amp; Outlook</div>
+        ${infoIcon(`Every number here is derived from the top-line revenue above. Switch views to see how it was built; click any value for the rationale behind it, and — on a draft scenario — to edit it. <strong>Inventory Outlook</strong> is root products only (bundles have no QOH/PO of their own); "Today" is each product's live QOH, and every "EOM" column is a projected end-of-month figure built forward from it (the first EOM month is still in progress, so it only counts remaining demand for the rest of the month). ${isEditable() ? 'Click "+ Draft PO" to model a hypothetical order.' : ''} Sorted CRITICAL/WARNING/WATCH first in the Outlook view.`)}
       </div>
-      ${outlookTable}
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${viewTabs}${mixFilterBar}</div>
+      ${mixView === 'outlook' ? outlookTable : `
+        <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
+        ${mixTable('shopify')}
+        <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
+        ${mixTable('amazon')}
+      `}
     </div>
 
     ${committedPoTable ? `
