@@ -505,7 +505,7 @@ async function renderOverview() {
     sb.from('open_orders_by_product').select('*'),
     sb.from('qc_runs').select('*').order('run_at', { ascending: false }).limit(1),
     sb.from('product_inventory_snapshot').select('*, products(sku_code)'),
-    sb.from('product_qoh').select('sku_code, safety_stock_qty, safety_stock_basis'),
+    sb.from('product_qoh').select('product_id, sku_code, display_name, safety_stock_qty, safety_stock_basis'),
     sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', monthStartIso).lte('revenue_date', todayIso),
     sb.from('revenue_forecasts').select('channel, forecast_revenue').eq('forecast_month', monthStartIso),
   ]);
@@ -519,9 +519,11 @@ async function renderOverview() {
   });
   window._safetyStockBySku = {};
   window._safetyStockBasisBySku = {};
+  window._productBySku = {};
   (qohRows || []).forEach(r => {
     window._safetyStockBySku[r.sku_code] = r.safety_stock_qty;
     window._safetyStockBasisBySku[r.sku_code] = r.safety_stock_basis;
+    window._productBySku[r.sku_code] = { product_id: r.product_id, display_name: r.display_name };
   });
 
   // Revenue MTD vs forecast pace -- same methodology as daily_digest.py's get_revenue_pacing():
@@ -759,9 +761,58 @@ function applyOpenOrdersFilter() {
   }).join('');
 }
 
-function showSafetyStockDetail(sku) {
+async function showSafetyStockDetail(sku) {
+  const product = (window._productBySku || {})[sku];
+  const displayName = product?.display_name || sku;
   const basis = (window._safetyStockBasisBySku || {})[sku] || 'No rationale on file — this product may not have enough sales history yet for the calculation.';
-  showDetail(`${sku} — Safety Stock Rationale`, basis);
+
+  let sellThroughBody = '<div class="muted">Loading sell-through data…</div>';
+  showDetail(`${displayName} — Safety Stock`, `<div style="margin-bottom:12px;">${basis}</div><div id="safety-stock-sellthrough">${sellThroughBody}</div>`);
+
+  if (!product?.product_id) return;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const since90 = new Date(); since90.setDate(since90.getDate() - 90);
+  const [{ data: histRows }, { data: projRows }] = await Promise.all([
+    sb.from('historical_revenue_pct').select('month, net_items_sold').eq('product_id', product.product_id).eq('channel', 'shopify').gte('month', since90.toISOString().slice(0, 7) + '-01'),
+    sb.from('monthly_projections').select('projection_month, projected_demand').eq('product_id', product.product_id).gte('projection_month', todayIso.slice(0, 7) + '-01').order('projection_month'),
+  ]);
+
+  const actualUnits90 = (histRows || []).reduce((s, r) => s + (Number(r.net_items_sold) || 0), 0);
+  const avgDaily = actualUnits90 / 90;
+
+  const monthsSorted = [...(projRows || [])].sort((a, b) => a.projection_month.localeCompare(b.projection_month));
+  const next3 = monthsSorted.slice(0, 3).reduce((s, r) => s + (Number(r.projected_demand) || 0), 0);
+  const next6 = monthsSorted.slice(0, 6).reduce((s, r) => s + (Number(r.projected_demand) || 0), 0);
+
+  const textHtml = `
+    <div style="line-height:1.7; font-size:13px;">
+      <div style="margin-bottom:6px;"><strong>Average sell-through (last 90 days):</strong> ${avgDaily.toFixed(1)} units/day — ${Math.round(actualUnits90).toLocaleString()} units total.</div>
+      <div style="margin-bottom:6px;"><strong>Projected sell-through (next 90 days):</strong> ${Math.round(next3).toLocaleString()} units.</div>
+      <div><strong>Projected sell-through (next 180 days):</strong> ${Math.round(next6).toLocaleString()} units.</div>
+    </div>
+    <div style="height:110px; margin-top:14px;"><canvas id="safety-stock-chart"></canvas></div>
+  `;
+  const el = document.getElementById('safety-stock-sellthrough');
+  if (el) el.innerHTML = textHtml;
+
+  const canvas = document.getElementById('safety-stock-chart');
+  if (canvas) {
+    new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: ['Last 90d (actual)', 'Next 90d (projected)', 'Next 180d (projected)'],
+        datasets: [{
+          data: [Math.round(actualUnits90), Math.round(next3), Math.round(next6)],
+          backgroundColor: ['#8A7257', '#C9A876', '#C9A876'],
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: { x: { ticks: { font: { size: 10 } } }, y: { ticks: { font: { size: 11 } } } },
+      },
+    });
+  }
 }
 
 function productSortRank(name) {
