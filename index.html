@@ -1218,25 +1218,25 @@ async function mutateLedgerRow(ledgerId, payload, description) {
 async function renderLandedOrders() {
   const el = document.getElementById('tab-landed');
   const { data: rows } = await sb.from('landed_orders_by_product').select('*');
-  window._landedOrdersCache = rows || [];
+  window._landedOrdersCache = (rows || []).filter(r => (r.qty || 0) > 0);
 
-  const products = [...new Map((rows || []).map(r => [r.product_sku, r.product_name])).entries()]
+  const products = [...new Map(window._landedOrdersCache.map(r => [r.product_sku, r.product_name])).entries()]
     .sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
 
   el.innerHTML = `
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 4px;">Landed Orders</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">Every order once it's marked Landed on the Overview tab moves here and drops off Open Orders. Filter and sort below.</div>
-      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
-        <select id="landed-filter-product" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="applyLandedOrdersFilter()">
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">Every order once it's marked Landed on the Overview tab moves here and drops off Open Orders.</div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+        <select id="landed-filter-product" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" onchange="applyLandedOrdersFilter()">
           <option value="all">All products</option>
           ${products.map(([sku, name]) => `<option value="${sku}">${name}</option>`).join('')}
         </select>
-        <select id="landed-sort" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="applyLandedOrdersFilter()">
-          <option value="date_desc">Date landed (newest first)</option>
-          <option value="date_asc">Date landed (oldest first)</option>
-          <option value="qty_desc">Quantity (highest first)</option>
-          <option value="product">Product (Night Oil → Deodorant)</option>
+        <select id="landed-sort" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" onchange="applyLandedOrdersFilter()">
+          <option value="date_desc">Newest first</option>
+          <option value="date_asc">Oldest first</option>
+          <option value="qty_desc">Highest qty</option>
+          <option value="product">Product order</option>
         </select>
       </div>
       <div id="landed-orders-table"></div>
@@ -1260,17 +1260,63 @@ function applyLandedOrdersFilter() {
   });
 
   const rows = filtered.map(r => [
-    `<strong>${r.product_name}</strong>`,
-    r.order_type === 'componentry' ? componentShortLabel(r.component_name) : '—',
+    canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" onclick="showLandedOrderActionsMenu('${r.ledger_id}')" title="Actions">⋯</button>` : '',
+    `<strong>${r.product_name}</strong>${r.order_type === 'componentry' ? `<br><span class="muted" style="font-size:10px;">${componentShortLabel(r.component_name)}</span>` : ''}`,
     (r.qty || 0).toLocaleString(),
     r.vendor_name || '—',
-    r.internal_ref || '<span class="muted">—</span>',
-    `<strong>${fmtDate(r.date_landed)}</strong>`,
-    fmtDate(r.original_eta),
+    r.internal_ref || '—',
+    fmtDate(r.date_landed),
   ]);
   document.getElementById('landed-orders-table').innerHTML = rows.length
-    ? kpiTable(['Product', 'Component', 'Qty', 'Vendor', 'Order #', 'Date Landed', 'Original ETA'], rows, 4)
+    ? kpiTable(['', 'Product', 'Qty', 'Vendor', 'Order #', 'Landed'], rows, null, ['40px', 'auto', '70px', '120px', '110px', '90px'], [0, 2, 3, 4, 5])
     : '<div class="muted">No landed orders match this filter.</div>';
+}
+
+function showLandedOrderActionsMenu(ledgerId) {
+  const o = (window._landedOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const btn = (label, fn, danger) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${danger ? 'color:var(--bad-text);' : ''}" onclick="document.getElementById('detail-modal-backdrop').remove(); ${fn}">${label}</button>`;
+  const body = `
+    ${btn('Edit Quantity', `editLandedField('${ledgerId}','qty_in','number','Quantity',${o.qty})`)}
+    ${btn('Edit Order #', `editLandedField('${ledgerId}','order_number','text','Order #','${(o.internal_ref || '').replace(/'/g, "\\'")}')`)}
+    ${btn('Edit Tracking', `editLandedField('${ledgerId}','tracking_info','text','Tracking Info','${(o.tracking_info || '').replace(/'/g, "\\'")}')`)}
+    ${btn('Edit Date Landed', `editLandedDate('${ledgerId}')`)}
+    ${canDelete() ? btn('Delete Row', `deleteLandedOrderRow('${ledgerId}')`, true) : ''}
+  `;
+  showDetail(`${o.product_name} — Actions`, body);
+}
+
+async function editLandedField(ledgerId, field, inputType, label, currentVal) {
+  const o = (window._landedOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const input = await showPromptModal(label, null, currentVal ?? '', inputType);
+  if (input === null) return;
+  const val = inputType === 'number' ? Number(input) : (input || null);
+  if (inputType === 'number' && (!val || val <= 0)) { alert('Enter a quantity greater than 0.'); return; }
+  const ok = await mutateLedgerRow(ledgerId, { [field]: val }, `Edited ${label.toLowerCase()} for ${o.product_name}`);
+  if (ok) await renderLandedOrders();
+}
+
+async function editLandedDate(ledgerId) {
+  const o = (window._landedOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const dateVal = await promptDateMMDDYYYY('Date Landed', o.date_landed);
+  if (dateVal === null) return;
+  const ok = await mutateLedgerRow(ledgerId, { date_landed: dateVal }, `Edited date landed for ${o.product_name}`);
+  if (ok) await renderLandedOrders();
+}
+
+async function deleteLandedOrderRow(ledgerId) {
+  if (!canDelete()) { alert('Only admins can delete a row.'); return; }
+  const o = (window._landedOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  if (!(await showConfirmModal('Delete this landed order row?', `${o.product_name}, ${(o.qty || 0).toLocaleString()} units, landed ${fmtDate(o.date_landed)}.<br><br>Restorable from the Activity Log tab.`, 'Delete'))) return;
+  const { data: before, error: fetchErr } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
+  if (fetchErr) { alert('Failed: ' + fetchErr.message); return; }
+  const { error } = await sb.from('inventory_ledger').delete().eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await logAction('inventory_ledger', ledgerId, 'delete', `Deleted landed order: ${o.product_name}, ${(o.qty || 0).toLocaleString()} units`, before, null);
+  await renderLandedOrders();
 }
 
 async function renderActivityLog() {
