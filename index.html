@@ -161,6 +161,14 @@
 </main>
 </div>
 
+<script type="module">
+  // Loads the unit-tested pure business-logic module (dashboard/lib/revenue-logic.js, 100% test
+  // coverage -- see test/revenue-logic.test.js and CHANGELOG.md) and exposes it to the classic
+  // (non-module) script below, since inline onclick="..." handlers throughout this file require
+  // function names to be on `window`, which ES module bindings are not by default.
+  import * as RevenueLogic from './lib/revenue-logic.js';
+  window.RevenueLogic = RevenueLogic;
+</script>
 <script>
 // ---- Config: fill in your Supabase project URL + anon (public) key ----
 const SUPABASE_URL = "https://rvbferpfrgkayxuujpna.supabase.co";
@@ -1836,37 +1844,18 @@ function channelMonthBasis(month, channel) {
 }
 
 function computeProjection(channelData, mixData) {
-  // Returns { [product_sku]: [eom_m0, eom_m1, ...] } using the same direct_units formula as
-  // demand_engine.py (channel_revenue * revenue_pct / ASP), without bundle expansion -- a
-  // deliberate simplification for this fast preview, noted in the UI. Includes both real open
-  // orders (S.receipts) AND any hypothetical draft POs attached to the current scenario, so
-  // adding a draft PO immediately shows its effect on the projection.
+  // Delegates to the unit-tested dashboard/lib/revenue-logic.js (window.RevenueLogic) -- this
+  // wrapper only adapts the live dashboard's window._revState into the plain arguments that pure
+  // function expects. See test/revenue-logic.test.js for the real coverage of the math itself.
   const S = window._revState;
-  const draftReceiptsByProductMonth = {};
-  (S.draftPOs || []).forEach(po => {
-    const m = po.eta_month.slice(0, 7);
-    if (!draftReceiptsByProductMonth[po.product_id]) draftReceiptsByProductMonth[po.product_id] = {};
-    draftReceiptsByProductMonth[po.product_id][m] = (draftReceiptsByProductMonth[po.product_id][m] || 0) + po.qty;
+  return window.RevenueLogic.computeProjection({
+    products: S.products,
+    months: S.months,
+    channelData,
+    mixData,
+    realReceipts: S.receipts,
+    draftPOs: S.draftPOs,
   });
-  const out = {};
-  S.products.forEach(p => {
-    let eom = p.qty_on_hand;
-    const series = [];
-    S.months.forEach(m => {
-      let demand = 0;
-      ['shopify', 'amazon'].forEach(ch => {
-        const mix = mixData[ch][p.product_id]?.[m];
-        const chanRev = channelData[m]?.[ch];
-        if (mix && chanRev && mix.avg_selling_price) demand += (chanRev * mix.revenue_pct) / mix.avg_selling_price;
-      });
-      const realReceipts = (S.receipts[p.sku_code] || {})[m] || 0;
-      const draftReceipts = (draftReceiptsByProductMonth[p.product_id] || {})[m] || 0;
-      eom = eom - demand + realReceipts + draftReceipts;
-      series.push(eom);
-    });
-    out[p.sku_code] = series;
-  });
-  return out;
 }
 
 function showThroughputDetail(productId, month) {
@@ -1932,14 +1921,10 @@ function showThroughputDetail(productId, month) {
 }
 
 function checkComponentFeasibility(productSku, qty) {
+  // Delegates to window.RevenueLogic.checkComponentFeasibility (dashboard/lib/revenue-logic.js,
+  // unit-tested with 100% coverage -- see test/revenue-logic.test.js).
   const S = window._revState;
-  const comps = (S.componentQoh || []).filter(c => c.product_sku === productSku);
-  return comps.map(c => {
-    const required = qty * (c.qty_per_unit || 1);
-    const available = (c.qty_on_hand || 0) + (c.qty_in_flight || 0);
-    const short = required - available;
-    return { component_name: c.component_name, required, available, short: short > 0 ? short : 0 };
-  });
+  return window.RevenueLogic.checkComponentFeasibility(S.componentQoh, productSku, qty);
 }
 
 // Draft PO modal -- Alex's ask (2026-10-22): model a hypothetical finished-good PO against the
@@ -2067,17 +2052,7 @@ function renderRevenueBody() {
   const mixFilterText = (S.mixFilterText || '').trim().toLowerCase();
 
   function productMixMetrics(channel, p) {
-    let revenue = 0, units = 0, pctLatest = 0;
-    months.forEach(m => {
-      const mix = S.draftMix[channel][p.product_id]?.[m];
-      const chanRev = S.draftChannel[m]?.[channel];
-      if (mix && chanRev != null) {
-        revenue += chanRev * mix.revenue_pct;
-        if (mix.avg_selling_price) units += (chanRev * mix.revenue_pct) / mix.avg_selling_price;
-        pctLatest = mix.revenue_pct;
-      }
-    });
-    return { revenue, units, pct: pctLatest };
+    return window.RevenueLogic.productMixMetrics({ channel, product: p, months, draftMix: S.draftMix, draftChannel: S.draftChannel });
   }
 
   const mixSortOptions = [
@@ -2114,13 +2089,10 @@ function renderRevenueBody() {
     let prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id]);
     if (mixFilterText) prods = prods.filter(p => p.display_name.toLowerCase().includes(mixFilterText) || (p.sku_code || '').toLowerCase().includes(mixFilterText));
     const withMetrics = prods.map(p => ({ p, metrics: productMixMetrics(channel, p) }));
-    withMetrics.sort((a, b) => {
-      let diff;
-      if (sort.key === 'name') diff = a.p.display_name.localeCompare(b.p.display_name) * (sort.dir === 'desc' ? -1 : 1);
-      else diff = ((a.metrics[sort.key] || 0) - (b.metrics[sort.key] || 0)) * (sort.dir === 'desc' ? -1 : 1);
-      return diff || (productSortRank(a.p.display_name) - productSortRank(b.p.display_name));
-    });
-    const orderedProds = withMetrics.map(x => x.p);
+    const orderedProds = window.RevenueLogic.sortByMetric(
+      withMetrics.map(x => ({ item: x.p, metrics: x.metrics })),
+      { key: sort.key, dir: sort.dir, nameOf: (item) => item.display_name, fallbackRank: (item) => productSortRank(item.display_name) }
+    );
     if (!orderedProds.length) return mixSortControls(channel) + `<div class="empty-state" style="padding:10px; font-size:12px;">No products match this filter.</div>`;
     const rows = orderedProds.map(p => [
       `<strong>${p.display_name}</strong>`,
@@ -2150,13 +2122,12 @@ function renderRevenueBody() {
   };
 
   // ---------- Inventory Outlook & Draft POs (compact, one row per product) ----------
-  const urgencyRank = { CRITICAL: 0, WARNING: 1, WATCH: 2 };
   const outlookProducts = S.products
     .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id])
     .slice()
     .sort((a, b) => {
-      const ua = urgencyRank[S.activeRecByProduct[a.product_id]] ?? 3;
-      const ub = urgencyRank[S.activeRecByProduct[b.product_id]] ?? 3;
+      const ua = window.RevenueLogic.urgencyRank(S.activeRecByProduct[a.product_id]);
+      const ub = window.RevenueLogic.urgencyRank(S.activeRecByProduct[b.product_id]);
       return ua - ub || (productSortRank(a.display_name) - productSortRank(b.display_name));
     });
   const projections = computeProjection(S.draftChannel, S.draftMix);
