@@ -151,6 +151,7 @@
     <button class="tab-btn" data-tab="inventory">Inventory</button>
     <button class="tab-btn" data-tab="pos">Purchase Orders</button>
     <button class="tab-btn" data-tab="vendors">Vendors &amp; Comms</button>
+    <button class="tab-btn" data-tab="landed">Landed Orders</button>
     <button class="tab-btn" data-tab="activity">Activity Log</button>
   </nav>
 </header>
@@ -161,6 +162,7 @@
   <div id="tab-inventory" class="tab-panel hidden"></div>
   <div id="tab-pos" class="tab-panel hidden"></div>
   <div id="tab-vendors" class="tab-panel hidden"></div>
+  <div id="tab-landed" class="tab-panel hidden"></div>
   <div id="tab-activity" class="tab-panel hidden"></div>
 </main>
 </div>
@@ -212,7 +214,7 @@ async function loadApp(session) {
   document.getElementById('subtitle-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   document.getElementById('snapshot-pill').textContent = 'Snapshot · updated on page load';
 
-  await Promise.all([renderOverview(), renderRevenue(), renderInventory(), renderPOs(), renderVendors(), renderActivityLog()]);
+  await Promise.all([renderOverview(), renderRevenue(), renderInventory(), renderPOs(), renderVendors(), renderLandedOrders(), renderActivityLog()]);
 }
 
 // ---------- Tabs ----------
@@ -1030,7 +1032,7 @@ async function undoAction(logId) {
     await sb.from(log.table_name).update(rest).eq('id', log.record_id);
   }
   await sb.from('activity_log').update({ undone: true, undone_at: new Date().toISOString(), undone_by: currentUserRow?.email || 'dashboard' }).eq('id', logId);
-  await renderOverview();
+  await Promise.all([renderOverview(), renderLandedOrders()]);
   const activityTab = document.getElementById('tab-activity');
   if (activityTab && !activityTab.classList.contains('hidden')) await renderActivityLog();
 }
@@ -1042,6 +1044,64 @@ async function mutateLedgerRow(ledgerId, payload, description) {
   if (error) { alert('Failed: ' + error.message); return false; }
   await logAction('inventory_ledger', ledgerId, 'update', description, before, { ...before, ...payload });
   return true;
+}
+
+async function renderLandedOrders() {
+  const el = document.getElementById('tab-landed');
+  const { data: rows } = await sb.from('landed_orders_by_product').select('*');
+  window._landedOrdersCache = rows || [];
+
+  const products = [...new Map((rows || []).map(r => [r.product_sku, r.product_name])).entries()]
+    .sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
+
+  el.innerHTML = `
+    <div class="card" style="padding:14px 16px;">
+      <div class="section-label" style="margin:0 0 4px;">Landed Orders</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">Every order once it's marked Landed on the Overview tab moves here and drops off Open Orders. Filter and sort below.</div>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+        <select id="landed-filter-product" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="applyLandedOrdersFilter()">
+          <option value="all">All products</option>
+          ${products.map(([sku, name]) => `<option value="${sku}">${name}</option>`).join('')}
+        </select>
+        <select id="landed-sort" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="applyLandedOrdersFilter()">
+          <option value="date_desc">Date landed (newest first)</option>
+          <option value="date_asc">Date landed (oldest first)</option>
+          <option value="qty_desc">Quantity (highest first)</option>
+          <option value="product">Product (Night Oil → Deodorant)</option>
+        </select>
+      </div>
+      <div id="landed-orders-table"></div>
+    </div>
+  `;
+  applyLandedOrdersFilter();
+}
+
+function applyLandedOrdersFilter() {
+  const all = window._landedOrdersCache || [];
+  const productFilter = document.getElementById('landed-filter-product')?.value || 'all';
+  const sortMode = document.getElementById('landed-sort')?.value || 'date_desc';
+
+  let filtered = productFilter === 'all' ? all : all.filter(r => r.product_sku === productFilter);
+  filtered = [...filtered].sort((a, b) => {
+    if (sortMode === 'date_desc') return (b.date_landed || '').localeCompare(a.date_landed || '');
+    if (sortMode === 'date_asc') return (a.date_landed || '').localeCompare(b.date_landed || '');
+    if (sortMode === 'qty_desc') return (b.qty || 0) - (a.qty || 0);
+    if (sortMode === 'product') return productSortRank(a.product_name) - productSortRank(b.product_name) || a.product_name.localeCompare(b.product_name);
+    return 0;
+  });
+
+  const rows = filtered.map(r => [
+    `<strong>${r.product_name}</strong>`,
+    r.order_type === 'componentry' ? componentShortLabel(r.component_name) : '—',
+    (r.qty || 0).toLocaleString(),
+    r.vendor_name || '—',
+    r.internal_ref || '<span class="muted">—</span>',
+    `<strong>${fmtDate(r.date_landed)}</strong>`,
+    fmtDate(r.original_eta),
+  ]);
+  document.getElementById('landed-orders-table').innerHTML = rows.length
+    ? kpiTable(['Product', 'Component', 'Qty', 'Vendor', 'Order #', 'Date Landed', 'Original ETA'], rows, 4)
+    : '<div class="muted">No landed orders match this filter.</div>';
 }
 
 async function renderActivityLog() {
@@ -1174,7 +1234,7 @@ async function cancelOrder(ledgerId) {
 async function markLanded(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   const ok = await mutateLedgerRow(ledgerId, { landed: true, date_landed: new Date().toISOString().slice(0, 10) }, `Marked ${o?.product_name || 'an order'} as landed`);
-  if (ok) await renderOverview();
+  if (ok) await Promise.all([renderOverview(), renderLandedOrders()]);
 }
 
 async function decideRecommendation(id, decision) {
