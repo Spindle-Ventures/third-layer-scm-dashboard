@@ -1197,8 +1197,8 @@ async function selectRevenueScenario(scenarioId, skipFetch) {
         S.draftMix[ch][p.product_id] = {};
         S.months.forEach(m => {
           const row = (mixRows || []).find(r => r.channel === ch && r.product_id === p.product_id && r.forecast_month.slice(0, 7) === m);
-          if (row) S.draftMix[ch][p.product_id][m] = { revenue_pct: Number(row.revenue_pct), avg_selling_price: Number(row.avg_selling_price) };
-          else if (base) S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price };
+          if (row) S.draftMix[ch][p.product_id][m] = { revenue_pct: Number(row.revenue_pct), avg_selling_price: Number(row.avg_selling_price), revenue_pct_rationale: row.revenue_pct_rationale || null, asp_rationale: row.asp_rationale || null };
+          else if (base) S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price, revenue_pct_rationale: null, asp_rationale: null };
         });
       });
     });
@@ -1264,7 +1264,7 @@ async function commitRevenueScenario() {
   ['shopify', 'amazon'].forEach(ch => S.products.forEach(p => {
     S.months.forEach(m => {
       const v = S.draftMix[ch][p.product_id]?.[m];
-      if (v) mixRows.push({ product_id: p.product_id, channel: ch, forecast_month: m + '-01', revenue_pct: v.revenue_pct, avg_selling_price: v.avg_selling_price, source_scenario_id: sc.id, committed_at: new Date().toISOString() });
+      if (v) mixRows.push({ product_id: p.product_id, channel: ch, forecast_month: m + '-01', revenue_pct: v.revenue_pct, avg_selling_price: v.avg_selling_price, revenue_pct_rationale: v.revenue_pct_rationale || null, asp_rationale: v.asp_rationale || null, source_scenario_id: sc.id, committed_at: new Date().toISOString() });
     });
   }));
   const [{ error: e1 }, { error: e2 }, { error: e3 }] = await Promise.all([
@@ -1294,27 +1294,58 @@ async function editDraftChannelMonth(channel, month) {
   renderRevenueBody();
 }
 
-async function editDraftMixProduct(channel, productId) {
+async function editDraftMixPct(channel, productId, month) {
   if (!isEditable()) { alert('Select or create a draft scenario to edit product mix.'); return; }
   const S = window._revState;
   const product = S.products.find(p => p.product_id === productId);
-  const months = S.months;
-  const current = months.map(m => ((S.draftMix[channel][productId]?.[m]?.revenue_pct || 0) * 100).toFixed(1));
-  const input = prompt(
-    `${product?.display_name} — ${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue share %, one per month (${months.map(monthLabelShort).join(', ')}), comma-separated:`,
-    current.join(', ')
-  );
+  const cur = S.draftMix[channel][productId]?.[month] || {};
+  const input = prompt(`${product?.display_name} — ${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue share for ${monthLabelLong(month)} (%):`, ((cur.revenue_pct || 0) * 100).toFixed(1));
   if (input === null) return;
-  const vals = input.split(',').map(s => Number(s.trim()));
-  if (vals.length !== months.length || vals.some(v => isNaN(v) || v < 0)) { alert(`Enter exactly ${months.length} non-negative numbers, comma-separated.`); return; }
-  const asp = S.draftMix[channel][productId]?.[months[0]]?.avg_selling_price || S.liveMix[channel]?.[productId]?.avg_selling_price;
-  const rows = [];
-  months.forEach((m, i) => {
-    S.draftMix[channel][productId][m] = { revenue_pct: vals[i] / 100, avg_selling_price: asp };
-    rows.push({ scenario_id: S.selectedScenarioId, product_id: productId, channel, forecast_month: m + '-01', revenue_pct: vals[i] / 100, avg_selling_price: asp });
-  });
-  await sb.from('revenue_scenario_mix').upsert(rows, { onConflict: 'scenario_id,product_id,channel,forecast_month' });
+  const val = Number(input);
+  if (isNaN(val) || val < 0) { alert('Enter a non-negative number.'); return; }
+  const rationale = prompt('Rationale for this share (why this %? e.g. historical trend, planned promotion, new launch ramp):', cur.revenue_pct_rationale || '');
+  if (rationale === null) return;
+  S.draftMix[channel][productId][month] = { ...cur, revenue_pct: val / 100, revenue_pct_rationale: rationale || null };
+  await sb.from('revenue_scenario_mix').upsert(
+    { scenario_id: S.selectedScenarioId, product_id: productId, channel, forecast_month: month + '-01', revenue_pct: val / 100, avg_selling_price: cur.avg_selling_price, revenue_pct_rationale: rationale || null, asp_rationale: cur.asp_rationale || null },
+    { onConflict: 'scenario_id,product_id,channel,forecast_month' }
+  );
   renderRevenueBody();
+}
+
+async function editDraftAsp(channel, productId, month) {
+  if (!isEditable()) { alert('Select or create a draft scenario to edit average selling price.'); return; }
+  const S = window._revState;
+  const product = S.products.find(p => p.product_id === productId);
+  const cur = S.draftMix[channel][productId]?.[month] || {};
+  const input = prompt(`${product?.display_name} — ${channel === 'shopify' ? 'Shopify' : 'Amazon'} avg selling price for ${monthLabelLong(month)} ($):`, cur.avg_selling_price ?? '');
+  if (input === null) return;
+  const val = Number(input.replace(/[^0-9.]/g, ''));
+  if (!val || val <= 0) { alert('Enter a positive number.'); return; }
+  const rationale = prompt('Rationale for this ASP (e.g. current price + typical discount mix, planned price change):', cur.asp_rationale || '');
+  if (rationale === null) return;
+  S.draftMix[channel][productId][month] = { ...cur, avg_selling_price: val, asp_rationale: rationale || null };
+  await sb.from('revenue_scenario_mix').upsert(
+    { scenario_id: S.selectedScenarioId, product_id: productId, channel, forecast_month: month + '-01', revenue_pct: cur.revenue_pct, avg_selling_price: val, revenue_pct_rationale: cur.revenue_pct_rationale || null, asp_rationale: rationale || null },
+    { onConflict: 'scenario_id,product_id,channel,forecast_month' }
+  );
+  renderRevenueBody();
+}
+
+function showMixCellDetail(view, channel, productId, month) {
+  const S = window._revState;
+  const p = S.products.find(pr => pr.product_id === productId);
+  const cur = S.draftMix[channel][productId]?.[month] || {};
+  const editable = isEditable();
+  const isPct = view === 'pct';
+  const valueLine = isPct ? `${((cur.revenue_pct || 0) * 100).toFixed(1)}% of ${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue` : fmtMoney2(cur.avg_selling_price || 0);
+  const rationale = isPct ? cur.revenue_pct_rationale : cur.asp_rationale;
+  const body = `
+    <div style="font-size:14px; margin-bottom:10px;"><strong>${valueLine}</strong></div>
+    <div class="muted" style="font-size:13px; line-height:1.5; margin-bottom:12px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+    ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); ${isPct ? 'editDraftMixPct' : 'editDraftAsp'}('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
+  `;
+  showDetail(`${p?.display_name} — ${monthLabelLong(month)} — ${isPct ? 'Revenue Share' : 'Avg Selling Price'}`, body);
 }
 
 function channelMonthBasis(month, channel) {
@@ -1423,52 +1454,14 @@ function renderRevenueBody() {
     </div>
   `;
 
-  const projection = computeProjection(S.draftChannel, S.draftMix);
-  const liveChannel = {}; months.forEach(m => liveChannel[m] = { shopify: S.liveForecast[m]?.shopify ?? null, amazon: S.liveForecast[m]?.amazon ?? null });
-  const liveMixByMonth = { shopify: {}, amazon: {} };
-  ['shopify', 'amazon'].forEach(ch => S.products.forEach(p => {
-    const base = S.liveMix[ch]?.[p.product_id];
-    if (!base) return;
-    liveMixByMonth[ch][p.product_id] = {};
-    months.forEach(m => liveMixByMonth[ch][p.product_id][m] = base);
-  }));
-  const liveProjection = computeProjection(liveChannel, liveMixByMonth);
+  const mixView = S.mixView || 'units';
+  const viewTabs = [
+    { key: 'pct', label: '% of Revenue' },
+    { key: 'asp', label: 'Avg Selling Price' },
+    { key: 'units', label: 'Units (Throughput)' },
+  ].map(v => `<button class="btn ${mixView === v.key ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 10px; font-size:12px;" onclick="setRevenueMixView('${v.key}')">${v.label}</button>`).join(' ');
 
-  const impactCards = [...S.products].sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name)).map(p => {
-    const scenarioSeries = projection[p.sku_code] || [];
-    const liveSeries = liveProjection[p.sku_code] || [];
-    const ss = p.safety_stock_qty || 0;
-    const firstBreach = (series) => { const i = series.findIndex(v => v < ss); return i === -1 ? null : months[i]; };
-    const scenarioBreach = firstBreach(scenarioSeries);
-    const liveBreach = firstBreach(liveSeries);
-    let compareLine;
-    if (!scenarioBreach && !liveBreach) compareLine = `<span class="pill good">No safety-stock breach projected (either forecast)</span>`;
-    else if (scenarioBreach && !liveBreach) compareLine = `<span class="pill bad">This scenario introduces a shortfall in ${monthLabelLong(scenarioBreach)} — live forecast shows none</span>`;
-    else if (!scenarioBreach && liveBreach) compareLine = `<span class="pill good">This scenario avoids the ${monthLabelLong(liveBreach)} shortfall the live forecast projects</span>`;
-    else if (scenarioBreach === liveBreach) compareLine = `<span class="pill watch">Same shortfall timing as live forecast: ${monthLabelLong(scenarioBreach)}</span>`;
-    else {
-      const sooner = months.indexOf(scenarioBreach) < months.indexOf(liveBreach);
-      compareLine = `<span class="pill ${sooner ? 'bad' : 'good'}">Shortfall moves ${sooner ? 'sooner' : 'later'}: ${monthLabelLong(scenarioBreach)} (vs. ${monthLabelLong(liveBreach)} live)</span>`;
-    }
-    return `
-      <div class="card" style="padding:10px 12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <strong style="font-size:13px;">${p.display_name}</strong>
-          <span style="font-size:11px;" class="muted">safety stock ${ss.toLocaleString()}</span>
-        </div>
-        <div style="height:60px;"><canvas id="impact-spark-${p.product_id}"></canvas></div>
-        <div style="margin-top:6px;">${compareLine}</div>
-      </div>
-    `;
-  }).join('');
-
-  const mixLegendButtons = (channel) => S.products
-    .filter(p => S.liveMix[channel]?.[p.product_id])
-    .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name))
-    .map(p => `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px; ${editable ? '' : 'cursor:default;'}" ${editable ? `onclick="editDraftMixProduct('${channel}','${p.product_id}')"` : 'disabled'}>${editable ? '✎ ' : ''}${p.display_name}</button>`)
-    .join(' ');
-
-  const throughputTable = (channel) => {
+  const mixTable = (channel) => {
     const prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id])
       .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
     const rows = prods.map(p => [
@@ -1476,11 +1469,25 @@ function renderRevenueBody() {
       ...months.map(m => {
         const mix = S.draftMix[channel][p.product_id]?.[m];
         const chanRev = S.draftChannel[m]?.[channel];
-        if (!mix || chanRev == null) return '<span class="muted">—</span>';
+        if (!mix) return '<span class="muted">—</span>';
+        if (mixView === 'pct') {
+          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showMixCellDetail('pct','${channel}','${p.product_id}','${m}')"><strong>${(mix.revenue_pct * 100).toFixed(1)}%</strong></button>`;
+        }
+        if (mixView === 'asp') {
+          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong></button>`;
+        }
+        if (chanRev == null) return '<span class="muted">—</span>';
         const units = Math.round((chanRev * mix.revenue_pct) / mix.avg_selling_price);
         return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong></button>`;
       }),
     ]);
+    if (mixView === 'pct') {
+      const totals = months.map(m => prods.reduce((s, p) => s + (S.draftMix[channel][p.product_id]?.[m]?.revenue_pct || 0), 0) * 100);
+      rows.push([
+        '<em>Total (should ≈ 100%)</em>',
+        ...totals.map(t => `<span class="pill ${Math.abs(t - 100) < 1.5 ? 'good' : 'bad'}">${t.toFixed(1)}%</span>`),
+      ]);
+    }
     return kpiTable(['Product', ...months.map(monthLabelShort)], rows, null, null, [1, 2, 3, 4, 5, 6]);
   };
 
@@ -1503,93 +1510,21 @@ function renderRevenueBody() {
       ${channelRow('amazon', 'Amazon')}
     </div>
 
-    <div class="card" style="padding:14px 16px; margin-bottom:12px;">
-      <div class="section-label" style="margin:0 0 2px;">Product Mix → Inventory Throughput</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">This is the number that matters: implied units sold per product per month, derived from the channel revenue and mix assumptions above. Click any number to see exactly how it was built — revenue × mix share ÷ ASP, plus the resulting inventory waterfall — the same way your source sheet breaks it down.</div>
-      <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
-      ${throughputTable('shopify')}
-      <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
-      ${throughputTable('amazon')}
-    </div>
-
-    <div class="card" style="padding:14px 16px; margin-bottom:12px;">
-      <div class="section-label" style="margin:0 0 2px;">Mix Share Evolution</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">How each product's share of channel revenue is modeled to shift over the next 6 months. ${editable ? 'Click a product below to edit its monthly share.' : 'Switch to a draft scenario to edit.'}</div>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
-        <div>
-          <div style="font-weight:600; font-size:12px; margin-bottom:4px;">Shopify</div>
-          <div style="height:160px;"><canvas id="mix-chart-shopify"></canvas></div>
-          <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">${mixLegendButtons('shopify')}</div>
-        </div>
-        <div>
-          <div style="font-weight:600; font-size:12px; margin-bottom:4px;">Amazon</div>
-          <div style="height:160px;"><canvas id="mix-chart-amazon"></canvas></div>
-          <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">${mixLegendButtons('amazon')}</div>
-        </div>
-      </div>
-    </div>
-
     <div class="card" style="padding:14px 16px;">
-      <div class="section-label" style="margin:0 0 2px;">Projected Impact — this scenario vs. live forecast</div>
-      <div class="muted" style="font-size:11px; margin-bottom:10px;">Projected end-of-month inventory per product (bundle expansion omitted from this fast preview). Shows whether this scenario pushes a safety-stock breach earlier, later, or avoids/introduces one entirely.</div>
-      <div class="kpi-grid">${impactCards}</div>
+      <div class="section-label" style="margin:0 0 2px;">Product Mix → Inventory Throughput</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">Every number here is derived from the top-line revenue above. Switch views to see how it was built; click any value for the rationale behind it, and — on a draft scenario — to edit it.</div>
+      <div style="display:flex; gap:6px; margin-bottom:10px;">${viewTabs}</div>
+      <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
+      ${mixTable('shopify')}
+      <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
+      ${mixTable('amazon')}
     </div>
   `;
-
-  renderRevenueCharts(projection, liveProjection);
 }
 
-function renderRevenueCharts(projection, liveProjection) {
-  const S = window._revState;
-  const months = S.months;
-  const labels = months.map(monthLabelShort);
-
-  const palette = ['#C9A876', '#8A7257', '#A3B18A', '#588157', '#BC6C25', '#606C38', '#DDA15E', '#283618'];
-  ['shopify', 'amazon'].forEach(channel => {
-    const canvas = document.getElementById(`mix-chart-${channel}`);
-    if (!canvas) return;
-    const prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id])
-      .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
-    new Chart(canvas, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: prods.map((p, i) => ({
-          label: p.display_name,
-          data: months.map(m => ((S.draftMix[channel][p.product_id]?.[m]?.revenue_pct || 0) * 100)),
-          backgroundColor: palette[i % palette.length],
-        })),
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { stacked: true, ticks: { font: { size: 10 } } },
-          y: { stacked: true, max: 100, ticks: { callback: v => v + '%', font: { size: 10 } } },
-        },
-      },
-    });
-  });
-
-  S.products.forEach(p => {
-    const canvas = document.getElementById(`impact-spark-${p.product_id}`);
-    if (!canvas) return;
-    new Chart(canvas, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          { data: liveProjection[p.sku_code] || [], borderColor: '#B7B0A6', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false, borderDash: [4, 3] },
-          { data: projection[p.sku_code] || [], borderColor: '#8A7257', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false },
-        ],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { enabled: true } },
-        scales: { x: { display: false }, y: { display: false } },
-      },
-    });
-  });
+function setRevenueMixView(view) {
+  window._revState.mixView = view;
+  renderRevenueBody();
 }
 
 // ---------- Inventory ----------
