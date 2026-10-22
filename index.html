@@ -951,13 +951,14 @@ function renderOpenOrderRow(o, editing) {
 function showOrderActionsMenu(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const btn = (label, action) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px;" onclick="document.getElementById('detail-modal-backdrop').remove(); handleOrderAction('${ledgerId}', '${action}')">${label}</button>`;
+  const btn = (label, action, danger) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${danger ? 'color:var(--bad-text);' : ''}" onclick="document.getElementById('detail-modal-backdrop').remove(); handleOrderAction('${ledgerId}', '${action}')">${label}</button>`;
   const body = `
     ${btn('Split', 'split')}
     ${btn('Delay', 'delay')}
     ${btn(o.order_status === 'paused' ? 'Resume' : 'Pause', o.order_status === 'paused' ? 'resume' : 'pause')}
     ${btn('Cancel', 'cancel')}
     ${btn('Mark Landed', 'land')}
+    ${canDelete() ? btn('Delete Row', 'delete', true) : ''}
   `;
   showDetail(`${o.product_name} — Actions`, body);
 }
@@ -971,6 +972,17 @@ function handleOrderAction(ledgerId, action) {
   if (action === 'resume') return resumeOrder(ledgerId);
   if (action === 'cancel') return cancelOrder(ledgerId);
   if (action === 'land') return markLanded(ledgerId);
+  if (action === 'delete') return deleteOrderRow(ledgerId);
+}
+
+async function deleteOrderRow(ledgerId) {
+  if (!canDelete()) { alert('Only admins can delete a row.'); return; }
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  if (!confirm(`Permanently delete this order row (${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)})? This cannot be undone. Use "Cancel" instead if you just want it to stop showing as active while keeping a record.`)) return;
+  const { error } = await sb.from('inventory_ledger').delete().eq('id', ledgerId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  await renderOverview();
 }
 
 function editOpenOrderRow(ledgerId) {
@@ -1217,6 +1229,11 @@ function isEditable() {
   return canEdit() && sc && sc.status === 'draft';
 }
 
+function canEditChannel() {
+  const S = window._revState;
+  return canEdit() && (S.selectedScenarioId === 'live' || isEditable());
+}
+
 async function createRevenueScenario() {
   if (!canEdit()) return;
   const name = prompt('Name this scenario (e.g. "Holiday push", "Conservative Q1"):');
@@ -1279,18 +1296,29 @@ async function commitRevenueScenario() {
 }
 
 async function editDraftChannelMonth(channel, month) {
-  if (!isEditable()) { alert('Select or create a draft scenario to edit forecast numbers.'); return; }
+  if (!canEditChannel()) { alert('You do not have permission to edit forecast numbers.'); return; }
   const S = window._revState;
+  const isLive = S.selectedScenarioId === 'live';
   const current = S.draftChannel[month]?.[channel];
-  const input = prompt(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} forecast for ${monthLabelLong(month)} ($):`, current ?? '');
+  const input = prompt(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} ${isLive ? 'live forecast' : 'scenario forecast'} for ${monthLabelLong(month)} ($):`, current ?? '');
   if (input === null) return;
   const val = Number(input.replace(/[^0-9.]/g, ''));
   if (!val || val <= 0) { alert('Enter a positive number.'); return; }
   S.draftChannel[month][channel] = val;
-  await sb.from('revenue_scenario_channel').upsert(
-    { scenario_id: S.selectedScenarioId, channel, forecast_month: month + '-01', forecast_revenue: val },
-    { onConflict: 'scenario_id,channel,forecast_month' }
-  );
+  if (isLive) {
+    S.liveForecast[month] = { ...(S.liveForecast[month] || {}), [channel]: val };
+    const { error } = await sb.from('revenue_forecasts').upsert(
+      { channel, forecast_month: month + '-01', forecast_revenue: val, created_by: currentUserRow?.email || 'dashboard' },
+      { onConflict: 'channel,forecast_month' }
+    );
+    if (error) { alert('Failed: ' + error.message); return; }
+    renderOverview();
+  } else {
+    await sb.from('revenue_scenario_channel').upsert(
+      { scenario_id: S.selectedScenarioId, channel, forecast_month: month + '-01', forecast_revenue: val },
+      { onConflict: 'scenario_id,channel,forecast_month' }
+    );
+  }
   renderRevenueBody();
 }
 
@@ -1438,14 +1466,15 @@ function renderRevenueBody() {
     ...S.scenarios.map(s => `<option value="${s.id}" ${S.selectedScenarioId === s.id ? 'selected' : ''}>${s.name} (${s.status})</option>`),
   ].join('');
 
+  const chanEditable = canEditChannel();
   const channelRow = (channel, label) => `
     <div style="display:flex; align-items:center; gap:6px; padding:4px 0; flex-wrap:wrap;">
       <div style="width:64px; font-size:12px; font-weight:600;">${label}</div>
       ${months.map(m => {
         const basis = channelMonthBasis(m, channel);
         return `
-        <button class="btn ${editable ? 'btn-ghost' : ''}" style="padding:4px 8px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${editable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
-          onclick="${editable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
+        <button class="btn ${chanEditable ? 'btn-ghost' : ''}" style="padding:4px 8px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${chanEditable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
+          onclick="${chanEditable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
           <span>${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}</span>
           <span class="muted" style="font-size:9px;">${basis.tag}</span>
         </button>
@@ -1505,7 +1534,7 @@ function renderRevenueBody() {
 
     <div class="card" style="padding:14px 16px; margin-bottom:12px;">
       <div class="section-label" style="margin:0 0 2px;">Top-Line Revenue by Channel</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">${editable ? 'Click a month to edit this scenario\'s assumption.' : 'Switch to a draft scenario to edit.'} Tag under each value shows whether it's real actuals, blended MTD, or a manual assumption — assumptions sharpen into actuals as each month closes.</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">${chanEditable ? 'Click a month to edit.' : 'You do not have permission to edit.'} Tag under each value shows whether it's real actuals, blended MTD, or a manual assumption — assumptions sharpen into actuals as each month closes.</div>
       ${channelRow('shopify', 'Shopify')}
       ${channelRow('amazon', 'Amazon')}
     </div>
