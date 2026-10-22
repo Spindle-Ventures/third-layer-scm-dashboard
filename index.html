@@ -149,6 +149,7 @@
     <button class="tab-btn active" data-tab="overview">Overview</button>
     <button class="tab-btn" data-tab="revenue">Revenue</button>
     <button class="tab-btn" data-tab="landed">Landed Orders</button>
+    <button class="tab-btn" data-tab="components">Components</button>
     <button class="tab-btn" data-tab="activity">Activity Log</button>
   </nav>
 </header>
@@ -157,6 +158,7 @@
   <div id="tab-overview" class="tab-panel"></div>
   <div id="tab-revenue" class="tab-panel hidden"></div>
   <div id="tab-landed" class="tab-panel hidden"></div>
+  <div id="tab-components" class="tab-panel hidden"></div>
   <div id="tab-activity" class="tab-panel hidden"></div>
 </main>
 </div>
@@ -216,7 +218,7 @@ async function loadApp(session) {
   document.getElementById('subtitle-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   document.getElementById('snapshot-pill').textContent = 'Snapshot · updated on page load';
 
-  await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderActivityLog()]);
+  await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog()]);
 }
 
 // ---------- Tabs ----------
@@ -1385,6 +1387,102 @@ async function deleteLandedOrderRow(ledgerId) {
   if (error) { alert('Failed: ' + error.message); return; }
   await logAction('inventory_ledger', ledgerId, 'delete', `Deleted landed order: ${o.product_name}, ${(o.qty || 0).toLocaleString()} units`, before, null);
   await renderLandedOrders();
+}
+
+// ---------- Components ----------
+// Alex (2026-10-22): "we want to have the active component levels with a simplified schedule or
+// analysis of how to order them." Scope confirmed with Alex: one row per component (QOH,
+// in-flight, vendor, lead time, cadence) plus a simple three-tier status flag -- ORDER_NOW /
+// ORDER_SOON / OK -- derived from the SAME root-product 6-month revenue projections the Revenue
+// tab uses (live forecast only, not scenario-aware), NOT a full expand_to_component_pos()-style
+// exact-date netting. See dashboard/lib/revenue-logic.js's computeComponentRunout/
+// componentOrderStatus (unit-tested, 100% coverage) for the actual math.
+async function renderComponents() {
+  const el = document.getElementById('tab-components');
+  el.innerHTML = `<div class="card empty-state">Loading component levels…</div>`;
+
+  const months = nextSixMonths();
+  const [{ data: componentQoh }, { data: componentVendors }, { data: products }, { data: revForecasts }, { data: forecastParams }] = await Promise.all([
+    sb.from('component_qoh').select('*'),
+    sb.from('component_vendors').select('component_id, lead_days, contact_cadence_days, vendors(vendor_name, default_lead_days, default_cadence_days)').eq('is_preferred', true),
+    sb.from('products').select('id, sku_code, product_type'),
+    sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
+    sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, product_id').eq('is_active', true),
+  ]);
+
+  const productBySku = {};
+  (products || []).forEach(p => { productBySku[p.sku_code] = p; });
+
+  const liveForecast = {};
+  (revForecasts || []).forEach(r => {
+    const m = r.forecast_month.slice(0, 7);
+    if (!liveForecast[m]) liveForecast[m] = {};
+    liveForecast[m][r.channel] = Number(r.forecast_revenue);
+  });
+  // Live mix: same single current value applied to every forward month (no per-month override
+  // lookup here, unlike the Revenue tab's scenario machinery) -- a deliberate simplification
+  // consistent with Alex's "simplified schedule" framing for this tab.
+  const liveMix = { shopify: {}, amazon: {} };
+  (forecastParams || []).forEach(fp => {
+    liveMix[fp.channel] = liveMix[fp.channel] || {};
+    liveMix[fp.channel][fp.product_id] = {};
+    months.forEach(m => {
+      liveMix[fp.channel][fp.product_id][m] = { revenue_pct: Number(fp.revenue_pct), avg_selling_price: Number(fp.avg_selling_price) };
+    });
+  });
+
+  const componentVendorByComponentId = {};
+  (componentVendors || []).forEach(cv => { componentVendorByComponentId[cv.component_id] = cv; });
+
+  const rows = (componentQoh || []).map(c => {
+    const product = productBySku[c.product_sku];
+    const demandUnits = product
+      ? window.RevenueLogic.computeMonthlyDemandUnits({ product: { product_id: product.id }, months, channelData: liveForecast, mixData: liveMix })
+      : months.map(() => 0);
+    const consumption = demandUnits.map(d => d * (c.qty_per_unit || 1));
+    const startQty = (c.qty_on_hand || 0) + (c.qty_in_flight || 0);
+    const runOutMonthIndex = window.RevenueLogic.computeComponentRunout(startQty, consumption);
+    const cv = componentVendorByComponentId[c.component_id];
+    const leadDays = cv?.lead_days ?? cv?.vendors?.default_lead_days ?? 56;
+    const cadenceDays = cv?.contact_cadence_days ?? cv?.vendors?.default_cadence_days ?? 14;
+    const status = window.RevenueLogic.componentOrderStatus({ runOutMonthIndex, leadDays, cadenceDays });
+    return { c, cv, leadDays, cadenceDays, status, runOutMonthIndex, months };
+  });
+
+  rows.sort((a, b) =>
+    window.RevenueLogic.componentStatusRank(a.status) - window.RevenueLogic.componentStatusRank(b.status)
+    || a.c.component_name.localeCompare(b.c.component_name)
+  );
+
+  const statusPill = { ORDER_NOW: 'bad', ORDER_SOON: 'watch', OK: 'good' };
+  const statusLabel = { ORDER_NOW: 'Order Now', ORDER_SOON: 'Order Soon', OK: 'OK' };
+  const tableRows = rows.map(({ c, cv, leadDays, cadenceDays, status, runOutMonthIndex }) => [
+    `<strong>${c.component_name}</strong>`,
+    `${c.product_name}<br><span class="muted" style="font-size:10px;">${c.product_sku}</span>`,
+    (c.qty_on_hand || 0).toLocaleString(),
+    (c.qty_in_flight || 0).toLocaleString(),
+    cv?.vendors?.vendor_name || '<span class="muted">no preferred vendor set</span>',
+    `${leadDays}d`,
+    `${cadenceDays}d`,
+    `<span class="pill ${statusPill[status]}">${statusLabel[status]}</span>`,
+    runOutMonthIndex == null ? '<span class="muted">beyond 6 months</span>' : `~${monthLabelLong(months[runOutMonthIndex])}`,
+  ]);
+
+  el.innerHTML = `
+    <div class="card" style="padding:14px 16px;">
+      <div class="section-label" style="margin:0 0 2px;">Active Component Levels</div>
+      <div class="muted" style="font-size:11px; margin-bottom:10px;">
+        One row per raw component. Status is a simplified estimate: it projects each component's
+        on-hand + in-flight quantity against the root product's current revenue forecast (live
+        forecast only — not scenario-aware) and compares the runout date to the vendor's lead time
+        + contact cadence. Sorted Order Now / Order Soon / OK. This is not the full PO-recommendation
+        engine (see Overview tab) — it's a fast read on componentry specifically.
+      </div>
+      ${tableRows.length
+        ? kpiTable(['Component', 'Product', 'QOH', 'In-Flight', 'Vendor', 'Lead Time', 'Cadence', 'Status', 'Runs Out'], tableRows, null, null, [2, 3, 4, 5, 6, 7, 8])
+        : '<div class="empty-state">No components found.</div>'}
+    </div>
+  `;
 }
 
 async function renderActivityLog() {
