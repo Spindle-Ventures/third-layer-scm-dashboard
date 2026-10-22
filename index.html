@@ -130,9 +130,17 @@
     justify-content: center; z-index: 1000;
   }
   .detail-modal {
-    background: var(--card); border-radius: 14px; padding: 22px 26px; max-width: 640px;
-    max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    background: var(--card); border-radius: 14px; padding: 20px 24px; max-width: 640px;
+    max-height: 88vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
   }
+  /* Collapsible "show the math" sections (Alex, 2026-10-22: "optimize each popup for minimal
+     scrolling") -- native <details>/<summary>, zero extra JS, zero height until expanded. */
+  .detail-modal details { margin-top: 10px; }
+  .detail-modal details summary {
+    cursor: pointer; font-size: 11px; color: var(--muted); font-weight: 600;
+    padding: 4px 0; list-style: revert; user-select: none;
+  }
+  .detail-modal details[open] summary { margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -1587,31 +1595,32 @@ function showComponentStatusDetail(componentId) {
     : `No action needed right now — ${runOutMonthIndex == null ? "doesn't project to run out within the 6-month horizon" : `runout (${monthLabelLong(months[runOutMonthIndex])}) is comfortably beyond lead time + cadence`}.`;
 
   const body = `
-    <div style="font-size:13px; line-height:1.6;">
-      <div class="section-label" style="margin:0 0 6px;">Quick Estimate (this tab)</div>
-      <div class="muted" style="font-size:12px; margin-bottom:8px;">
-        Starting stock: ${(c.qty_on_hand || 0).toLocaleString()} on hand + ${(c.qty_in_flight || 0).toLocaleString()} in-flight
-        = <strong>${startQty.toLocaleString()}</strong> available. Projected consumption below uses the root product's
-        live revenue forecast × ${c.qty_per_unit || 1} unit${c.qty_per_unit === 1 ? '' : 's'} of this component per finished unit.
-      </div>
-      <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:10px;">
-        <thead><tr><th style="text-align:left; padding:4px 8px; border-bottom:1px solid var(--border);">Month</th><th style="text-align:left; padding:4px 8px; border-bottom:1px solid var(--border);">Consumed</th><th style="text-align:left; padding:4px 8px; border-bottom:1px solid var(--border);">Running Balance</th></tr></thead>
-        <tbody>${monthRows}</tbody>
-      </table>
-      <div class="muted" style="font-size:12px; margin-bottom:4px;">Vendor lead time: ${leadDays} days. Contact cadence: ${cadenceDays} days.</div>
-      <div style="padding:8px 0; border-top:1px solid var(--border); margin-top:6px;"><strong>Recommendation:</strong> ${recommendationSentence}</div>
+    <div style="font-size:13px; line-height:1.5;">
+      <div style="padding:6px 0; border-bottom:1px solid var(--border); margin-bottom:8px;"><strong>Recommendation:</strong> ${recommendationSentence}</div>
 
-      <div class="section-label" style="margin:16px 0 6px;">Full Recommendation Engine (Overview tab)</div>
+      <div class="section-label" style="margin:0 0 4px; font-size:11px;">Full Recommendation Engine (Overview tab)</div>
       ${backendRec ? `
-        <div class="muted" style="font-size:12px; margin-bottom:6px;">
-          This component is netted against a real active PO-shortfall recommendation
+        <div class="muted" style="font-size:12px; margin-bottom:4px;">
+          Netted against a real active PO-shortfall recommendation
           (<span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:9px;">${backendRec.urgency}</span>,
-          due by ${fmtDate(backendRec.last_responsible_date)}) — the same expand_to_component_pos() calculation behind the
-          Overview tab's recommendations, which accounts for the actual forecasted finished-good PO, not just smoothed
-          continuous demand.
+          due by ${fmtDate(backendRec.last_responsible_date)}) — accounts for the actual forecasted finished-good PO,
+          not just smoothed continuous demand.
         </div>
-        <div style="font-size:12px;">Net need: <strong>${(backendRec.net_need || 0).toLocaleString()}</strong> · MOQ: ${(backendRec.moq || 0).toLocaleString()} · <strong>Order ${(backendRec.order_qty || 0).toLocaleString()} units from ${backendRec.vendor}</strong></div>
-      ` : `<div class="muted" style="font-size:12px;">No active PO-shortfall recommendation currently references this component — the Overview tab's engine isn't flagging a net need here.</div>`}
+        <div style="font-size:12px; margin-bottom:8px;">Net need: <strong>${(backendRec.net_need || 0).toLocaleString()}</strong> · MOQ: ${(backendRec.moq || 0).toLocaleString()} · <strong>Order ${(backendRec.order_qty || 0).toLocaleString()} units from ${backendRec.vendor}</strong></div>
+      ` : `<div class="muted" style="font-size:12px; margin-bottom:8px;">No active PO-shortfall recommendation currently references this component.</div>`}
+
+      <details>
+        <summary>Show this tab's quick estimate</summary>
+        <div class="muted" style="font-size:11px; margin-bottom:6px;">
+          Starting stock: ${(c.qty_on_hand || 0).toLocaleString()} on hand + ${(c.qty_in_flight || 0).toLocaleString()} in-flight
+          = <strong>${startQty.toLocaleString()}</strong> available, consumed at ${c.qty_per_unit || 1} unit${c.qty_per_unit === 1 ? '' : 's'}/finished unit against the root product's live revenue forecast.
+        </div>
+        <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:6px;">
+          <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Consumed</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Running Balance</th></tr></thead>
+          <tbody>${monthRows}</tbody>
+        </table>
+        <div class="muted" style="font-size:11px;">Vendor lead time: ${leadDays} days. Contact cadence: ${cadenceDays} days.</div>
+      </details>
     </div>
   `;
   showDetail(`${c.component_name} — Why "${statusLabel[status]}"?`, body, 'wide');
@@ -1887,7 +1896,7 @@ async function renderRevenue() {
     sb.from('revenue_actuals').select('channel, gross_revenue, shipping_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, revenue_pct_rationale, asp_rationale, product_id, products(sku_code, display_name)').eq('is_active', true),
-    sb.from('open_orders_by_product').select('product_sku, qty, eta').not('eta', 'is', null),
+    sb.from('open_orders_by_product').select('product_sku, qty, eta, order_type').not('eta', 'is', null).eq('order_type', 'finished_good'),
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
     sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
     sb.from('component_qoh').select('*'),
@@ -1958,7 +1967,18 @@ async function renderRevenue() {
     liveMix[fp.channel] = liveMix[fp.channel] || {};
     liveMix[fp.channel][fp.product_id] = { revenue_pct: Number(fp.revenue_pct), avg_selling_price: Number(fp.avg_selling_price), revenue_pct_rationale: fp.revenue_pct_rationale || null, asp_rationale: fp.asp_rationale || null };
   });
-  const receipts = {}; // { product_sku: { month: qty } }
+  // Real receipts for the Inventory Outlook -- FINISHED GOOD production runs only. Alex
+  // (2026-10-22): flagged "Night Oil 415ml showing 132k landing" and "46k of Armpit Mud in
+  // January" as entirely incorrect, with no real POs placed/in the works for 2027. Root cause:
+  // open_orders_by_product mixes finished-good production runs AND raw COMPONENT orders (bottles,
+  // lids, jars, corks -- which still need to go through production before becoming finished
+  // units) in one view with an order_type column, and this fetch was pulling ALL rows regardless
+  // of type. Verified against live data: Armpit Mud's "46k" was exactly 23,000 (Black Lid
+  // component order) + 23,000 (Glass Jar component order) for the SAME finished-good PO, with
+  // ZERO real finished-good quantity -- confirming Alex's "no real 2027 POs" claim for that
+  // product. Night Oil's "132k" was 55,000 (bottle) + 55,000 (cork) + the one real 22,000
+  // finished-good run. Now filtered server-side to order_type='finished_good' in the fetch above.
+  const receipts = {}; // { product_sku: { month: qty } }, finished-good only
   (openOrders || []).forEach(o => {
     const m = o.eta.slice(0, 7);
     if (!receipts[o.product_sku]) receipts[o.product_sku] = {};
@@ -2213,17 +2233,17 @@ function showMixCellDetail(view, channel, productId, month) {
   // not available for Amazon (no equivalent historical ingestion yet).
   const history = channel === 'shopify' ? (S.historicalAspByProduct[productId] || []) : [];
   const historyBlock = (!isPct && history.length) ? `
-    <div style="margin:12px 0; padding-top:10px; border-top:1px solid var(--border);">
-      <div class="section-label" style="margin:0 0 6px;">Actual ASP, Last ${history.length} Months (Shopify)</div>
+    <div style="margin:8px 0; padding-top:8px; border-top:1px solid var(--border);">
+      <div class="section-label" style="margin:0 0 4px; font-size:11px;">Actual ASP, Last ${history.length} Months (Shopify)</div>
       <table style="width:100%; font-size:12px; border-collapse:collapse;">
         ${history.map(h => `<tr><td style="padding:2px 6px;">${monthLabelShort(h.month)}</td><td style="padding:2px 6px; text-align:right;">${fmtMoney2(h.asp)}</td><td class="muted" style="padding:2px 6px; text-align:right;">${h.units.toLocaleString()} units sold</td></tr>`).join('')}
       </table>
-      <div class="muted" style="font-size:11px; margin-top:6px;">Computed from real order data (gross sales ÷ net units sold), not an assumption — use it to sanity-check the projected ASP above.</div>
+      <div class="muted" style="font-size:10px; margin-top:4px;">Computed from real order data (gross sales ÷ net units sold) — use it to sanity-check the projected ASP above.</div>
     </div>
-  ` : (!isPct ? `<div class="muted" style="font-size:11px; margin:10px 0;">No historical actual-ASP data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'}.</div>` : '');
+  ` : (!isPct ? `<div class="muted" style="font-size:11px; margin:6px 0;">No historical actual-ASP data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'}.</div>` : '');
   const body = `
-    <div style="font-size:14px; margin-bottom:10px;"><strong>${valueLine}</strong></div>
-    <div class="muted" style="font-size:13px; line-height:1.5; margin-bottom:12px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+    <div style="font-size:14px; margin-bottom:6px;"><strong>${valueLine}</strong></div>
+    <div class="muted" style="font-size:13px; line-height:1.4; margin-bottom:8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
     ${historyBlock}
     ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); ${isPct ? 'editDraftMixPct' : 'editDraftAsp'}('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
   `;
@@ -2306,49 +2326,55 @@ function showThroughputDetail(productId, month) {
   const fullMonthUnits = isCurrentMonth ? soldSoFarUnits + totalUnits : null;
 
   const body = `
-    <div style="font-size:13px; line-height:1.7;">
+    <div style="font-size:13px; line-height:1.5;">
       ${isCurrentMonth ? `
-        <div style="margin-bottom:14px; padding:12px; background:#F7F4EE; border-radius:8px;">
-          <div style="font-weight:600; margin-bottom:8px; font-size:12px;">This month, in plain terms:</div>
-          <div style="display:flex; justify-content:space-between; padding:3px 0;"><span class="muted">Full month's target</span><strong>${Math.round(fullMonthUnits).toLocaleString()} units</strong></div>
-          <div style="display:flex; justify-content:space-between; padding:3px 0;"><span class="muted">— Already sold so far this month</span><strong>${Math.round(soldSoFarUnits).toLocaleString()} units</strong></div>
-          <div style="display:flex; justify-content:space-between; padding:3px 0; border-top:1px solid var(--border); margin-top:3px; padding-top:6px;"><span class="muted">= Still planned to sell (rest of month)</span><strong>${Math.round(totalUnits).toLocaleString()} units</strong></div>
-          <div style="display:flex; justify-content:space-between; padding:3px 0;"><span class="muted">+ Inventory landing this month</span><strong>${receipts.toLocaleString()} units</strong></div>
-          <div class="muted" style="font-size:10px; margin-top:6px;">"Already sold so far" is implied from actual revenue recorded this month at the assumed mix %, not a directly measured unit count — see the per-channel math below for detail.</div>
+        <div style="margin-bottom:10px; padding:10px; background:#F7F4EE; border-radius:8px;">
+          <div style="font-weight:600; margin-bottom:6px; font-size:12px;">This month, in plain terms:</div>
+          <div style="display:flex; justify-content:space-between; padding:2px 0;"><span class="muted">Full month's target</span><strong>${Math.round(fullMonthUnits).toLocaleString()} units</strong></div>
+          <div style="display:flex; justify-content:space-between; padding:2px 0;"><span class="muted">— Already sold so far this month</span><strong>${Math.round(soldSoFarUnits).toLocaleString()} units</strong></div>
+          <div style="display:flex; justify-content:space-between; padding:2px 0; border-top:1px solid var(--border); margin-top:2px; padding-top:4px;"><span class="muted">= Still planned to sell (rest of month)</span><strong>${Math.round(totalUnits).toLocaleString()} units</strong></div>
+          <div style="display:flex; justify-content:space-between; padding:2px 0;"><span class="muted">+ Inventory landing this month</span><strong>${receipts.toLocaleString()} units</strong></div>
         </div>
       ` : ''}
-      ${channelRows.map(r => `
-        <div style="padding:8px 0; border-bottom:1px solid var(--border);">
-          <div style="display:flex; justify-content:space-between;"><strong>${r.channel}</strong><span class="pill ${r.basis.tag === 'actual' ? 'good' : (r.basis.tag === 'MTD actual' ? 'watch' : '')}" title="${r.basis.detail}">${r.basis.tag}</span></div>
-          <div class="muted" style="font-size:12px; margin-top:2px;">
-            ${isCurrentMonth
-              ? `${fmtMoney(r.chanRev)} full-month forecast − ${fmtMoney(S.monthlyActual[month]?.[r.channel === 'Shopify' ? 'shopify' : 'amazon'] || 0)} already actual = ${fmtMoney(r.remainingChanRev)} remaining × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units still to come</strong>`
-              : `${fmtMoney(r.chanRev)} channel revenue × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units</strong> (${fmtMoney(r.chanRev * r.pct)})`
-            }
-          </div>
-        </div>
-      `).join('')}
-      <div style="padding:8px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between;">
-        <span>${isCurrentMonth ? 'Remaining demand (rest of month)' : 'Total implied demand'}</span><strong>${Math.round(totalUnits).toLocaleString()} units (${fmtMoney(totalRemainingRevenue)})</strong>
-      </div>
-      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>Starting inventory (${isCurrentMonth ? 'today, live' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
-      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>+ Incoming receipts${isCurrentMonth ? ' (rest of month)' : ' this month'}${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
-      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
-      <div style="padding:10px 0 0; display:flex; justify-content:space-between; font-size:15px;"><span><strong>= Projected end-of-month</strong></span><strong style="color:${endingInv < (p.safety_stock_qty || 0) ? 'var(--bad-text)' : 'var(--good-text)'};">${Math.round(endingInv).toLocaleString()}</strong></div>
-      <div class="muted" style="font-size:11px; margin-top:4px;">Safety stock: ${(p.safety_stock_qty || 0).toLocaleString()}</div>
+      <div style="padding:6px 0; display:flex; justify-content:space-between; font-size:15px;"><span><strong>Projected end-of-month</strong></span><strong style="color:${endingInv < (p.safety_stock_qty || 0) ? 'var(--bad-text)' : 'var(--good-text)'};">${Math.round(endingInv).toLocaleString()}</strong></div>
+      <div class="muted" style="font-size:11px;">Starting (${isCurrentMonth ? 'today, live' : 'prior month EOM'}): ${Math.round(startingInv).toLocaleString()} · Safety stock: ${(p.safety_stock_qty || 0).toLocaleString()}</div>
+
       ${draftReceiptsHere.length ? `
-        <div style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);">
-          <div class="section-label" style="margin:0 0 6px;">Draft POs landing this month (${currentScenario()?.name || ''})</div>
+        <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+          <div class="section-label" style="margin:0 0 4px; font-size:11px;">Draft POs landing this month (${currentScenario()?.name || ''})</div>
           ${draftReceiptsHere.map(po => `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:12px;">
               <span>${po.qty.toLocaleString()} units${po.notes ? ` — <span class="muted">${po.notes}</span>` : ''}</span>
               ${isEditable() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--bad-text);" onclick="deleteDraftPo('${po.id}')">Remove</button>` : ''}
             </div>
           `).join('')}
         </div>
       ` : ''}
+
+      <details>
+        <summary>Show the math${isCurrentMonth ? ' ("already sold so far" is implied from actual revenue at the assumed mix %, not a measured count)' : ''}</summary>
+        ${channelRows.map(r => `
+          <div style="padding:5px 0; border-bottom:1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between;"><strong>${r.channel}</strong><span class="pill ${r.basis.tag === 'actual' ? 'good' : (r.basis.tag === 'MTD actual' ? 'watch' : '')}" title="${r.basis.detail}">${r.basis.tag}</span></div>
+            <div class="muted" style="font-size:11px; margin-top:2px;">
+              ${isCurrentMonth
+                ? `${fmtMoney(r.chanRev)} full-month forecast − ${fmtMoney(S.monthlyActual[month]?.[r.channel === 'Shopify' ? 'shopify' : 'amazon'] || 0)} already actual = ${fmtMoney(r.remainingChanRev)} remaining × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units still to come</strong>`
+                : `${fmtMoney(r.chanRev)} channel revenue × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units</strong> (${fmtMoney(r.chanRev * r.pct)})`
+              }
+            </div>
+          </div>
+        `).join('')}
+        <div style="padding:5px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; font-size:12px;">
+          <span>${isCurrentMonth ? 'Remaining demand (rest of month)' : 'Total implied demand'}</span><strong>${Math.round(totalUnits).toLocaleString()} units (${fmtMoney(totalRemainingRevenue)})</strong>
+        </div>
+        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>Starting inventory (${isCurrentMonth ? 'today, live' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
+        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>+ Incoming receipts${isCurrentMonth ? ' (rest of month)' : ' this month'}${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
+        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
+        <div style="padding:6px 0 0; display:flex; justify-content:space-between; font-size:13px;"><span><strong>= Projected end-of-month</strong></span><strong>${Math.round(endingInv).toLocaleString()}</strong></div>
+      </details>
+
       ${isEditable() ? `
-        <div style="margin-top:14px;">
+        <div style="margin-top:10px;">
           <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${month}')">+ Draft a PO landing in ${monthLabelShort(month)}</button>
         </div>
       ` : ''}
@@ -2380,26 +2406,29 @@ function showOutlookStatusDetail(productId) {
   }).join('');
 
   const body = `
-    <div style="font-size:13px; line-height:1.6;">
-      <div style="margin-bottom:10px;"><span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}" style="font-size:12px;">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span></div>
-      <div class="muted" style="font-size:12px; margin-bottom:12px;">${narrative} Safety stock: ${safety.toLocaleString()} units.</div>
-      <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:12px;">
-        <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month (EOM)</th><th style="text-align:right; padding:3px 8px; border-bottom:1px solid var(--border);">Projected</th></tr></thead>
-        <tbody>${seriesRows}</tbody>
-      </table>
-      <div class="section-label" style="margin:12px 0 6px;">Recommendation</div>
+    <div style="font-size:13px; line-height:1.5;">
+      <div style="margin-bottom:6px;"><span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}" style="font-size:12px;">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span></div>
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">${narrative} Safety stock: ${safety.toLocaleString()} units.</div>
+      <div class="section-label" style="margin:10px 0 4px; font-size:11px;">Recommendation</div>
       ${backendRec ? `
-        <div class="muted" style="font-size:12px; margin-bottom:6px;">
+        <div class="muted" style="font-size:12px; margin-bottom:4px;">
           The full PO-recommendation engine (Overview tab) already has an active
           <span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:9px;">${backendRec.urgency}</span>
-          recommendation for this product — shortfall of ${(backendRec.shortfall_qty || 0).toLocaleString()} units by
+          recommendation — shortfall of ${(backendRec.shortfall_qty || 0).toLocaleString()} units by
           ${fmtDate(backendRec.shortfall_month)}.
         </div>
-        <div style="font-size:12px; margin-bottom:10px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>
+        <div style="font-size:12px; margin-bottom:8px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>
       ` : outlookStatus.status === 'ISSUE' ? `
-        <div class="muted" style="font-size:12px; margin-bottom:10px;">No active recommendation from the Overview tab's engine yet for this product — this status reflects this tab's own simplified 6-month projection against the live forecast.</div>
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">No active recommendation from the Overview tab's engine yet — this status reflects this tab's own simplified 6-month projection.</div>
       ` : ''}
-      ${isEditable() ? `<button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${outlookStatus.firstIssueIndex != null ? months[outlookStatus.firstIssueIndex] : months[0]}')">+ Draft a PO</button>` : ''}
+      ${isEditable() ? `<button class="btn btn-primary" style="padding:6px 12px; font-size:12px; margin-bottom:4px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${outlookStatus.firstIssueIndex != null ? months[outlookStatus.firstIssueIndex] : months[0]}')">+ Draft a PO</button>` : ''}
+      <details>
+        <summary>Show the 6-month projection</summary>
+        <table style="width:100%; font-size:12px; border-collapse:collapse;">
+          <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month (EOM)</th><th style="text-align:right; padding:3px 8px; border-bottom:1px solid var(--border);">Projected</th></tr></thead>
+          <tbody>${seriesRows}</tbody>
+        </table>
+      </details>
     </div>
   `;
   showDetail(`${p.display_name} — Status`, body);
