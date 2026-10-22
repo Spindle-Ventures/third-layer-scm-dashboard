@@ -148,8 +148,8 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="overview">Overview</button>
     <button class="tab-btn" data-tab="revenue">Revenue</button>
-    <button class="tab-btn" data-tab="landed">Landed Orders</button>
     <button class="tab-btn" data-tab="components">Components</button>
+    <button class="tab-btn" data-tab="landed">Landed Orders</button>
     <button class="tab-btn" data-tab="activity">Activity Log</button>
   </nav>
 </header>
@@ -157,8 +157,8 @@
 <main>
   <div id="tab-overview" class="tab-panel"></div>
   <div id="tab-revenue" class="tab-panel hidden"></div>
-  <div id="tab-landed" class="tab-panel hidden"></div>
   <div id="tab-components" class="tab-panel hidden"></div>
+  <div id="tab-landed" class="tab-panel hidden"></div>
   <div id="tab-activity" class="tab-panel hidden"></div>
 </main>
 </div>
@@ -1182,7 +1182,7 @@ async function createNewOrder(type) {
   document.getElementById('detail-modal-backdrop')?.remove();
   const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
   await logAction('inventory_ledger', inserted.id, 'create', `Added new ${type === 'componentry' ? 'component' : 'finished-good'} order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
-  await renderOverview();
+  await Promise.all([renderOverview(), renderComponents()]);
 }
 
 function showOrderActionsMenu(ledgerId) {
@@ -1329,16 +1329,17 @@ function applyLandedOrdersFilter() {
 
   const rows = filtered.map(r => [
     canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" onclick="showLandedOrderActionsMenu('${r.ledger_id}')" title="Actions">⋯</button>` : '',
+    `<span class="pill ${r.order_type === 'componentry' ? 'watch' : 'good'}">${r.order_type === 'componentry' ? 'Component' : 'Finished Good'}</span>`,
     r.order_type === 'componentry'
-      ? `<strong>${componentShortLabel(r.component_name)}</strong><br><span class="muted" style="font-size:10px;">Component — ${r.product_name}</span>`
-      : `<strong>${r.product_name}</strong><br><span class="muted" style="font-size:10px;">Finished Good</span>`,
+      ? `<strong>${componentShortLabel(r.component_name)}</strong><br><span class="muted" style="font-size:10px;">for ${r.product_name}</span>`
+      : `<strong>${r.product_name}</strong>`,
     (r.qty || 0).toLocaleString(),
     r.vendor_name || '—',
     r.internal_ref || '—',
     fmtDate(r.date_landed),
   ]);
   document.getElementById('landed-orders-table').innerHTML = rows.length
-    ? kpiTable(['', 'What Landed', 'Qty', 'Vendor', 'Order #', 'Landed'], rows, null, ['40px', 'auto', '70px', '120px', '110px', '90px'], [0, 2, 3, 4, 5])
+    ? kpiTable(['', 'Type', 'What Landed', 'Qty', 'Vendor', 'Order #', 'Landed'], rows, null, ['40px', '95px', 'auto', '70px', '120px', '110px', '90px'], [0, 1, 3, 4, 5, 6])
     : '<div class="muted">No landed orders match this filter.</div>';
 }
 
@@ -1397,17 +1398,24 @@ async function deleteLandedOrderRow(ledgerId) {
 // tab uses (live forecast only, not scenario-aware), NOT a full expand_to_component_pos()-style
 // exact-date netting. See dashboard/lib/revenue-logic.js's computeComponentRunout/
 // componentOrderStatus (unit-tested, 100% coverage) for the actual math.
+//
+// 2026-10-22 follow-up (Alex): filter by product, edit lead times, support multiple vendors per
+// component, initiate a component order from here, and a status pop-out explaining the math PLUS
+// whatever the real PO-recommendation engine (Overview tab, agent_recommendations.component_recs
+// -- already does exact expand_to_component_pos() netting against actual forecasted shortfall
+// POs) separately says about this component, surfaced rather than silently merged into one number.
 async function renderComponents() {
   const el = document.getElementById('tab-components');
   el.innerHTML = `<div class="card empty-state">Loading component levels…</div>`;
 
   const months = nextSixMonths();
-  const [{ data: componentQoh }, { data: componentVendors }, { data: products }, { data: revForecasts }, { data: forecastParams }] = await Promise.all([
+  const [{ data: componentQoh }, { data: componentVendors }, { data: products }, { data: revForecasts }, { data: forecastParams }, { data: activeRecs }] = await Promise.all([
     sb.from('component_qoh').select('*'),
-    sb.from('component_vendors').select('component_id, lead_days, contact_cadence_days, vendors(vendor_name, default_lead_days, default_cadence_days)').eq('is_preferred', true),
-    sb.from('products').select('id, sku_code, product_type'),
+    sb.from('component_vendors').select('*, vendors(vendor_name, default_lead_days, default_cadence_days)'),
+    sb.from('products').select('id, sku_code, display_name, product_type'),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, product_id').eq('is_active', true),
+    sb.from('agent_recommendations').select('product_id, urgency, last_responsible_date, recommended_order_qty, component_recs').neq('decision', 'dismissed'),
   ]);
 
   const productBySku = {};
@@ -1431,8 +1439,24 @@ async function renderComponents() {
     });
   });
 
-  const componentVendorByComponentId = {};
-  (componentVendors || []).forEach(cv => { componentVendorByComponentId[cv.component_id] = cv; });
+  // Every active vendor link per component (not just preferred) -- supports multiple vendors UI.
+  const vendorsByComponentId = {};
+  (componentVendors || []).forEach(cv => {
+    if (!vendorsByComponentId[cv.component_id]) vendorsByComponentId[cv.component_id] = [];
+    vendorsByComponentId[cv.component_id].push(cv);
+  });
+
+  // The REAL PO-recommendation engine's per-component net need, keyed by product_id + component
+  // name -- exactly answers "will recommendations be based on future forecasted POs?": yes, this
+  // IS that calculation (po_recommendations.py's expand_to_component_pos(), already computed for
+  // the Overview tab), surfaced here rather than rebuilt. Kept visibly separate from this tab's
+  // own simplified estimate, never silently merged into one number.
+  const backendRecByProductAndComponent = {};
+  (activeRecs || []).forEach(rec => {
+    (rec.component_recs || []).forEach(cr => {
+      backendRecByProductAndComponent[`${rec.product_id}::${cr.component_name}`] = { ...cr, urgency: rec.urgency, last_responsible_date: rec.last_responsible_date };
+    });
+  });
 
   const rows = (componentQoh || []).map(c => {
     const product = productBySku[c.product_sku];
@@ -1442,31 +1466,55 @@ async function renderComponents() {
     const consumption = demandUnits.map(d => d * (c.qty_per_unit || 1));
     const startQty = (c.qty_on_hand || 0) + (c.qty_in_flight || 0);
     const runOutMonthIndex = window.RevenueLogic.computeComponentRunout(startQty, consumption);
-    const cv = componentVendorByComponentId[c.component_id];
-    const leadDays = cv?.lead_days ?? cv?.vendors?.default_lead_days ?? 56;
-    const cadenceDays = cv?.contact_cadence_days ?? cv?.vendors?.default_cadence_days ?? 14;
+    const allVendorLinks = (vendorsByComponentId[c.component_id] || []).slice().sort((a, b) => (b.is_preferred ? 1 : 0) - (a.is_preferred ? 1 : 0));
+    const preferred = allVendorLinks.find(v => v.is_preferred) || allVendorLinks[0];
+    const leadDays = preferred?.lead_days ?? preferred?.vendors?.default_lead_days ?? 56;
+    const cadenceDays = preferred?.contact_cadence_days ?? preferred?.vendors?.default_cadence_days ?? 14;
     const status = window.RevenueLogic.componentOrderStatus({ runOutMonthIndex, leadDays, cadenceDays });
-    return { c, cv, leadDays, cadenceDays, status, runOutMonthIndex, months };
+    const backendRec = product ? backendRecByProductAndComponent[`${product.id}::${c.component_name}`] : null;
+    return { c, product, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, demandUnits, consumption, startQty, backendRec };
   });
+  window._componentsCache = { rows, months };
 
-  rows.sort((a, b) =>
+  renderComponentsTable();
+}
+
+function renderComponentsTable() {
+  const { rows, months } = window._componentsCache || { rows: [], months: [] };
+  const el = document.getElementById('tab-components');
+  const productFilter = window._componentsProductFilter || 'all';
+
+  const uniqueProducts = [...new Map(rows.filter(r => r.product).map(r => [r.product.sku_code, r.product.display_name])).entries()]
+    .sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
+
+  let filtered = productFilter === 'all' ? rows : rows.filter(r => r.c.product_sku === productFilter);
+  filtered = filtered.slice().sort((a, b) =>
     window.RevenueLogic.componentStatusRank(a.status) - window.RevenueLogic.componentStatusRank(b.status)
     || a.c.component_name.localeCompare(b.c.component_name)
   );
 
   const statusPill = { ORDER_NOW: 'bad', ORDER_SOON: 'watch', OK: 'good' };
   const statusLabel = { ORDER_NOW: 'Order Now', ORDER_SOON: 'Order Soon', OK: 'OK' };
-  const tableRows = rows.map(({ c, cv, leadDays, cadenceDays, status, runOutMonthIndex }) => [
-    `<strong>${c.component_name}</strong>`,
-    `${c.product_name}<br><span class="muted" style="font-size:10px;">${c.product_sku}</span>`,
-    (c.qty_on_hand || 0).toLocaleString(),
-    (c.qty_in_flight || 0).toLocaleString(),
-    cv?.vendors?.vendor_name || '<span class="muted">no preferred vendor set</span>',
-    `${leadDays}d`,
-    `${cadenceDays}d`,
-    `<span class="pill ${statusPill[status]}">${statusLabel[status]}</span>`,
-    runOutMonthIndex == null ? '<span class="muted">beyond 6 months</span>' : `~${monthLabelLong(months[runOutMonthIndex])}`,
-  ]);
+  const tableRows = filtered.map(r => {
+    const { c, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, backendRec } = r;
+    const hasShortfallSignal = backendRec && backendRec.net_need > 0;
+    return [
+      `<strong>${c.component_name}</strong>`,
+      `${c.product_name}<br><span class="muted" style="font-size:10px;">${c.product_sku}</span>`,
+      (c.qty_on_hand || 0).toLocaleString(),
+      (c.qty_in_flight || 0).toLocaleString(),
+      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="manageComponentVendors('${c.component_id}')">
+        ${preferred?.vendors?.vendor_name || '<span class="muted">none set</span>'}${allVendorLinks.length > 1 ? ` <span class="muted">(+${allVendorLinks.length - 1})</span>` : ''}
+      </button>`,
+      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="manageComponentVendors('${c.component_id}')">${leadDays}d</button>`,
+      `${cadenceDays}d`,
+      `<button class="btn btn-ghost" style="padding:0;" onclick="showComponentStatusDetail('${c.component_id}')">
+        <span class="pill ${statusPill[status]}">${statusLabel[status]}</span>${hasShortfallSignal && status === 'OK' ? ' <span class="pill watch" title="The full PO-recommendation engine flags a real component shortfall — click for detail">⚠</span>' : ''}
+      </button>`,
+      runOutMonthIndex == null ? '<span class="muted">beyond 6 months</span>' : `~${monthLabelLong(months[runOutMonthIndex])}`,
+      canEdit() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
+    ];
+  });
 
   el.innerHTML = `
     <div class="card" style="padding:14px 16px;">
@@ -1475,14 +1523,175 @@ async function renderComponents() {
         One row per raw component. Status is a simplified estimate: it projects each component's
         on-hand + in-flight quantity against the root product's current revenue forecast (live
         forecast only — not scenario-aware) and compares the runout date to the vendor's lead time
-        + contact cadence. Sorted Order Now / Order Soon / OK. This is not the full PO-recommendation
-        engine (see Overview tab) — it's a fast read on componentry specifically.
+        + contact cadence. Click Status for the full rationale, including what the real
+        PO-recommendation engine (Overview tab) separately says. Sorted Order Now / Order Soon / OK.
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+        <select id="components-product-filter" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:12px;" onchange="setComponentsProductFilter(this.value)">
+          <option value="all" ${productFilter === 'all' ? 'selected' : ''}>All products</option>
+          ${uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${productFilter === sku ? 'selected' : ''}>${name}</option>`).join('')}
+        </select>
       </div>
       ${tableRows.length
-        ? kpiTable(['Component', 'Product', 'QOH', 'In-Flight', 'Vendor', 'Lead Time', 'Cadence', 'Status', 'Runs Out'], tableRows, null, null, [2, 3, 4, 5, 6, 7, 8])
-        : '<div class="empty-state">No components found.</div>'}
+        ? kpiTable(['Component', 'Product', 'QOH', 'In-Flight', 'Vendor', 'Lead Time', 'Cadence', 'Status', 'Runs Out', ''], tableRows, null, null, [2, 3, 4, 5, 6, 7, 8, 9])
+        : '<div class="empty-state">No components match this filter.</div>'}
     </div>
   `;
+}
+
+function setComponentsProductFilter(sku) {
+  window._componentsProductFilter = sku;
+  renderComponentsTable();
+}
+
+function showComponentStatusDetail(componentId) {
+  const { rows, months } = window._componentsCache || { rows: [], months: [] };
+  const r = rows.find(row => row.c.component_id === componentId);
+  if (!r) return;
+  const { c, preferred, leadDays, cadenceDays, status, runOutMonthIndex, consumption, startQty, backendRec } = r;
+  const statusLabel = { ORDER_NOW: 'Order Now', ORDER_SOON: 'Order Soon', OK: 'OK' };
+
+  let running = startQty;
+  const monthRows = months.map((m, i) => {
+    running -= consumption[i];
+    return `<tr><td style="padding:4px 8px;">${monthLabelShort(m)}</td><td style="padding:4px 8px;">${Math.round(consumption[i]).toLocaleString()}</td><td style="padding:4px 8px; ${running < 0 ? 'color:var(--bad-text);' : ''}">${Math.round(running).toLocaleString()}</td></tr>`;
+  }).join('');
+
+  const recommendationSentence = status === 'ORDER_NOW'
+    ? `Order now — projected to run out around ${monthLabelLong(months[runOutMonthIndex])}, which is inside ${preferred?.vendors?.vendor_name || 'the vendor'}'s ${leadDays}-day lead time.`
+    : status === 'ORDER_SOON'
+    ? `Start the conversation soon — projected to run out around ${monthLabelLong(months[runOutMonthIndex])}, which is within one contact-cadence window (${cadenceDays}d) past the ${leadDays}-day lead time.`
+    : `No action needed right now — ${runOutMonthIndex == null ? "doesn't project to run out within the 6-month horizon" : `runout (${monthLabelLong(months[runOutMonthIndex])}) is comfortably beyond lead time + cadence`}.`;
+
+  const body = `
+    <div style="font-size:13px; line-height:1.6;">
+      <div class="section-label" style="margin:0 0 6px;">Quick Estimate (this tab)</div>
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">
+        Starting stock: ${(c.qty_on_hand || 0).toLocaleString()} on hand + ${(c.qty_in_flight || 0).toLocaleString()} in-flight
+        = <strong>${startQty.toLocaleString()}</strong> available. Projected consumption below uses the root product's
+        live revenue forecast × ${c.qty_per_unit || 1} unit${c.qty_per_unit === 1 ? '' : 's'} of this component per finished unit.
+      </div>
+      <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:10px;">
+        <thead><tr><th style="text-align:left; padding:4px 8px; border-bottom:1px solid var(--border);">Month</th><th style="text-align:left; padding:4px 8px; border-bottom:1px solid var(--border);">Consumed</th><th style="text-align:left; padding:4px 8px; border-bottom:1px solid var(--border);">Running Balance</th></tr></thead>
+        <tbody>${monthRows}</tbody>
+      </table>
+      <div class="muted" style="font-size:12px; margin-bottom:4px;">Vendor lead time: ${leadDays} days. Contact cadence: ${cadenceDays} days.</div>
+      <div style="padding:8px 0; border-top:1px solid var(--border); margin-top:6px;"><strong>Recommendation:</strong> ${recommendationSentence}</div>
+
+      <div class="section-label" style="margin:16px 0 6px;">Full Recommendation Engine (Overview tab)</div>
+      ${backendRec ? `
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">
+          This component is netted against a real active PO-shortfall recommendation
+          (<span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:9px;">${backendRec.urgency}</span>,
+          due by ${fmtDate(backendRec.last_responsible_date)}) — the same expand_to_component_pos() calculation behind the
+          Overview tab's recommendations, which accounts for the actual forecasted finished-good PO, not just smoothed
+          continuous demand.
+        </div>
+        <div style="font-size:12px;">Net need: <strong>${(backendRec.net_need || 0).toLocaleString()}</strong> · MOQ: ${(backendRec.moq || 0).toLocaleString()} · <strong>Order ${(backendRec.order_qty || 0).toLocaleString()} units from ${backendRec.vendor}</strong></div>
+      ` : `<div class="muted" style="font-size:12px;">No active PO-shortfall recommendation currently references this component — the Overview tab's engine isn't flagging a net need here.</div>`}
+    </div>
+  `;
+  showDetail(`${c.component_name} — Why "${statusLabel[status]}"?`, body, 'wide');
+}
+
+// ---------- Component vendor management (multiple vendors per component, lead time/cadence/MOQ edits) ----------
+async function manageComponentVendors(componentId) {
+  const { rows } = window._componentsCache || { rows: [] };
+  const row = rows.find(r => r.c.component_id === componentId);
+  if (!row) return;
+  const componentName = row.c.component_name;
+
+  const [{ data: links }, { data: allVendors }] = await Promise.all([
+    sb.from('component_vendors').select('*, vendors(vendor_name)').eq('component_id', componentId),
+    sb.from('vendors').select('id, vendor_name').eq('is_active', true).order('vendor_name'),
+  ]);
+  const sortedLinks = (links || []).slice().sort((a, b) => (b.is_preferred ? 1 : 0) - (a.is_preferred ? 1 : 0));
+  const linkedVendorIds = new Set(sortedLinks.map(l => l.vendor_id));
+  const unlinkedVendors = (allVendors || []).filter(v => !linkedVendorIds.has(v.id));
+
+  const rowsHtml = sortedLinks.map(l => `
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; flex-wrap:wrap;">
+      <input type="radio" name="preferred-vendor" ${l.is_preferred ? 'checked' : ''} ${canEdit() ? '' : 'disabled'} onchange="setPreferredComponentVendor('${componentId}','${l.id}')" title="Set as preferred">
+      <div style="flex:1; min-width:100px;"><strong>${l.vendors?.vendor_name}</strong>${l.is_preferred ? ' <span class="pill good" style="font-size:9px;">preferred</span>' : ''}</div>
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px;" onclick="editComponentVendorField('${l.id}','lead_days','Lead Time (days, blank = use vendor default)',${l.lead_days ?? 'null'})">${l.lead_days != null ? l.lead_days + 'd lead' : 'default lead'}</button>` : `<span class="muted">${l.lead_days != null ? l.lead_days + 'd lead' : 'default lead'}</span>`}
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px;" onclick="editComponentVendorField('${l.id}','contact_cadence_days','Contact Cadence (days, blank = use vendor default)',${l.contact_cadence_days ?? 'null'})">${l.contact_cadence_days != null ? l.contact_cadence_days + 'd cadence' : 'default cadence'}</button>` : ''}
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px;" onclick="editComponentVendorField('${l.id}','moq','MOQ (blank = none)',${l.moq ?? 'null'})">${l.moq != null ? 'MOQ ' + l.moq : 'no MOQ'}</button>` : ''}
+      ${canDelete() && sortedLinks.length > 1 ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--bad-text);" onclick="removeComponentVendor('${l.id}','${componentId}')">Remove</button>` : ''}
+    </div>
+  `).join('');
+
+  const addSection = canEdit()
+    ? (unlinkedVendors.length ? `
+      <div style="margin-top:12px; display:flex; gap:6px; align-items:center;">
+        <select id="add-component-vendor-select" style="flex:1; padding:6px; border-radius:6px; border:1px solid var(--border); font-size:12px;">
+          ${unlinkedVendors.map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="addComponentVendor('${componentId}')">+ Add Vendor</button>
+      </div>
+    ` : '<div class="muted" style="font-size:11px; margin-top:8px;">All active vendors are already linked to this component.</div>')
+    : '';
+
+  showDetail(`${componentName} — Vendors`, `${rowsHtml || '<div class="muted">No vendors linked yet.</div>'}${addSection}`);
+}
+
+async function setPreferredComponentVendor(componentId, linkId) {
+  await sb.from('component_vendors').update({ is_preferred: false }).eq('component_id', componentId);
+  const { error } = await sb.from('component_vendors').update({ is_preferred: true }).eq('id', linkId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderComponents();
+  await manageComponentVendors(componentId);
+}
+
+async function editComponentVendorField(linkId, field, label, currentVal) {
+  const input = await showPromptModal(label, null, currentVal ?? '', 'number');
+  if (input === null) return;
+  const val = input === '' ? null : Number(input);
+  const { data: link, error } = await sb.from('component_vendors').update({ [field]: val }).eq('id', linkId).select('component_id').single();
+  if (error) { alert('Failed: ' + error.message); return; }
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderComponents();
+  if (link) await manageComponentVendors(link.component_id);
+}
+
+async function addComponentVendor(componentId) {
+  const vendorId = document.getElementById('add-component-vendor-select')?.value;
+  if (!vendorId) return;
+  const { error } = await sb.from('component_vendors').insert({ component_id: componentId, vendor_id: vendorId, is_preferred: false });
+  if (error) { alert('Failed: ' + error.message); return; }
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderComponents();
+  await manageComponentVendors(componentId);
+}
+
+async function removeComponentVendor(linkId, componentId) {
+  if (!(await showConfirmModal('Remove this vendor link?', 'This does not affect past orders, only future vendor selection for this component.', 'Remove'))) return;
+  const { error } = await sb.from('component_vendors').delete().eq('id', linkId);
+  if (error) { alert('Failed: ' + error.message); return; }
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderComponents();
+  await manageComponentVendors(componentId);
+}
+
+// Reuses the Overview tab's existing Add Order flow (same creation path as "+ Add Order" ->
+// "Component Order"), pre-selecting the product/component so it's a one-click start from here.
+async function orderComponentFromComponentsTab(componentId, productId) {
+  if (!canEdit()) { alert('You do not have permission to create orders.'); return; }
+  if (!window._addOrderLookups) {
+    const [{ data: products }, { data: vendors }] = await Promise.all([
+      sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
+      sb.from('vendors').select('id, vendor_name').order('vendor_name'),
+    ]);
+    window._addOrderLookups = {
+      products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
+      vendors: vendors || [],
+    };
+  }
+  await showAddOrderForm('componentry');
+  const productSel = document.getElementById('add-order-product');
+  if (productSel && productId) { productSel.value = productId; refreshAddOrderComponents(); }
+  const compSel = document.getElementById('add-order-component');
+  if (compSel) compSel.value = componentId;
 }
 
 async function renderActivityLog() {
@@ -2158,25 +2367,30 @@ function renderRevenueBody() {
     ...S.scenarios.map(s => `<option value="${s.id}" ${S.selectedScenarioId === s.id ? 'selected' : ''}>${s.name} (${s.status})</option>`),
   ].join('');
 
+  // Shared column widths so Top-Line Revenue, Product Mix, and Inventory Outlook tables' month
+  // columns line up vertically down the page (Alex, 2026-10-22) -- all three use kpiTable with
+  // this exact same width array for the label/product column + each month column.
+  const monthColWidths = ['150px', '105px', '105px', '105px', '105px', '105px', '105px'];
+
   const chanEditable = canEditChannel();
-  const channelRow = (channel, label) => `
-    <div style="display:flex; align-items:center; gap:6px; padding:4px 0;">
-      <div style="width:64px; flex-shrink:0; font-size:12px; font-weight:600;">${label}</div>
-      <div style="display:flex; flex:1; gap:6px;">
-        ${months.map(m => {
-          const basis = channelMonthBasis(m, channel);
-          return `
-          <button class="btn ${chanEditable ? 'btn-ghost' : ''}" style="flex:1; min-width:0; padding:8px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${chanEditable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
-            onclick="${chanEditable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
-            <span class="muted" style="font-size:9px; margin-bottom:2px;">${monthLabelShort(m)}</span>
-            <span>${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}</span>
-            <span class="muted" style="font-size:9px;">${basis.tag}</span>
-          </button>
-        `;
-        }).join('')}
-      </div>
-    </div>
-  `;
+  const channelCell = (channel, m) => {
+    const basis = channelMonthBasis(m, channel);
+    return `
+      <button class="btn ${chanEditable ? 'btn-ghost' : ''}" style="width:100%; padding:8px 4px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${chanEditable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
+        onclick="${chanEditable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
+        <span>${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}</span>
+        <span class="muted" style="font-size:9px;">${basis.tag}</span>
+      </button>
+    `;
+  };
+  const channelTable = kpiTable(
+    ['Channel', ...months.map(monthLabelShort)],
+    [
+      ['<strong>Shopify</strong>', ...months.map(m => channelCell('shopify', m))],
+      ['<strong>Amazon</strong>', ...months.map(m => channelCell('amazon', m))],
+    ],
+    null, monthColWidths, [1, 2, 3, 4, 5, 6]
+  );
 
   const mixView = S.mixView || 'units';
   const viewTabs = [
@@ -2200,12 +2414,10 @@ function renderRevenueBody() {
   ];
 
   const mixFilterBar = `
-    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-      <input id="mix-filter-input" type="text" placeholder="Filter products by name or SKU…" value="${(S.mixFilterText || '').replace(/"/g, '&quot;')}"
-        style="padding:5px 8px; font-size:12px; border-radius:6px; border:1px solid var(--border); min-width:200px;"
-        oninput="setMixFilterText(this.value)">
-      ${mixFilterText ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:11px;" onclick="setMixFilterText('')">Clear</button>` : ''}
-    </div>
+    <input id="mix-filter-input" type="text" placeholder="Filter products by name or SKU…" value="${(S.mixFilterText || '').replace(/"/g, '&quot;')}"
+      style="padding:5px 8px; font-size:12px; border-radius:6px; border:1px solid var(--border); min-width:200px;"
+      oninput="setMixFilterText(this.value)">
+    ${mixFilterText ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:11px;" onclick="setMixFilterText('')">Clear</button>` : ''}
   `;
 
   const mixSortControls = (channel) => {
@@ -2255,7 +2467,7 @@ function renderRevenueBody() {
         ...totals.map(t => `<span class="pill ${Math.abs(t - 100) < 1.5 ? 'good' : 'bad'}">${t.toFixed(1)}%</span>`),
       ]);
     }
-    return mixSortControls(channel) + kpiTable(['Product', ...months.map(monthLabelShort)], rows, null, null, [1, 2, 3, 4, 5, 6]);
+    return mixSortControls(channel) + kpiTable(['Product', ...months.map(monthLabelShort)], rows, null, monthColWidths, [1, 2, 3, 4, 5, 6]);
   };
 
   // ---------- Inventory Outlook & Draft POs (compact, one row per product) ----------
@@ -2295,7 +2507,7 @@ function renderRevenueBody() {
     return [nameCell, ...cells, actionCell];
   });
   const outlookTable = outlookRows.length
-    ? kpiTable(['Product', ...months.map(monthLabelShort), ''], outlookRows, null, null, [1, 2, 3, 4, 5, 6, 7])
+    ? kpiTable(['Product', ...months.map(monthLabelShort), ''], outlookRows, null, [...monthColWidths, '110px'], [1, 2, 3, 4, 5, 6, 7])
     : `<div class="empty-state" style="padding:10px; font-size:12px;">No products to show.</div>`;
 
   // ---------- Committed POs record (Alex, 2026-10-22: "I'd like to see a record of it") ----------
@@ -2335,15 +2547,13 @@ function renderRevenueBody() {
     <div class="card" style="padding:14px 16px; margin-bottom:12px;">
       <div class="section-label" style="margin:0 0 2px;">Top-Line Revenue by Channel</div>
       <div class="muted" style="font-size:11px; margin-bottom:8px;">${chanEditable ? 'Click a month to edit.' : 'You do not have permission to edit.'} Tag under each value shows whether it's real actuals, blended MTD, or a manual assumption — assumptions sharpen into actuals as each month closes.</div>
-      ${channelRow('shopify', 'Shopify')}
-      ${channelRow('amazon', 'Amazon')}
+      ${channelTable}
     </div>
 
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 2px;">Product Mix → Inventory Throughput</div>
       <div class="muted" style="font-size:11px; margin-bottom:8px;">Every number here is derived from the top-line revenue above. Switch views to see how it was built; click any value for the rationale behind it, and — on a draft scenario — to edit it.</div>
-      <div style="display:flex; gap:6px; margin-bottom:10px;">${viewTabs}</div>
-      ${mixFilterBar}
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${viewTabs}${mixFilterBar}</div>
       <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
       ${mixTable('shopify')}
       <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
