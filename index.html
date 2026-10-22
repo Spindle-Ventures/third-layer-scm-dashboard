@@ -596,6 +596,7 @@ async function renderOverview() {
         </label>
         <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
         <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
+        ${canEdit() ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="showAddOrderMenu()">+ Add Order</button>` : ''}
       </div>
     </div>
     <div id="open-orders-groups"></div>
@@ -950,6 +951,109 @@ function renderOpenOrderRow(o, editing) {
   `;
 }
 
+async function showAddOrderMenu() {
+  if (!canEdit()) return;
+  const [{ data: products }, { data: vendors }] = await Promise.all([
+    sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
+    sb.from('vendors').select('id, vendor_name').order('vendor_name'),
+  ]);
+  window._addOrderLookups = {
+    products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
+    vendors: vendors || [],
+  };
+  const body = `
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-primary" style="flex:1; padding:14px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showAddOrderForm('finished_good')">Finished Good</button>
+      <button class="btn btn-primary" style="flex:1; padding:14px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showAddOrderForm('componentry')">Component Order</button>
+    </div>
+  `;
+  showDetail('Add Order — Which type?', body);
+}
+
+async function showAddOrderForm(type) {
+  const { products, vendors } = window._addOrderLookups || { products: [], vendors: [] };
+  let components = [];
+  if (type === 'componentry') {
+    const { data } = await sb.from('components').select('id, product_id, component_name');
+    components = data || [];
+  }
+  window._addOrderLookups.components = components;
+
+  const productOptions = products.map(p => `<option value="${p.id}">${p.display_name}</option>`).join('');
+  const vendorOptions = vendors.map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('');
+
+  const body = `
+    <div style="display:flex; flex-direction:column; gap:10px; font-size:13px;">
+      <label>Product<br>
+        <select id="add-order-product" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" onchange="refreshAddOrderComponents()">${productOptions}</select>
+      </label>
+      ${type === 'componentry' ? `
+      <label>Component<br>
+        <select id="add-order-component" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);"></select>
+      </label>` : ''}
+      <label>Vendor<br>
+        <select id="add-order-vendor" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);"><option value="">— none —</option>${vendorOptions}</select>
+      </label>
+      <label>Quantity<br>
+        <input id="add-order-qty" type="number" min="1" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
+      </label>
+      <label>ETA<br>
+        <input id="add-order-eta" type="date" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
+      </label>
+      <label>Order # (optional)<br>
+        <input id="add-order-number" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
+      </label>
+      <label>Notes (optional)<br>
+        <input id="add-order-notes" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
+      </label>
+      <button class="btn btn-primary" onclick="createNewOrder('${type}')">Create Order</button>
+    </div>
+  `;
+  showDetail(`Add ${type === 'componentry' ? 'Component' : 'Finished Good'} Order`, body);
+  if (type === 'componentry') refreshAddOrderComponents();
+}
+
+function refreshAddOrderComponents() {
+  const sel = document.getElementById('add-order-component');
+  if (!sel) return;
+  const productId = document.getElementById('add-order-product').value;
+  const comps = (window._addOrderLookups.components || []).filter(c => c.product_id === productId);
+  sel.innerHTML = comps.map(c => `<option value="${c.id}">${c.component_name}</option>`).join('') || '<option value="">(no components defined for this product)</option>';
+}
+
+async function createNewOrder(type) {
+  const productId = document.getElementById('add-order-product').value;
+  const componentId = type === 'componentry' ? document.getElementById('add-order-component').value : null;
+  const vendorId = document.getElementById('add-order-vendor').value || null;
+  const qty = Number(document.getElementById('add-order-qty').value);
+  const eta = document.getElementById('add-order-eta').value || null;
+  const orderNumber = document.getElementById('add-order-number').value || null;
+  const notes = document.getElementById('add-order-notes').value || null;
+
+  if (!qty || qty <= 0) { alert('Enter a quantity greater than 0.'); return; }
+  if (type === 'componentry' && !componentId) { alert('Select a component.'); return; }
+
+  const payload = {
+    event_date: new Date().toISOString().slice(0, 10),
+    event_type: type === 'componentry' ? 'component_order' : 'production_run',
+    product_id: type === 'componentry' ? null : productId,
+    component_id: type === 'componentry' ? componentId : null,
+    vendor_id: vendorId,
+    qty_in: qty,
+    eta,
+    landed: false,
+    order_status: 'open',
+    order_number: orderNumber,
+    notes,
+  };
+  const { data: inserted, error } = await sb.from('inventory_ledger').insert(payload).select().single();
+  if (error) { alert('Failed: ' + error.message); return; }
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
+  await logAction('inventory_ledger', inserted.id, 'create', `Added new ${type === 'componentry' ? 'component' : 'finished-good'} order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
+  await renderOverview();
+}
+
 function showOrderActionsMenu(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
@@ -1024,6 +1128,8 @@ async function undoAction(logId) {
   if (log.action === 'delete') {
     const { error: insErr } = await sb.from(log.table_name).insert(log.before_data);
     if (insErr) { alert('Undo failed: ' + insErr.message); return; }
+  } else if (log.action === 'create') {
+    await sb.from(log.table_name).delete().eq('id', log.record_id);
   } else if (log.action === 'split') {
     await sb.from(log.table_name).update({ qty_in: log.before_data.qty_in }).eq('id', log.record_id);
     if (log.after_data?.new_row_id) await sb.from(log.table_name).delete().eq('id', log.after_data.new_row_id);
