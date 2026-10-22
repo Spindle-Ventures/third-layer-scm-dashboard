@@ -1327,14 +1327,16 @@ function applyLandedOrdersFilter() {
 
   const rows = filtered.map(r => [
     canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" onclick="showLandedOrderActionsMenu('${r.ledger_id}')" title="Actions">⋯</button>` : '',
-    `<strong>${r.product_name}</strong>${r.order_type === 'componentry' ? `<br><span class="muted" style="font-size:10px;">${componentShortLabel(r.component_name)}</span>` : ''}`,
+    r.order_type === 'componentry'
+      ? `<strong>${componentShortLabel(r.component_name)}</strong><br><span class="muted" style="font-size:10px;">Component — ${r.product_name}</span>`
+      : `<strong>${r.product_name}</strong><br><span class="muted" style="font-size:10px;">Finished Good</span>`,
     (r.qty || 0).toLocaleString(),
     r.vendor_name || '—',
     r.internal_ref || '—',
     fmtDate(r.date_landed),
   ]);
   document.getElementById('landed-orders-table').innerHTML = rows.length
-    ? kpiTable(['', 'Product', 'Qty', 'Vendor', 'Order #', 'Landed'], rows, null, ['40px', 'auto', '70px', '120px', '110px', '90px'], [0, 2, 3, 4, 5])
+    ? kpiTable(['', 'What Landed', 'Qty', 'Vendor', 'Order #', 'Landed'], rows, null, ['40px', 'auto', '70px', '120px', '110px', '90px'], [0, 2, 3, 4, 5])
     : '<div class="muted">No landed orders match this filter.</div>';
 }
 
@@ -1550,7 +1552,7 @@ async function renderRevenue() {
   const histStartIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 5); d.setDate(1); return d.toISOString().slice(0, 10); })();
   const months = nextSixMonths();
 
-  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }] = await Promise.all([
+  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }, { data: invSnapshot }, { data: committedScenarioPOs }] = await Promise.all([
     sb.from('product_qoh').select('*'),
     sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
@@ -1560,7 +1562,25 @@ async function renderRevenue() {
     sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
     sb.from('component_qoh').select('*'),
     sb.from('agent_recommendations').select('product_id, urgency').neq('decision', 'dismissed'),
+    sb.from('product_inventory_snapshot').select('channel, qty, products(sku_code)').eq('channel', 'shopify'),
+    sb.from('purchase_orders').select('*, vendors(vendor_name, default_lead_days), products(sku_code, display_name), revenue_scenarios(name)').not('source_scenario_id', 'is', null).order('created_at', { ascending: false }),
   ]);
+
+  // Shopify's live inventory API is the canonical source of truth for finished-good QOH (same
+  // rule demand_engine.py and the Overview tab follow, per Alex's 2026-10-20 decision) --
+  // product_qoh.qty_on_hand only reflects inventory_ledger rows, which several live Shopify SKUs
+  // (e.g. Day Spray, Night Oil 50ml) never had an opening-balance entry for and would otherwise
+  // read as a false 0. Override qty_on_hand with the live snapshot wherever one exists; fall back
+  // to the ledger-derived value only for products not yet live in Shopify (e.g. unlaunched
+  // deodorant SKUs), which have no snapshot row at all.
+  const liveQtyBySku = {};
+  (invSnapshot || []).forEach(s => {
+    const sku = s.products?.sku_code;
+    if (sku) liveQtyBySku[sku] = s.qty;
+  });
+  const productsWithLiveQty = (products || []).map(p =>
+    liveQtyBySku[p.sku_code] != null ? { ...p, qty_on_hand: liveQtyBySku[p.sku_code] } : p
+  );
 
   const monthlyActual = {};
   (revActuals || []).forEach(r => {
@@ -1587,12 +1607,13 @@ async function renderRevenue() {
   });
 
   window._revState = {
-    products: products || [], monthlyActual, liveForecast, liveMix, receipts, months,
+    products: productsWithLiveQty || [], monthlyActual, liveForecast, liveMix, receipts, months,
     scenarios: scenarios || [], selectedScenarioId: window._revState?.selectedScenarioId || 'live',
     draftChannel: null, draftMix: null,
     vendors: vendors || [], componentQoh: componentQoh || [],
     activeRecByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r.urgency])),
     draftPOs: [],
+    committedScenarioPOs: committedScenarioPOs || [],
   };
 
   await selectRevenueScenario(window._revState.selectedScenarioId, true);
@@ -1730,7 +1751,7 @@ async function commitRevenueScenario() {
     const internalRef = `SCEN-${sc.id.slice(0, 8)}-${(product?.sku_code || po.product_id).toString().slice(0, 12)}-${po.eta_month}`;
     const { data: poRow, error: poErr } = await sb.from('purchase_orders').insert({
       internal_ref: internalRef, vendor_id: po.vendor_id, product_id: po.product_id,
-      qty_ordered: po.qty, status: 'draft', eta_date: po.eta_month,
+      qty_ordered: po.qty, status: 'draft', eta_date: po.eta_month, source_scenario_id: sc.id,
       notes: `Created from Revenue tab scenario "${sc.name}" (committed ${new Date().toISOString().slice(0, 10)}).${po.notes ? ' ' + po.notes : ''}`,
       created_by: currentUserRow?.email || 'dashboard',
     }).select().single();
@@ -1953,6 +1974,7 @@ function openDraftPoModal(productId, defaultMonth) {
       <select id="draft-po-month" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;">${monthOptions}</select>
       <label class="muted" style="font-size:11px;">Vendor</label>
       <select id="draft-po-vendor" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;">${vendorOptions}</select>
+      <div id="draft-po-place-date" class="muted" style="font-size:11px; margin:-6px 0 10px;"></div>
       <label class="muted" style="font-size:11px;">Notes (optional)</label>
       <input id="draft-po-notes" type="text" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;" />
       <div id="draft-po-feasibility" style="margin-bottom:10px;"></div>
@@ -1983,6 +2005,20 @@ function openDraftPoModal(productId, defaultMonth) {
     }
   };
   qtyInput.addEventListener('input', updateFeasibility);
+  const monthSelect = document.getElementById('draft-po-month');
+  const vendorSelect = document.getElementById('draft-po-vendor');
+  const updatePlaceDate = () => {
+    const month = monthSelect.value;
+    const vendor = (S.vendors || []).find(v => v.id === vendorSelect.value);
+    const placeDateEl = document.getElementById('draft-po-place-date');
+    if (!vendor) { placeDateEl.innerHTML = ''; return; }
+    const placeBy = window.RevenueLogic.computePlaceByDate(month, vendor.default_lead_days);
+    const isPast = placeBy < new Date().toISOString().slice(0, 10);
+    placeDateEl.innerHTML = `Place by <strong style="color:${isPast ? 'var(--bad-text)' : 'inherit'};">${fmtDate(placeBy)}</strong> to land in ${monthLabelShort(month)} (${vendor.vendor_name}'s ${vendor.default_lead_days}-day lead time)${isPast ? ' — already past, place immediately' : ''}.`;
+  };
+  monthSelect.addEventListener('change', updatePlaceDate);
+  vendorSelect.addEventListener('change', updatePlaceDate);
+  updatePlaceDate();
   const finish = () => el.remove();
   document.getElementById('draft-po-cancel').onclick = finish;
   document.getElementById('draft-po-save').onclick = async () => {
@@ -2026,18 +2062,21 @@ function renderRevenueBody() {
 
   const chanEditable = canEditChannel();
   const channelRow = (channel, label) => `
-    <div style="display:flex; align-items:center; gap:6px; padding:4px 0; flex-wrap:wrap;">
-      <div style="width:64px; font-size:12px; font-weight:600;">${label}</div>
-      ${months.map(m => {
-        const basis = channelMonthBasis(m, channel);
-        return `
-        <button class="btn ${chanEditable ? 'btn-ghost' : ''}" style="padding:4px 8px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${chanEditable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
-          onclick="${chanEditable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
-          <span>${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}</span>
-          <span class="muted" style="font-size:9px;">${basis.tag}</span>
-        </button>
-      `;
-      }).join('')}
+    <div style="display:flex; align-items:center; gap:6px; padding:4px 0;">
+      <div style="width:64px; flex-shrink:0; font-size:12px; font-weight:600;">${label}</div>
+      <div style="display:flex; flex:1; gap:6px;">
+        ${months.map(m => {
+          const basis = channelMonthBasis(m, channel);
+          return `
+          <button class="btn ${chanEditable ? 'btn-ghost' : ''}" style="flex:1; min-width:0; padding:8px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${chanEditable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
+            onclick="${chanEditable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
+            <span class="muted" style="font-size:9px; margin-bottom:2px;">${monthLabelShort(m)}</span>
+            <span>${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}</span>
+            <span class="muted" style="font-size:9px;">${basis.tag}</span>
+          </button>
+        `;
+        }).join('')}
+      </div>
     </div>
   `;
 
@@ -2122,7 +2161,12 @@ function renderRevenueBody() {
   };
 
   // ---------- Inventory Outlook & Draft POs (compact, one row per product) ----------
+  // Root products only -- Alex (2026-10-22): "this should only be for the root products, not
+  // bundles ... we don't create POs per the bundle." Bundles (product_type='bundle', e.g. the
+  // Day+Night Set) have no QOH/PO of their own; their inventory depends entirely on the root
+  // products they're built from, which already appear in this table on their own rows.
   const outlookProducts = S.products
+    .filter(p => p.product_type === 'root')
     .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id])
     .slice()
     .sort((a, b) => {
@@ -2155,6 +2199,28 @@ function renderRevenueBody() {
   const outlookTable = outlookRows.length
     ? kpiTable(['Product', ...months.map(monthLabelShort), ''], outlookRows, null, null, [1, 2, 3, 4, 5, 6, 7])
     : `<div class="empty-state" style="padding:10px; font-size:12px;">No products to show.</div>`;
+
+  // ---------- Committed POs record (Alex, 2026-10-22: "I'd like to see a record of it") ----------
+  // Every real purchase_orders row ever materialized by committing a Revenue tab scenario,
+  // regardless of which scenario is currently selected above -- a persistent audit trail, not
+  // just something visible while re-viewing the exact scenario that created it.
+  const committedPoRows = (S.committedScenarioPOs || []).map(po => {
+    const placeBy = po.eta_date && po.vendors?.default_lead_days != null
+      ? window.RevenueLogic.computePlaceByDate(po.eta_date, po.vendors.default_lead_days)
+      : null;
+    return [
+      po.revenue_scenarios?.name || '<span class="muted">—</span>',
+      `<strong>${po.products?.display_name || '—'}</strong><br><span class="muted" style="font-size:10px;">${po.internal_ref}</span>`,
+      (po.qty_ordered || 0).toLocaleString(),
+      po.vendors?.vendor_name || '—',
+      `<span class="pill ${po.status === 'landed' ? 'good' : 'watch'}">${po.status}</span>`,
+      fmtDate(po.eta_date),
+      placeBy ? fmtDate(placeBy) : '—',
+    ];
+  });
+  const committedPoTable = committedPoRows.length
+    ? kpiTable(['Scenario', 'Product', 'Qty', 'Vendor', 'Status', 'ETA', 'Was due by'], committedPoRows, null, null, [2, 3, 4, 5, 6])
+    : null; // card only renders when there's at least one committed PO to show
 
   el.innerHTML = `
     <div class="card" style="padding:12px 16px; margin-bottom:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -2189,12 +2255,26 @@ function renderRevenueBody() {
     <div class="card" style="padding:14px 16px; margin-top:12px;">
       <div class="section-label" style="margin:0 0 2px;">Inventory Outlook &amp; Draft POs</div>
       <div class="muted" style="font-size:11px; margin-bottom:8px;">
+        Root products only (bundles have no QOH or PO of their own — see their root products' rows).
         One row per product, current QOH projected 6 months out under the forecast above.
         ${isEditable() ? 'Red/amber cells project below safety stock — click "+ Draft PO" to model a hypothetical order and immediately see its effect here. Draft POs only become real purchase orders when you commit this scenario.' : 'Select or create a draft scenario to model hypothetical POs against this outlook.'}
         Sorted CRITICAL/WARNING/WATCH first (same urgency as the Overview tab).
       </div>
       ${outlookTable}
     </div>
+
+    ${committedPoTable ? `
+    <div class="card" style="padding:14px 16px; margin-top:12px;">
+      <div class="section-label" style="margin:0 0 2px;">Purchase Orders Committed From This Tab</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">
+        Every real PO materialized by committing a Revenue tab scenario, across all scenarios —
+        a permanent record, independent of which scenario is selected above. "Was due by" is the
+        last-responsible placement date given the vendor's lead time; a date in the past means it
+        should have already been placed.
+      </div>
+      ${committedPoTable}
+    </div>
+    ` : ''}
   `;
 }
 
