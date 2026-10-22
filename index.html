@@ -1003,6 +1003,9 @@ async function showAddOrderForm(type) {
       <label>Order # (optional)<br>
         <input id="add-order-number" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
       </label>
+      <label>Tracking Info (optional)<br>
+        <input id="add-order-tracking" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
+      </label>
       <label>Notes (optional)<br>
         <input id="add-order-notes" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
       </label>
@@ -1028,6 +1031,7 @@ async function createNewOrder(type) {
   const qty = Number(document.getElementById('add-order-qty').value);
   const eta = document.getElementById('add-order-eta').value || null;
   const orderNumber = document.getElementById('add-order-number').value || null;
+  const tracking = document.getElementById('add-order-tracking').value || null;
   const notes = document.getElementById('add-order-notes').value || null;
 
   if (!qty || qty <= 0) { alert('Enter a quantity greater than 0.'); return; }
@@ -1044,6 +1048,7 @@ async function createNewOrder(type) {
     landed: false,
     order_status: 'open',
     order_number: orderNumber,
+    tracking_info: tracking,
     notes,
   };
   const { data: inserted, error } = await sb.from('inventory_ledger').insert(payload).select().single();
@@ -1250,6 +1255,10 @@ async function splitOrder(ledgerId) {
   const splitQty = Number(splitQtyStr);
   if (!splitQty || splitQty <= 0 || splitQty >= o.qty) { alert('Enter a quantity less than the current total.'); return; }
   const newEta = promptDateMMDDYYYY('ETA for the new (split-off) order', o.eta);
+  const newOrderNumber = prompt('Order # for the new (split-off) order — defaults to the original\'s:', o.internal_ref || '');
+  if (newOrderNumber === null) return;
+  const newTracking = prompt('Tracking info for the new (split-off) order — defaults to the original\'s:', o.tracking_info || '');
+  if (newTracking === null) return;
 
   const { data: before } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
   // Reduce the original row, then insert a new ledger row carrying the remainder.
@@ -1261,11 +1270,13 @@ async function splitOrder(ledgerId) {
     product_id: o.order_type === 'componentry' ? null : o.product_id,
     component_id: null, // component_id can't be resolved client-side reliably; left for manual follow-up if componentry
     po_id: o.po_id,
-    vendor_id: null,
+    vendor_id: before?.vendor_id || null,
     qty_in: splitQty,
     landed: false,
     order_status: 'open',
     eta: newEta || o.eta,
+    order_number: newOrderNumber || null,
+    tracking_info: newTracking || null,
     notes: `Split from original order ${ledgerId} via dashboard`,
   }).select().single();
   if (err2) { alert('Original order was reduced, but creating the split-off order failed: ' + err2.message); }
@@ -1373,7 +1384,7 @@ async function renderRevenue() {
     sb.from('product_qoh').select('*'),
     sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
-    sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, product_id, products(sku_code, display_name)').eq('is_active', true),
+    sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, revenue_pct_rationale, asp_rationale, product_id, products(sku_code, display_name)').eq('is_active', true),
     sb.from('open_orders_by_product').select('product_sku, qty, eta').not('eta', 'is', null),
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
   ]);
@@ -1393,7 +1404,7 @@ async function renderRevenue() {
   const liveMix = { shopify: {}, amazon: {} };
   (forecastParams || []).forEach(fp => {
     liveMix[fp.channel] = liveMix[fp.channel] || {};
-    liveMix[fp.channel][fp.product_id] = { revenue_pct: Number(fp.revenue_pct), avg_selling_price: Number(fp.avg_selling_price) };
+    liveMix[fp.channel][fp.product_id] = { revenue_pct: Number(fp.revenue_pct), avg_selling_price: Number(fp.avg_selling_price), revenue_pct_rationale: fp.revenue_pct_rationale || null, asp_rationale: fp.asp_rationale || null };
   });
   const receipts = {}; // { product_sku: { month: qty } }
   (openOrders || []).forEach(o => {
@@ -1424,7 +1435,7 @@ async function selectRevenueScenario(scenarioId, skipFetch) {
         const base = S.liveMix[ch]?.[p.product_id];
         if (!base) return;
         S.draftMix[ch][p.product_id] = {};
-        S.months.forEach(m => { S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price }; });
+        S.months.forEach(m => { S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price, revenue_pct_rationale: base.revenue_pct_rationale || null, asp_rationale: base.asp_rationale || null }; });
       });
     });
   } else if (!skipFetch || !S.draftChannel) {
@@ -1449,7 +1460,7 @@ async function selectRevenueScenario(scenarioId, skipFetch) {
         S.months.forEach(m => {
           const row = (mixRows || []).find(r => r.channel === ch && r.product_id === p.product_id && r.forecast_month.slice(0, 7) === m);
           if (row) S.draftMix[ch][p.product_id][m] = { revenue_pct: Number(row.revenue_pct), avg_selling_price: Number(row.avg_selling_price), revenue_pct_rationale: row.revenue_pct_rationale || null, asp_rationale: row.asp_rationale || null };
-          else if (base) S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price, revenue_pct_rationale: null, asp_rationale: null };
+          else if (base) S.draftMix[ch][p.product_id][m] = { revenue_pct: base.revenue_pct, avg_selling_price: base.avg_selling_price, revenue_pct_rationale: base.revenue_pct_rationale || null, asp_rationale: base.asp_rationale || null };
         });
       });
     });
