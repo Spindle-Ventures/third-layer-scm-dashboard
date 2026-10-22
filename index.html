@@ -1300,7 +1300,16 @@ async function undoAction(logId) {
     await sb.from(log.table_name).update(rest).eq('id', log.record_id);
   }
   await sb.from('activity_log').update({ undone: true, undone_at: new Date().toISOString(), undone_by: currentUserRow?.email || 'dashboard' }).eq('id', logId);
-  await Promise.all([renderOverview(), renderLandedOrders()]);
+  // Undo now applies everywhere (Alex, 2026-10-22: "The undo button functionality should exist
+  // everywhere") -- refresh every tab that might show the reverted data, not just Overview/Landed
+  // Orders, since an undo can now originate from the Revenue tab (channel/mix/ASP edits, draft
+  // POs) or the Components tab (vendor edits) too.
+  await Promise.all([
+    renderOverview(),
+    renderLandedOrders(),
+    renderComponents(),
+    window._revState ? renderRevenue() : null,
+  ]);
   const activityTab = document.getElementById('tab-activity');
   if (activityTab && !activityTab.classList.contains('hidden')) await renderActivityLog();
 }
@@ -1679,8 +1688,10 @@ async function editComponentVendorField(linkId, field, label, currentVal) {
   const input = await showPromptModal(label, null, currentVal ?? '', 'number');
   if (input === null) return;
   const val = input === '' ? null : Number(input);
-  const { data: link, error } = await sb.from('component_vendors').update({ [field]: val }).eq('id', linkId).select('component_id').single();
+  const { data: before } = await sb.from('component_vendors').select('*').eq('id', linkId).single();
+  const { data: link, error } = await sb.from('component_vendors').update({ [field]: val }).eq('id', linkId).select('*, components(component_name)').single();
   if (error) { alert('Failed: ' + error.message); return; }
+  await logAction('component_vendors', linkId, 'update', `Edited ${link.components?.component_name || 'component'}'s ${field.replace(/_/g, ' ')}: ${before?.[field] ?? '—'} → ${val ?? '—'}`, before, link);
   document.getElementById('detail-modal-backdrop')?.remove();
   await renderComponents();
   if (link) await manageComponentVendors(link.component_id);
@@ -1689,8 +1700,9 @@ async function editComponentVendorField(linkId, field, label, currentVal) {
 async function addComponentVendor(componentId) {
   const vendorId = document.getElementById('add-component-vendor-select')?.value;
   if (!vendorId) return;
-  const { error } = await sb.from('component_vendors').insert({ component_id: componentId, vendor_id: vendorId, is_preferred: false });
+  const { data, error } = await sb.from('component_vendors').insert({ component_id: componentId, vendor_id: vendorId, is_preferred: false }).select('*, vendors(vendor_name), components(component_name)').single();
   if (error) { alert('Failed: ' + error.message); return; }
+  await logAction('component_vendors', data.id, 'create', `Added vendor ${data.vendors?.vendor_name || ''} to ${data.components?.component_name || 'component'}`, null, data);
   document.getElementById('detail-modal-backdrop')?.remove();
   await renderComponents();
   await manageComponentVendors(componentId);
@@ -1698,8 +1710,13 @@ async function addComponentVendor(componentId) {
 
 async function removeComponentVendor(linkId, componentId) {
   if (!(await showConfirmModal('Remove this vendor link?', 'This does not affect past orders, only future vendor selection for this component.', 'Remove'))) return;
+  const { data: before } = await sb.from('component_vendors').select('*, vendors(vendor_name), components(component_name)').eq('id', linkId).single();
   const { error } = await sb.from('component_vendors').delete().eq('id', linkId);
   if (error) { alert('Failed: ' + error.message); return; }
+  if (before) {
+    const { vendors, components, ...beforeRaw } = before;
+    await logAction('component_vendors', linkId, 'delete', `Removed vendor ${vendors?.vendor_name || ''} from ${components?.component_name || 'component'}`, beforeRaw, null);
+  }
   document.getElementById('detail-modal-backdrop')?.remove();
   await renderComponents();
   await manageComponentVendors(componentId);
@@ -2202,19 +2219,24 @@ async function editDraftChannelMonth(channel, month) {
   const val = Number(String(input).replace(/[^0-9.]/g, ''));
   if (!val || val <= 0) { alert('Enter a positive number.'); return; }
   S.draftChannel[month][channel] = val;
+  const label = `${channel === 'shopify' ? 'Shopify' : 'Amazon'} forecast, ${monthLabelShort(month)}`;
   if (isLive) {
     S.liveForecast[month] = { ...(S.liveForecast[month] || {}), [channel]: val };
-    const { error } = await sb.from('revenue_forecasts').upsert(
+    const { data: before } = await sb.from('revenue_forecasts').select('*').eq('channel', channel).eq('forecast_month', month + '-01').maybeSingle();
+    const { data: after, error } = await sb.from('revenue_forecasts').upsert(
       { channel, forecast_month: month + '-01', forecast_revenue: val, created_by: currentUserRow?.email || 'dashboard' },
       { onConflict: 'channel,forecast_month' }
-    );
+    ).select().single();
     if (error) { alert('Failed: ' + error.message); return; }
+    await logAction('revenue_forecasts', after.id, before ? 'update' : 'create', `Edited ${label} (live): ${before ? fmtMoney(before.forecast_revenue) : '—'} → ${fmtMoney(val)}`, before, after);
     renderOverview();
   } else {
-    await sb.from('revenue_scenario_channel').upsert(
+    const { data: before } = await sb.from('revenue_scenario_channel').select('*').eq('scenario_id', S.selectedScenarioId).eq('channel', channel).eq('forecast_month', month + '-01').maybeSingle();
+    const { data: after } = await sb.from('revenue_scenario_channel').upsert(
       { scenario_id: S.selectedScenarioId, channel, forecast_month: month + '-01', forecast_revenue: val },
       { onConflict: 'scenario_id,channel,forecast_month' }
-    );
+    ).select().single();
+    if (after) await logAction('revenue_scenario_channel', after.id, before ? 'update' : 'create', `Edited ${label} (${currentScenario()?.name}): ${before ? fmtMoney(before.forecast_revenue) : '—'} → ${fmtMoney(val)}`, before, after);
   }
   renderRevenueBody();
 }
@@ -2231,10 +2253,12 @@ async function editDraftMixPct(channel, productId, month) {
   const rationale = await showPromptModal('Rationale', 'Why this %? e.g. historical trend, planned promotion, new launch ramp.', cur.revenue_pct_rationale || '', 'textarea');
   if (rationale === null) return;
   S.draftMix[channel][productId][month] = { ...cur, revenue_pct: val / 100, revenue_pct_rationale: rationale || null };
-  await sb.from('revenue_scenario_mix').upsert(
+  const { data: before } = await sb.from('revenue_scenario_mix').select('*').eq('scenario_id', S.selectedScenarioId).eq('product_id', productId).eq('channel', channel).eq('forecast_month', month + '-01').maybeSingle();
+  const { data: after } = await sb.from('revenue_scenario_mix').upsert(
     { scenario_id: S.selectedScenarioId, product_id: productId, channel, forecast_month: month + '-01', revenue_pct: val / 100, avg_selling_price: cur.avg_selling_price, revenue_pct_rationale: rationale || null, asp_rationale: cur.asp_rationale || null },
     { onConflict: 'scenario_id,product_id,channel,forecast_month' }
-  );
+  ).select().single();
+  if (after) await logAction('revenue_scenario_mix', after.id, before ? 'update' : 'create', `Edited ${product?.display_name} revenue share, ${monthLabelShort(month)} (${currentScenario()?.name}): ${before ? ((before.revenue_pct || 0) * 100).toFixed(1) + '%' : '—'} → ${val.toFixed(1)}%`, before, after);
   renderRevenueBody();
 }
 
@@ -2250,10 +2274,12 @@ async function editDraftAsp(channel, productId, month) {
   const rationale = await showPromptModal('Rationale', 'e.g. current price + typical discount mix, planned price change.', cur.asp_rationale || '', 'textarea');
   if (rationale === null) return;
   S.draftMix[channel][productId][month] = { ...cur, avg_selling_price: val, asp_rationale: rationale || null };
-  await sb.from('revenue_scenario_mix').upsert(
+  const { data: before } = await sb.from('revenue_scenario_mix').select('*').eq('scenario_id', S.selectedScenarioId).eq('product_id', productId).eq('channel', channel).eq('forecast_month', month + '-01').maybeSingle();
+  const { data: after } = await sb.from('revenue_scenario_mix').upsert(
     { scenario_id: S.selectedScenarioId, product_id: productId, channel, forecast_month: month + '-01', revenue_pct: cur.revenue_pct, avg_selling_price: val, revenue_pct_rationale: cur.revenue_pct_rationale || null, asp_rationale: rationale || null },
     { onConflict: 'scenario_id,product_id,channel,forecast_month' }
-  );
+  ).select().single();
+  if (after) await logAction('revenue_scenario_mix', after.id, before ? 'update' : 'create', `Edited ${product?.display_name} ASP, ${monthLabelShort(month)} (${currentScenario()?.name}): ${before ? fmtMoney2(before.avg_selling_price) : '—'} → ${fmtMoney2(val)}`, before, after);
   renderRevenueBody();
 }
 
@@ -2580,6 +2606,7 @@ function openDraftPoModal(productId, defaultMonth) {
     }).select().single();
     if (error) { alert('Failed: ' + error.message); return; }
     S.draftPOs.push(data);
+    await logAction('revenue_scenario_po', data.id, 'create', `Added draft PO: ${p.display_name}, ${qty.toLocaleString()} units landing ${monthLabelShort(month)} (${currentScenario()?.name})`, null, data);
     finish();
     renderRevenueBody();
   };
@@ -2587,8 +2614,14 @@ function openDraftPoModal(productId, defaultMonth) {
 
 async function deleteDraftPo(id) {
   if (!(await showConfirmModal('Remove this draft PO?', 'This only removes it from the scenario draft — nothing real has been placed or changed.', 'Remove'))) return;
+  const S = window._revState;
+  const before = (S.draftPOs || []).find(po => po.id === id);
   const { error } = await sb.from('revenue_scenario_po').delete().eq('id', id);
   if (error) { alert('Failed: ' + error.message); return; }
+  if (before) {
+    const product = S.products.find(p => p.product_id === before.product_id);
+    await logAction('revenue_scenario_po', id, 'delete', `Removed draft PO: ${product?.display_name || 'product'}, ${before.qty.toLocaleString()} units`, before, null);
+  }
   window._revState.draftPOs = window._revState.draftPOs.filter(po => po.id !== id);
   document.getElementById('detail-modal-backdrop')?.remove();
   renderRevenueBody();
