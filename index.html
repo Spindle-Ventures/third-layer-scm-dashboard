@@ -163,8 +163,8 @@
 
 <script>
 // ---- Config: fill in your Supabase project URL + anon (public) key ----
-const SUPABASE_URL = "https://rvbferpfrgkayxuujpna.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ2YmZlcnBmcmdrYXl4dXVqcG5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1MDc2NjUsImV4cCI6MjEwODA4MzY2NX0._UNtJphO40WvJfoDqQ612Vi1Wx78D2S6FVl2-VMt76w";
+const SUPABASE_URL = "__SUPABASE_URL__";
+const SUPABASE_ANON_KEY = "__SUPABASE_ANON_KEY__";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let currentUserRow = null;
@@ -1542,13 +1542,16 @@ async function renderRevenue() {
   const histStartIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 5); d.setDate(1); return d.toISOString().slice(0, 10); })();
   const months = nextSixMonths();
 
-  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }] = await Promise.all([
+  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }] = await Promise.all([
     sb.from('product_qoh').select('*'),
     sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, revenue_pct_rationale, asp_rationale, product_id, products(sku_code, display_name)').eq('is_active', true),
     sb.from('open_orders_by_product').select('product_sku, qty, eta').not('eta', 'is', null),
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
+    sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
+    sb.from('component_qoh').select('*'),
+    sb.from('agent_recommendations').select('product_id, urgency').neq('decision', 'dismissed'),
   ]);
 
   const monthlyActual = {};
@@ -1579,6 +1582,9 @@ async function renderRevenue() {
     products: products || [], monthlyActual, liveForecast, liveMix, receipts, months,
     scenarios: scenarios || [], selectedScenarioId: window._revState?.selectedScenarioId || 'live',
     draftChannel: null, draftMix: null,
+    vendors: vendors || [], componentQoh: componentQoh || [],
+    activeRecByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r.urgency])),
+    draftPOs: [],
   };
 
   await selectRevenueScenario(window._revState.selectedScenarioId, true);
@@ -1589,6 +1595,7 @@ async function selectRevenueScenario(scenarioId, skipFetch) {
   S.selectedScenarioId = scenarioId;
 
   if (scenarioId === 'live') {
+    S.draftPOs = [];
     S.draftChannel = {};
     S.months.forEach(m => { S.draftChannel[m] = { shopify: S.liveForecast[m]?.shopify ?? null, amazon: S.liveForecast[m]?.amazon ?? null }; });
     S.draftMix = { shopify: {}, amazon: {} };
@@ -1601,10 +1608,12 @@ async function selectRevenueScenario(scenarioId, skipFetch) {
       });
     });
   } else if (!skipFetch || !S.draftChannel) {
-    const [{ data: chanRows }, { data: mixRows }] = await Promise.all([
+    const [{ data: chanRows }, { data: mixRows }, { data: poRows }] = await Promise.all([
       sb.from('revenue_scenario_channel').select('*').eq('scenario_id', scenarioId),
       sb.from('revenue_scenario_mix').select('*').eq('scenario_id', scenarioId),
+      sb.from('revenue_scenario_po').select('*').eq('scenario_id', scenarioId).order('eta_month'),
     ]);
+    S.draftPOs = poRows || [];
     S.draftChannel = {};
     S.months.forEach(m => {
       const shopRow = (chanRows || []).find(r => r.channel === 'shopify' && r.forecast_month.slice(0, 7) === m);
@@ -1702,7 +1711,35 @@ async function commitRevenueScenario() {
     sb.from('revenue_scenarios').update({ status: 'committed', committed_at: new Date().toISOString() }).eq('id', sc.id),
   ]);
   if (e1 || e2 || e3) { alert('Commit failed: ' + (e1 || e2 || e3).message); return; }
-  alert(`"${sc.name}" is now the live forecast. Overview-tab recommendations and inventory projections will reflect it after the next daily pipeline run.`);
+
+  // Materialize any draft POs modeled in this scenario into real purchase_orders +
+  // inventory_ledger rows (landed=false, scheduled production_run) -- per Alex's explicit choice
+  // (2026-10-22): draft POs commit together with the scenario they were modeled against, becoming
+  // real open orders the Overview tab / demand engine pick up from here on.
+  let poMaterializeError = null;
+  for (const po of (S.draftPOs || [])) {
+    const product = S.products.find(pr => pr.product_id === po.product_id);
+    const internalRef = `SCEN-${sc.id.slice(0, 8)}-${(product?.sku_code || po.product_id).toString().slice(0, 12)}-${po.eta_month}`;
+    const { data: poRow, error: poErr } = await sb.from('purchase_orders').insert({
+      internal_ref: internalRef, vendor_id: po.vendor_id, product_id: po.product_id,
+      qty_ordered: po.qty, status: 'draft', eta_date: po.eta_month,
+      notes: `Created from Revenue tab scenario "${sc.name}" (committed ${new Date().toISOString().slice(0, 10)}).${po.notes ? ' ' + po.notes : ''}`,
+      created_by: currentUserRow?.email || 'dashboard',
+    }).select().single();
+    if (poErr) { poMaterializeError = poErr; continue; }
+    const { error: ledgerErr } = await sb.from('inventory_ledger').insert({
+      event_date: po.eta_month, event_type: 'production_run', product_id: po.product_id,
+      vendor_id: po.vendor_id, po_id: poRow.id, qty_in: po.qty, landed: false, eta: po.eta_month,
+      notes: `Scheduled via Revenue tab scenario "${sc.name}".`,
+      created_by: currentUserRow?.email || 'dashboard',
+    });
+    if (ledgerErr) poMaterializeError = ledgerErr;
+  }
+  if (poMaterializeError) {
+    alert(`Scenario committed, but one or more draft POs failed to materialize into real purchase orders: ${poMaterializeError.message}. Check the Purchase Orders / Overview tabs and re-create them manually if needed.`);
+  }
+
+  alert(`"${sc.name}" is now the live forecast${S.draftPOs?.length ? `, and ${S.draftPOs.length} draft PO(s) are now real (status: draft) purchase orders` : ''}. Overview-tab recommendations and inventory projections will reflect it after the next daily pipeline run.`);
   await renderRevenue();
   await renderOverview();
 }
@@ -1801,8 +1838,16 @@ function channelMonthBasis(month, channel) {
 function computeProjection(channelData, mixData) {
   // Returns { [product_sku]: [eom_m0, eom_m1, ...] } using the same direct_units formula as
   // demand_engine.py (channel_revenue * revenue_pct / ASP), without bundle expansion -- a
-  // deliberate simplification for this fast preview, noted in the UI.
+  // deliberate simplification for this fast preview, noted in the UI. Includes both real open
+  // orders (S.receipts) AND any hypothetical draft POs attached to the current scenario, so
+  // adding a draft PO immediately shows its effect on the projection.
   const S = window._revState;
+  const draftReceiptsByProductMonth = {};
+  (S.draftPOs || []).forEach(po => {
+    const m = po.eta_month.slice(0, 7);
+    if (!draftReceiptsByProductMonth[po.product_id]) draftReceiptsByProductMonth[po.product_id] = {};
+    draftReceiptsByProductMonth[po.product_id][m] = (draftReceiptsByProductMonth[po.product_id][m] || 0) + po.qty;
+  });
   const out = {};
   S.products.forEach(p => {
     let eom = p.qty_on_hand;
@@ -1814,8 +1859,9 @@ function computeProjection(channelData, mixData) {
         const chanRev = channelData[m]?.[ch];
         if (mix && chanRev && mix.avg_selling_price) demand += (chanRev * mix.revenue_pct) / mix.avg_selling_price;
       });
-      const inReceipts = (S.receipts[p.sku_code] || {})[m] || 0;
-      eom = eom - demand + inReceipts;
+      const realReceipts = (S.receipts[p.sku_code] || {})[m] || 0;
+      const draftReceipts = (draftReceiptsByProductMonth[p.product_id] || {})[m] || 0;
+      eom = eom - demand + realReceipts + draftReceipts;
       series.push(eom);
     });
     out[p.sku_code] = series;
@@ -1829,7 +1875,10 @@ function showThroughputDetail(productId, month) {
   const monthIdx = S.months.indexOf(month);
   const projection = computeProjection(S.draftChannel, S.draftMix);
   const startingInv = monthIdx === 0 ? p.qty_on_hand : projection[p.sku_code][monthIdx - 1];
-  const receipts = (S.receipts[p.sku_code] || {})[month] || 0;
+  const realReceipts = (S.receipts[p.sku_code] || {})[month] || 0;
+  const draftReceiptsHere = (S.draftPOs || []).filter(po => po.product_id === productId && po.eta_month.slice(0, 7) === month);
+  const draftReceiptsQty = draftReceiptsHere.reduce((s, po) => s + po.qty, 0);
+  const receipts = realReceipts + draftReceiptsQty;
 
   const channelRows = ['shopify', 'amazon'].map(ch => {
     const mix = S.draftMix[ch][productId]?.[month];
@@ -1857,13 +1906,125 @@ function showThroughputDetail(productId, month) {
         <span>Total implied demand</span><strong>${Math.round(totalUnits).toLocaleString()} units (${fmtMoney(totalRevenue)})</strong>
       </div>
       <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>Starting inventory (${monthIdx === 0 ? 'current QOH' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
-      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>+ Incoming receipts this month</span><strong>${receipts.toLocaleString()}</strong></div>
+      <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>+ Incoming receipts this month${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
       <div style="padding:8px 0; display:flex; justify-content:space-between;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
       <div style="padding:10px 0 0; display:flex; justify-content:space-between; font-size:15px;"><span><strong>= Ending inventory</strong></span><strong style="color:${endingInv < (p.safety_stock_qty || 0) ? 'var(--bad-text)' : 'var(--good-text)'};">${Math.round(endingInv).toLocaleString()}</strong></div>
       <div class="muted" style="font-size:11px; margin-top:4px;">Safety stock: ${(p.safety_stock_qty || 0).toLocaleString()}</div>
+      ${draftReceiptsHere.length ? `
+        <div style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);">
+          <div class="section-label" style="margin:0 0 6px;">Draft POs landing this month (${currentScenario()?.name || ''})</div>
+          ${draftReceiptsHere.map(po => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:12px;">
+              <span>${po.qty.toLocaleString()} units${po.notes ? ` — <span class="muted">${po.notes}</span>` : ''}</span>
+              ${isEditable() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--bad-text);" onclick="deleteDraftPo('${po.id}')">Remove</button>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${isEditable() ? `
+        <div style="margin-top:14px;">
+          <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${month}')">+ Draft a PO landing in ${monthLabelShort(month)}</button>
+        </div>
+      ` : ''}
     </div>
   `;
   showDetail(`${p.display_name} — ${monthLabelLong(month)}`, body);
+}
+
+function checkComponentFeasibility(productSku, qty) {
+  const S = window._revState;
+  const comps = (S.componentQoh || []).filter(c => c.product_sku === productSku);
+  return comps.map(c => {
+    const required = qty * (c.qty_per_unit || 1);
+    const available = (c.qty_on_hand || 0) + (c.qty_in_flight || 0);
+    const short = required - available;
+    return { component_name: c.component_name, required, available, short: short > 0 ? short : 0 };
+  });
+}
+
+// Draft PO modal -- Alex's ask (2026-10-22): model a hypothetical finished-good PO against the
+// current draft scenario, see its effect on the 6-month projection immediately, and see (but
+// never be blocked by, per Alex's explicit decision) whether componentry on hand/in-flight is
+// enough to actually support it.
+function openDraftPoModal(productId, defaultMonth) {
+  if (!isEditable()) { alert('Select or create a draft scenario to add a draft PO.'); return; }
+  const S = window._revState;
+  const p = S.products.find(pr => pr.product_id === productId);
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  const monthOptions = S.months.map(m => `<option value="${m}" ${m === defaultMonth ? 'selected' : ''}>${monthLabelLong(m)}</option>`).join('');
+  const defaultVendor = (S.vendors || []).find(v => v.vendor_name === 'Private Label') || (S.vendors || [])[0];
+  const vendorOptions = (S.vendors || []).map(v => `<option value="${v.id}" ${v.id === defaultVendor?.id ? 'selected' : ''}>${v.vendor_name}</option>`).join('');
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:480px;">
+      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Draft PO — ${p.display_name}</div>
+      <div class="muted" style="font-size:12px; margin-bottom:12px;">Added to scenario "${currentScenario()?.name}". Only affects real inventory once this scenario is committed to live.</div>
+      <label class="muted" style="font-size:11px;">Quantity</label>
+      <input id="draft-po-qty" type="number" min="1" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;" />
+      <label class="muted" style="font-size:11px;">Landing month</label>
+      <select id="draft-po-month" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;">${monthOptions}</select>
+      <label class="muted" style="font-size:11px;">Vendor</label>
+      <select id="draft-po-vendor" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;">${vendorOptions}</select>
+      <label class="muted" style="font-size:11px;">Notes (optional)</label>
+      <input id="draft-po-notes" type="text" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;" />
+      <div id="draft-po-feasibility" style="margin-bottom:10px;"></div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" id="draft-po-save">Save Draft PO</button>
+        <button class="btn btn-ghost" id="draft-po-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  const qtyInput = document.getElementById('draft-po-qty');
+  qtyInput.focus();
+  const updateFeasibility = () => {
+    const qty = Number(qtyInput.value) || 0;
+    const feasEl = document.getElementById('draft-po-feasibility');
+    if (!qty) { feasEl.innerHTML = ''; return; }
+    const checks = checkComponentFeasibility(p.sku_code, qty);
+    const shortages = checks.filter(c => c.short > 0);
+    if (!checks.length) {
+      feasEl.innerHTML = `<div class="muted" style="font-size:11px;">No componentry tracked against this product's SKU.</div>`;
+    } else if (shortages.length === 0) {
+      feasEl.innerHTML = `<div class="pill good" style="font-size:11px;">✓ Enough componentry on hand/in-flight for ${qty.toLocaleString()} units</div>`;
+    } else {
+      feasEl.innerHTML = `
+        <div class="pill bad" style="font-size:11px; margin-bottom:6px;">⚠ Short on componentry for ${qty.toLocaleString()} units — you can still save this draft, but you'll also need component PO(s)</div>
+        ${shortages.map(c => `<div class="muted" style="font-size:11px;">${c.component_name}: need ${c.required.toLocaleString()}, have ${c.available.toLocaleString()} on hand/in-flight — short ${c.short.toLocaleString()}</div>`).join('')}
+      `;
+    }
+  };
+  qtyInput.addEventListener('input', updateFeasibility);
+  const finish = () => el.remove();
+  document.getElementById('draft-po-cancel').onclick = finish;
+  document.getElementById('draft-po-save').onclick = async () => {
+    const qty = Number(qtyInput.value);
+    if (!qty || qty <= 0) { alert('Enter a positive quantity.'); return; }
+    const month = document.getElementById('draft-po-month').value;
+    const vendorId = document.getElementById('draft-po-vendor').value;
+    if (!vendorId) { alert('Select a vendor — required to commit this PO later.'); return; }
+    const notes = document.getElementById('draft-po-notes').value || null;
+    const { data, error } = await sb.from('revenue_scenario_po').insert({
+      scenario_id: S.selectedScenarioId, product_id: productId, vendor_id: vendorId,
+      qty, eta_month: month + '-01', notes, created_by: currentUserRow?.email || 'dashboard',
+    }).select().single();
+    if (error) { alert('Failed: ' + error.message); return; }
+    S.draftPOs.push(data);
+    finish();
+    renderRevenueBody();
+  };
+}
+
+async function deleteDraftPo(id) {
+  if (!(await showConfirmModal('Remove this draft PO?', 'This only removes it from the scenario draft — nothing real has been placed or changed.', 'Remove'))) return;
+  const { error } = await sb.from('revenue_scenario_po').delete().eq('id', id);
+  if (error) { alert('Failed: ' + error.message); return; }
+  window._revState.draftPOs = window._revState.draftPOs.filter(po => po.id !== id);
+  document.getElementById('detail-modal-backdrop')?.remove();
+  renderRevenueBody();
 }
 
 function renderRevenueBody() {
@@ -1902,10 +2063,66 @@ function renderRevenueBody() {
     { key: 'units', label: 'Units (Throughput)' },
   ].map(v => `<button class="btn ${mixView === v.key ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 10px; font-size:12px;" onclick="setRevenueMixView('${v.key}')">${v.label}</button>`).join(' ');
 
+  if (!S.mixSort) S.mixSort = { shopify: { key: 'revenue', dir: 'desc' }, amazon: { key: 'revenue', dir: 'desc' } };
+  const mixFilterText = (S.mixFilterText || '').trim().toLowerCase();
+
+  function productMixMetrics(channel, p) {
+    let revenue = 0, units = 0, pctLatest = 0;
+    months.forEach(m => {
+      const mix = S.draftMix[channel][p.product_id]?.[m];
+      const chanRev = S.draftChannel[m]?.[channel];
+      if (mix && chanRev != null) {
+        revenue += chanRev * mix.revenue_pct;
+        if (mix.avg_selling_price) units += (chanRev * mix.revenue_pct) / mix.avg_selling_price;
+        pctLatest = mix.revenue_pct;
+      }
+    });
+    return { revenue, units, pct: pctLatest };
+  }
+
+  const mixSortOptions = [
+    { key: 'revenue', label: 'Revenue (6-mo total)' },
+    { key: 'units', label: 'Units (6-mo total)' },
+    { key: 'pct', label: '% Share' },
+    { key: 'name', label: 'Product Name' },
+  ];
+
+  const mixFilterBar = `
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+      <input id="mix-filter-input" type="text" placeholder="Filter products by name or SKU…" value="${(S.mixFilterText || '').replace(/"/g, '&quot;')}"
+        style="padding:5px 8px; font-size:12px; border-radius:6px; border:1px solid var(--border); min-width:200px;"
+        oninput="setMixFilterText(this.value)">
+      ${mixFilterText ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:11px;" onclick="setMixFilterText('')">Clear</button>` : ''}
+    </div>
+  `;
+
+  const mixSortControls = (channel) => {
+    const sort = S.mixSort[channel];
+    return `
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+        <span class="muted" style="font-size:11px;">Sort by:</span>
+        <select style="padding:3px 6px; font-size:11px; border-radius:6px; border:1px solid var(--border);" onchange="setMixSortKey('${channel}', this.value)">
+          ${mixSortOptions.map(o => `<option value="${o.key}" ${sort.key === o.key ? 'selected' : ''}>${o.label}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="toggleMixSortDir('${channel}')">${sort.dir === 'desc' ? '↓ High → Low' : '↑ Low → High'}</button>
+      </div>
+    `;
+  };
+
   const mixTable = (channel) => {
-    const prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id])
-      .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
-    const rows = prods.map(p => [
+    const sort = S.mixSort[channel];
+    let prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id]);
+    if (mixFilterText) prods = prods.filter(p => p.display_name.toLowerCase().includes(mixFilterText) || (p.sku_code || '').toLowerCase().includes(mixFilterText));
+    const withMetrics = prods.map(p => ({ p, metrics: productMixMetrics(channel, p) }));
+    withMetrics.sort((a, b) => {
+      let diff;
+      if (sort.key === 'name') diff = a.p.display_name.localeCompare(b.p.display_name) * (sort.dir === 'desc' ? -1 : 1);
+      else diff = ((a.metrics[sort.key] || 0) - (b.metrics[sort.key] || 0)) * (sort.dir === 'desc' ? -1 : 1);
+      return diff || (productSortRank(a.p.display_name) - productSortRank(b.p.display_name));
+    });
+    const orderedProds = withMetrics.map(x => x.p);
+    if (!orderedProds.length) return mixSortControls(channel) + `<div class="empty-state" style="padding:10px; font-size:12px;">No products match this filter.</div>`;
+    const rows = orderedProds.map(p => [
       `<strong>${p.display_name}</strong>`,
       ...months.map(m => {
         const mix = S.draftMix[channel][p.product_id]?.[m];
@@ -1923,14 +2140,50 @@ function renderRevenueBody() {
       }),
     ]);
     if (mixView === 'pct') {
-      const totals = months.map(m => prods.reduce((s, p) => s + (S.draftMix[channel][p.product_id]?.[m]?.revenue_pct || 0), 0) * 100);
+      const totals = months.map(m => orderedProds.reduce((s, p) => s + (S.draftMix[channel][p.product_id]?.[m]?.revenue_pct || 0), 0) * 100);
       rows.push([
         '<em>Total (should ≈ 100%)</em>',
         ...totals.map(t => `<span class="pill ${Math.abs(t - 100) < 1.5 ? 'good' : 'bad'}">${t.toFixed(1)}%</span>`),
       ]);
     }
-    return kpiTable(['Product', ...months.map(monthLabelShort)], rows, null, null, [1, 2, 3, 4, 5, 6]);
+    return mixSortControls(channel) + kpiTable(['Product', ...months.map(monthLabelShort)], rows, null, null, [1, 2, 3, 4, 5, 6]);
   };
+
+  // ---------- Inventory Outlook & Draft POs (compact, one row per product) ----------
+  const urgencyRank = { CRITICAL: 0, WARNING: 1, WATCH: 2 };
+  const outlookProducts = S.products
+    .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id])
+    .slice()
+    .sort((a, b) => {
+      const ua = urgencyRank[S.activeRecByProduct[a.product_id]] ?? 3;
+      const ub = urgencyRank[S.activeRecByProduct[b.product_id]] ?? 3;
+      return ua - ub || (productSortRank(a.display_name) - productSortRank(b.display_name));
+    });
+  const projections = computeProjection(S.draftChannel, S.draftMix);
+  const outlookRows = outlookProducts.map(p => {
+    const series = projections[p.sku_code] || [];
+    const urgency = S.activeRecByProduct[p.product_id];
+    const nameCell = `<strong>${p.display_name}</strong>${urgency ? ` <span class="urgency-badge urgency-${urgency}" style="margin-left:4px; font-size:9px; padding:1px 5px;">${urgency}</span>` : ''}`;
+    const cells = months.map((m, i) => {
+      const eom = series[i];
+      const hasDraft = (S.draftPOs || []).some(po => po.product_id === p.product_id && po.eta_month.slice(0, 7) === m);
+      if (eom == null) return '<span class="muted">—</span>';
+      const safety = p.safety_stock_qty || 0;
+      const bg = eom < 0 ? 'var(--bad-bg)' : (eom < safety ? '#EFEAE2' : 'transparent');
+      const color = eom < 0 ? 'var(--bad-text)' : (eom < safety ? 'var(--accent-light)' : 'inherit');
+      return `<button class="btn btn-ghost" style="padding:4px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}">
+        <span><strong>${Math.round(eom).toLocaleString()}</strong></span>
+        ${hasDraft ? '<span style="font-size:9px;">+draft</span>' : ''}
+      </button>`;
+    });
+    const actionCell = isEditable()
+      ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="openDraftPoModal('${p.product_id}', '${months[0]}')">+ Draft PO</button>`
+      : '<span class="muted" style="font-size:10px;">—</span>';
+    return [nameCell, ...cells, actionCell];
+  });
+  const outlookTable = outlookRows.length
+    ? kpiTable(['Product', ...months.map(monthLabelShort), ''], outlookRows, null, null, [1, 2, 3, 4, 5, 6, 7])
+    : `<div class="empty-state" style="padding:10px; font-size:12px;">No products to show.</div>`;
 
   el.innerHTML = `
     <div class="card" style="padding:12px 16px; margin-bottom:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -1955,10 +2208,21 @@ function renderRevenueBody() {
       <div class="section-label" style="margin:0 0 2px;">Product Mix → Inventory Throughput</div>
       <div class="muted" style="font-size:11px; margin-bottom:8px;">Every number here is derived from the top-line revenue above. Switch views to see how it was built; click any value for the rationale behind it, and — on a draft scenario — to edit it.</div>
       <div style="display:flex; gap:6px; margin-bottom:10px;">${viewTabs}</div>
+      ${mixFilterBar}
       <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
       ${mixTable('shopify')}
       <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
       ${mixTable('amazon')}
+    </div>
+
+    <div class="card" style="padding:14px 16px; margin-top:12px;">
+      <div class="section-label" style="margin:0 0 2px;">Inventory Outlook &amp; Draft POs</div>
+      <div class="muted" style="font-size:11px; margin-bottom:8px;">
+        One row per product, current QOH projected 6 months out under the forecast above.
+        ${isEditable() ? 'Red/amber cells project below safety stock — click "+ Draft PO" to model a hypothetical order and immediately see its effect here. Draft POs only become real purchase orders when you commit this scenario.' : 'Select or create a draft scenario to model hypothetical POs against this outlook.'}
+        Sorted CRITICAL/WARNING/WATCH first (same urgency as the Overview tab).
+      </div>
+      ${outlookTable}
     </div>
   `;
 }
@@ -1966,6 +2230,33 @@ function renderRevenueBody() {
 function setRevenueMixView(view) {
   window._revState.mixView = view;
   renderRevenueBody();
+}
+
+function setMixSortKey(channel, key) {
+  const S = window._revState;
+  if (!S.mixSort) S.mixSort = { shopify: { key: 'revenue', dir: 'desc' }, amazon: { key: 'revenue', dir: 'desc' } };
+  S.mixSort[channel].key = key;
+  renderRevenueBody();
+}
+
+function toggleMixSortDir(channel) {
+  const S = window._revState;
+  if (!S.mixSort) S.mixSort = { shopify: { key: 'revenue', dir: 'desc' }, amazon: { key: 'revenue', dir: 'desc' } };
+  S.mixSort[channel].dir = S.mixSort[channel].dir === 'desc' ? 'asc' : 'desc';
+  renderRevenueBody();
+}
+
+function setMixFilterText(text) {
+  const S = window._revState;
+  S.mixFilterText = text;
+  // Re-render only the body, and restore focus/cursor on the filter input since innerHTML replace drops it.
+  renderRevenueBody();
+  const input = document.getElementById('mix-filter-input');
+  if (input) {
+    input.focus();
+    const pos = input.value.length;
+    input.setSelectionRange(pos, pos);
+  }
 }
 
 // ---------- Inventory ----------
