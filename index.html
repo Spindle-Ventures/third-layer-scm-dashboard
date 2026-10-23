@@ -3003,7 +3003,7 @@ function renderRevenueBody() {
     if (!orderedProds.length) return mixSortControls(channel) + `<div class="empty-state" style="padding:10px; font-size:12px;">No products match this filter.</div>`;
     const rows = orderedProds.map(p => [
       `<strong>${p.display_name}</strong>`,
-      ...months.map(m => {
+      ...months.map((m, mi) => {
         const mix = S.draftMix[channel][p.product_id]?.[m];
         const chanRev = S.draftChannel[m]?.[channel];
         if (!mix) return '<span class="muted">—</span>';
@@ -3011,7 +3011,25 @@ function renderRevenueBody() {
           return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showMixCellDetail('pct','${channel}','${p.product_id}','${m}')"><strong>${(mix.revenue_pct * 100).toFixed(1)}%</strong></button>`;
         }
         if (mixView === 'asp') {
-          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong></button>`;
+          // Alex (2026-10-22): "I think there could be differences in predicted average asking
+          // price from month to month in future months ... I want a smaller green or red icon
+          // representing an increase from the last month with a numerical value as well." Compares
+          // this month's ASP against the PRIOR visible month's ASP (same channel/product); first
+          // column has no prior month in view, so no indicator renders for it.
+          const prevM = months[mi - 1];
+          const prevAsp = prevM ? S.draftMix[channel][p.product_id]?.[prevM]?.avg_selling_price : null;
+          const curAsp = mix.avg_selling_price;
+          let deltaHtml = '';
+          if (prevAsp != null && curAsp != null && Math.abs(prevAsp) > 0.001) {
+            const diff = curAsp - prevAsp;
+            if (Math.abs(diff) >= 0.005) {
+              const up = diff > 0;
+              const pct = (diff / prevAsp) * 100;
+              const color = up ? 'var(--good-text)' : 'var(--bad-text)';
+              deltaHtml = `<div style="font-size:9px; color:${color}; margin-top:1px;">${up ? '▲' : '▼'} ${up ? '+' : ''}${fmtMoney2(diff)} (${up ? '+' : ''}${pct.toFixed(1)}%)</div>`;
+            }
+          }
+          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong>${deltaHtml}</button>`;
         }
         if (chanRev == null) return '<span class="muted">—</span>';
         const units = Math.round((chanRev * mix.revenue_pct) / mix.avg_selling_price);
