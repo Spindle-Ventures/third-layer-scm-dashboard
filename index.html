@@ -418,6 +418,7 @@ async function promptDateMMDDYYYY(message, currentIso) {
   if (!input) return null;
   return input;
 }
+function todayIso() { return new Date().toISOString().slice(0, 10); }
 function monthName(isoDate) {
   const [y, m] = isoDate.split('-');
   return new Date(Number(y), Number(m) - 1, 1).toLocaleString('en-US', { month: 'long' });
@@ -1010,12 +1011,68 @@ function applyOpenOrdersFilter() {
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
       <table style="white-space:nowrap;">
-        <thead><tr><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Contact Schedule</th></tr></thead>
+        <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th>Status</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Contact Schedule</th></tr></thead>
         <tbody>${group.rows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
       </table>
     </div>
   `;
   }).join('');
+  renderBulkContactBar();
+}
+
+// Alex (2026-10-22): "I want the ability to select multiple rows on the overview tab and update
+// the contact schedule." Per-row checkboxes feed a single global selection set so the user can
+// pick rows across different product groups, then set one contact date for all of them at once.
+window._selectedOrderIds = window._selectedOrderIds || new Set();
+function toggleOrderSelect(ledgerId, checked) {
+  if (checked) window._selectedOrderIds.add(ledgerId);
+  else window._selectedOrderIds.delete(ledgerId);
+  renderBulkContactBar();
+}
+function toggleSelectAllInGroup(headerCheckbox, sku) {
+  const rows = (window._openOrdersCache || []).filter(o => o.product_sku === sku);
+  rows.forEach(o => {
+    if (headerCheckbox.checked) window._selectedOrderIds.add(o.ledger_id);
+    else window._selectedOrderIds.delete(o.ledger_id);
+    const cb = document.getElementById(`select-${o.ledger_id}`);
+    if (cb) cb.checked = headerCheckbox.checked;
+  });
+  renderBulkContactBar();
+}
+function renderBulkContactBar() {
+  let bar = document.getElementById('bulk-contact-bar');
+  const n = window._selectedOrderIds.size;
+  if (!canEdit() || n === 0) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'bulk-contact-bar';
+    bar.style.cssText = 'position:sticky; bottom:12px; z-index:50; margin:10px 0; padding:10px 14px; border-radius:10px; background:var(--panel, #fff); border:1px solid var(--border); box-shadow:0 4px 16px rgba(0,0,0,0.15); display:flex; align-items:center; gap:12px;';
+    document.getElementById('open-orders-groups').appendChild(bar);
+  }
+  bar.innerHTML = `
+    <strong>${n} order${n === 1 ? '' : 's'} selected</strong>
+    <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="bulkSetContactSchedule()">Set Contact Schedule</button>
+    <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="clearOrderSelection()">Clear Selection</button>
+  `;
+}
+function clearOrderSelection() {
+  window._selectedOrderIds.clear();
+  applyOpenOrdersFilter();
+}
+async function bulkSetContactSchedule() {
+  const ids = [...window._selectedOrderIds];
+  if (ids.length === 0) return;
+  // Defaults to today per Alex's "it should default the calendar to today" request, applied here too.
+  const dateVal = await promptDateMMDDYYYY(`Next contact date for ${ids.length} selected order(s)`, todayIso());
+  if (dateVal === null) return;
+  const results = await Promise.all(ids.map(id => {
+    const o = (window._openOrdersCache || []).find(r => r.ledger_id === id);
+    return mutateLedgerRow(id, { next_contact: dateVal }, `Bulk-set next contact date (${fmtDate(dateVal)}) for ${o?.product_name || id}`);
+  }));
+  const failCount = results.filter(r => !r).length;
+  window._selectedOrderIds.clear();
+  await renderOverview();
+  if (failCount > 0) alert(`${failCount} of ${ids.length} updates failed — see the error alert(s) above.`);
 }
 
 async function showSafetyStockDetail(sku) {
@@ -1252,7 +1309,10 @@ async function editLastContact(ledgerId) {
 async function editNextContact(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const dateVal = await promptDateMMDDYYYY('Next contact date', o.next_contact);
+  // Alex (2026-10-22): "when I hit 'Set next Contact' it should default the calendar to today."
+  // If a contact date is already scheduled, keep showing it (editing); otherwise default to today
+  // instead of a blank picker, since today is the natural starting point for a new schedule.
+  const dateVal = await promptDateMMDDYYYY('Next contact date', o.next_contact || todayIso());
   if (dateVal === null) return;
   const ok = await mutateLedgerRow(ledgerId, { next_contact: dateVal }, `Set next contact date for ${o.product_name}`);
   if (ok) await renderOverview();
@@ -1302,9 +1362,11 @@ function renderOpenOrderRow(o, editing) {
   const canAct = canEdit();
   const componentText = o.order_type === 'componentry' ? componentShortLabel(o.component_name) : '—';
   const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
+  const selectCell = canAct ? `<td><input type="checkbox" id="select-${o.ledger_id}" ${window._selectedOrderIds?.has(o.ledger_id) ? 'checked' : ''} onchange="toggleOrderSelect('${o.ledger_id}', this.checked)" /></td>` : '<td></td>';
   if (editing) {
     return `
       <tr id="row-${o.ledger_id}">
+        ${selectCell}
         <td>
           <button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
           <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="applyOpenOrdersFilter()">Cancel</button>
@@ -1321,7 +1383,7 @@ function renderOpenOrderRow(o, editing) {
         <td style="white-space:normal;">
           <div style="display:flex; flex-direction:column; gap:3px;">
             <label style="font-size:10px; color:var(--muted);">Last: <input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:11px;" /></label>
-            <label style="font-size:10px; color:var(--muted);">Next: <input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || ''}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:11px;" /></label>
+            <label style="font-size:10px; color:var(--muted);">Next: <input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || todayIso()}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:11px;" /></label>
           </div>
         </td>
       </tr>
@@ -1329,6 +1391,7 @@ function renderOpenOrderRow(o, editing) {
   }
   return `
     <tr id="row-${o.ledger_id}">
+      ${selectCell}
       <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}', this)" title="Actions">⋯</button>` : ''}</td>
       <td><span class="pill watch">${orderTypeLabel}</span></td>
       <td>${componentText}</td>
@@ -2182,7 +2245,7 @@ async function renderRevenue() {
   const histStartIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 5); d.setDate(1); return d.toISOString().slice(0, 10); })();
   const months = nextSixMonths();
 
-  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }, { data: invSnapshot }, { data: committedScenarioPOs }, { data: historicalPct }] = await Promise.all([
+  const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }, { data: invSnapshot }, { data: committedScenarioPOs }, { data: historicalPct }, { data: manualAdj }] = await Promise.all([
     sb.from('product_qoh').select('*'),
     sb.from('revenue_actuals').select('channel, gross_revenue, shipping_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
@@ -2195,6 +2258,7 @@ async function renderRevenue() {
     sb.from('product_inventory_snapshot').select('channel, qty, products(sku_code)').eq('channel', 'shopify'),
     sb.from('purchase_orders').select('*, vendors(vendor_name, default_lead_days), products(sku_code, display_name), revenue_scenarios(name)').not('source_scenario_id', 'is', null).order('created_at', { ascending: false }),
     sb.from('historical_revenue_pct').select('product_id, channel, month, gross_sales, total_sales, net_items_sold').gte('month', histStartIso).eq('channel', 'shopify'),
+    sb.from('manual_throughput_adjustments').select('*'),
   ]);
 
   // Shopify's live inventory API is the canonical source of truth for finished-good QOH (same
@@ -2281,6 +2345,16 @@ async function renderRevenue() {
     receipts[o.product_sku][m] = (receipts[o.product_sku][m] || 0) + (o.qty || 0);
   });
 
+  // Alex (2026-10-22): "I need to be able to manually account for [holiday-box throughput]...
+  // currently the only way I could in the system is to raise the revenue targets." Shaped as
+  // [product_id][month] -> additional_units for computeProjection's manualAdjustments param.
+  const manualThroughputAdjustments = {};
+  (manualAdj || []).forEach(a => {
+    const m = a.month.slice(0, 7);
+    if (!manualThroughputAdjustments[a.product_id]) manualThroughputAdjustments[a.product_id] = {};
+    manualThroughputAdjustments[a.product_id][m] = a.additional_units;
+  });
+
   window._revState = {
     products: productsWithLiveQty || [], monthlyActual, liveForecast, liveMix, receipts, months,
     scenarios: scenarios || [], selectedScenarioId: window._revState?.selectedScenarioId || 'live',
@@ -2297,6 +2371,7 @@ async function renderRevenue() {
     draftPOs: [],
     committedScenarioPOs: committedScenarioPOs || [],
     shippingShareByChannel, historicalAspByProduct,
+    manualThroughputAdjustments, manualThroughputAdjustmentsRaw: manualAdj || [],
   };
 
   await selectRevenueScenario(window._revState.selectedScenarioId, true);
@@ -2593,6 +2668,7 @@ function computeProjection(channelData, mixData) {
     realReceipts: S.receipts,
     draftPOs: S.draftPOs,
     monthlyActualToDate: S.monthlyActual,
+    manualAdjustments: S.manualThroughputAdjustments,
   });
 }
 
@@ -2629,7 +2705,13 @@ function showThroughputDetail(productId, month) {
   }).filter(Boolean);
   const totalUnits = channelRows.reduce((s, r) => s + r.units, 0);
   const totalRemainingRevenue = channelRows.reduce((s, r) => s + r.remainingChanRev * r.pct, 0);
-  const endingInv = startingInv - totalUnits + receipts;
+  // Alex (2026-10-22): "we may need to manually estimate inventory throughput ... currently the
+  // only way I could in the system is to raise the revenue targets which will raise all of the
+  // inventory throughput ... per product." A standalone units-only lever, independent of the
+  // revenue mix math above -- added/subtracted straight into the EOM calc, never touches revenue.
+  const manualAdj = S.manualThroughputAdjustments?.[productId]?.[month] || 0;
+  const manualAdjRow = (S.manualThroughputAdjustmentsRaw || []).find(a => a.product_id === productId && a.month.slice(0, 7) === month);
+  const endingInv = startingInv - totalUnits - manualAdj + receipts;
   // Alex (2026-10-22): "it's a little unclear to me as to what was the full month's throughput vs
   // what's been sold so far vs what's planned to be sold with any inventory landing ... I'd love
   // for it to be a little more simply said." One plain summary line, computed once, shown before
@@ -2682,8 +2764,19 @@ function showThroughputDetail(productId, month) {
         <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>Starting inventory (${isCurrentMonth ? 'today, live' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
         <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>+ Incoming receipts${isCurrentMonth ? ' (rest of month)' : ' this month'}${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
         <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
+        ${manualAdj ? `<div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>${manualAdj > 0 ? '−' : '+'} Manual throughput adjustment${manualAdjRow?.reason ? ` <span class="muted">(${manualAdjRow.reason})</span>` : ''}</span><strong>${Math.abs(manualAdj).toLocaleString()}</strong></div>` : ''}
         <div style="padding:6px 0 0; display:flex; justify-content:space-between; font-size:13px;"><span><strong>= Projected end-of-month</strong></span><strong>${Math.round(endingInv).toLocaleString()}</strong></div>
       </details>
+
+      ${canEdit() ? `
+        <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+          <div class="muted" style="font-size:11px; margin-bottom:4px;">
+            ${manualAdj ? `Manual adjustment on file: <strong>${manualAdj > 0 ? '+' : ''}${manualAdj.toLocaleString()} units</strong>${manualAdjRow?.reason ? ` — ${manualAdjRow.reason}` : ''}` : 'No manual throughput adjustment for this product/month.'}
+          </div>
+          <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="editManualThroughputAdjustment('${productId}', '${month}')">${manualAdj ? 'Edit' : '+ Add'} Manual Throughput Adjustment</button>
+          ${manualAdj ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px; color:var(--bad-text);" onclick="deleteManualThroughputAdjustment('${productId}', '${month}')">Remove</button>` : ''}
+        </div>
+      ` : ''}
 
       ${isEditable() ? `
         <div style="margin-top:10px;">
@@ -2693,6 +2786,49 @@ function showThroughputDetail(productId, month) {
     </div>
   `;
   showDetail(`${p.display_name} — ${monthLabelLong(month)}${isCurrentMonth ? ' (in progress)' : ' (projected EOM)'}`, body);
+}
+
+// Alex (2026-10-22): "We have situations where we may need to manually estimate inventory
+// throughput ... currently the only way I could in the system is to raise the revenue targets
+// which will raise all of the inventory throughput as they related to the revenue mix per
+// product." A standalone units-only override, live (not scenario-scoped) -- same reasoning as the
+// live PO initiation path being separate from scenario-attached draft POs.
+async function editManualThroughputAdjustment(productId, month) {
+  if (!canEdit()) return;
+  const S = window._revState;
+  const p = S.products.find(pr => pr.product_id === productId);
+  const existing = (S.manualThroughputAdjustmentsRaw || []).find(a => a.product_id === productId && a.month.slice(0, 7) === month);
+  const input = await showPromptModal(
+    `${p?.display_name} — Manual Throughput Adjustment`,
+    `Extra units for ${monthLabelLong(month)} (positive = more units will move, e.g. a promo; negative = fewer). This does NOT change revenue targets or any other product.`,
+    existing?.additional_units ?? '', 'number'
+  );
+  if (input === null) return;
+  const val = Number(input);
+  if (isNaN(val) || val === 0) { alert('Enter a non-zero number of units (positive or negative). Use "Remove" to clear an existing adjustment.'); return; }
+  const reason = await showPromptModal('Reason', 'e.g. "November holiday boxes — bundled promo"', existing?.reason || '', 'textarea');
+  if (reason === null) return;
+  const payload = { product_id: productId, month: month + '-01', additional_units: Math.round(val), reason: reason || null };
+  const { data: after, error } = await sb.from('manual_throughput_adjustments').upsert(payload, { onConflict: 'product_id,month' }).select().single();
+  if (error) { alert('Failed: ' + error.message); return; }
+  await logAction('manual_throughput_adjustments', after.id, existing ? 'update' : 'create',
+    `${existing ? 'Edited' : 'Added'} manual throughput adjustment for ${p?.display_name}, ${monthLabelShort(month)}: ${existing ? `${existing.additional_units} → ` : ''}${val > 0 ? '+' : ''}${val} units${reason ? ` (${reason})` : ''}`,
+    existing || null, after);
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderRevenue();
+}
+async function deleteManualThroughputAdjustment(productId, month) {
+  if (!canEdit()) return;
+  const S = window._revState;
+  const existing = (S.manualThroughputAdjustmentsRaw || []).find(a => a.product_id === productId && a.month.slice(0, 7) === month);
+  if (!existing) return;
+  if (!(await showConfirmModal('Remove this manual throughput adjustment?', 'The projected end-of-month figure will go back to the plain revenue-mix estimate for this month.', 'Remove'))) return;
+  const { error } = await sb.from('manual_throughput_adjustments').delete().eq('id', existing.id);
+  if (error) { alert('Failed: ' + error.message); return; }
+  const p = S.products.find(pr => pr.product_id === productId);
+  await logAction('manual_throughput_adjustments', existing.id, 'delete', `Removed manual throughput adjustment for ${p?.display_name}, ${monthLabelShort(month)}`, existing, null);
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderRevenue();
 }
 
 function showOutlookStatusDetail(productId) {
