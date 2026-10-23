@@ -918,37 +918,46 @@ async function renderOverview() {
   if (!recs || recs.length === 0) {
     grid.innerHTML = `<div class="card empty-state" style="grid-column: 1 / -1;">No open recommendations — nothing needs a decision today.</div>`;
   } else {
+    // Alex (2026-10-23): "The agentic card recommendations can be much smaller, I like the
+    // subtext under the status but there should be a popup box that explains simply what's
+    // going on." Compacted the card (tighter padding/type scale, inventory folded into one
+    // inline line) while keeping the days-until-deadline subtext under the badge exactly as
+    // before, and added an explicit (i) info icon next to the badge -- a dedicated, obviously-
+    // clickable affordance for the plain-language popup, since the old "click the pill text"
+    // pattern wasn't a clear enough signal that it opened something.
     grid.innerHTML = recs.map(r => `
-      <div class="card" id="rec-card-${r.id}" style="padding:12px 14px; ${r.is_test ? 'border:2px dashed var(--watch-text);' : ''}">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:2px;">
-          <div><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></div>
-          <div style="text-align:right;">
-            ${r.is_test ? '<span class="pill watch" style="font-size:9px; display:block; margin-bottom:3px;" title="Synthetic data for UI testing only -- not a real finding">⚠ TEST DATA</span>' : ''}
-            <span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span>
+      <div class="card" id="rec-card-${r.id}" style="padding:8px 10px; ${r.is_test ? 'border:2px dashed var(--watch-text);' : ''}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1px;">
+          <div style="font-size:13px;"><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:11px;">${r.products.sku_code}</span></div>
+          <div style="text-align:right; display:flex; align-items:center; gap:5px;">
+            ${r.is_test ? '<span class="pill watch" style="font-size:9px;" title="Synthetic data for UI testing only -- not a real finding">⚠ TEST</span>' : ''}
+            <span class="urgency-badge urgency-${r.urgency}" style="font-size:10px; padding:2px 7px;">${r.urgency}</span>
+            <button type="button" onclick="showRecommendationDetail('${r.id}')" title="What's going on, in plain language" aria-label="Explain this recommendation"
+              style="width:18px; height:18px; line-height:16px; border-radius:50%; border:1px solid var(--border); background:var(--card-bg, #fff); color:var(--ink); font-size:11px; font-weight:700; font-family:'Inter'; cursor:pointer; padding:0;">i</button>
           </div>
         </div>
         <!-- Alex (2026-10-22): "The buttons top right should have a well thought out contextual
              reason presented simply" -- a one-line, plain-language reason for the urgency level,
              right under the badge, so "why is this CRITICAL" is answered at a glance without a
-             click-through. -->
-        <div class="muted" style="font-size:11px; text-align:right; margin-bottom:6px;">${
+             click-through. Kept as-is per Alex (2026-10-23): "I like the subtext under the status." -->
+        <div class="muted" style="font-size:10px; text-align:right; margin-bottom:4px;">${
           r.days_until_deadline < 0
             ? `Past deadline by ${Math.abs(r.days_until_deadline)} day${Math.abs(r.days_until_deadline) === 1 ? '' : 's'}`
             : r.days_until_deadline <= 14
               ? `Only ${r.days_until_deadline} day${r.days_until_deadline === 1 ? '' : 's'} left to decide`
               : `${r.days_until_deadline} days until deadline — time to plan`
         }</div>
-        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-          <span class="pill clickable-pill watch" onclick="showRecommendationDetail('${r.id}')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
-          <span style="font-size:12px;">Current inventory: <strong style="font-size:14px; color:${(() => { const ss = (window._safetyStockBySku || {})[r.products.sku_code]; if (r.current_qoh == null || ss == null) return 'var(--ink)'; if (r.current_qoh < ss) return 'var(--bad-text)'; if (r.current_qoh < ss * 1.25) return 'var(--watch-text)'; return 'var(--good-text)'; })()};">${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
+        <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap;">
+          <span class="pill clickable-pill watch" style="font-size:11px; padding:2px 8px;" onclick="showRecommendationDetail('${r.id}')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
+          <span style="font-size:11px;">On hand: <strong style="font-size:12px; color:${(() => { const ss = (window._safetyStockBySku || {})[r.products.sku_code]; if (r.current_qoh == null || ss == null) return 'var(--ink)'; if (r.current_qoh < ss) return 'var(--bad-text)'; if (r.current_qoh < ss * 1.25) return 'var(--watch-text)'; return 'var(--good-text)'; })()};">${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
         </div>
         ${canEdit() ? `
-          <select onchange="decideRecommendation('${r.id}', this.value)" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
+          <select onchange="decideRecommendation('${r.id}', this.value)" style="width:100%; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-family:'Inter'; font-size:12px;">
             <option value="pending" ${r.decision === 'pending' ? 'selected' : ''}>Pending</option>
             <option value="approved" ${r.decision === 'approved' ? 'selected' : ''}>Approved</option>
             <option value="dismissed" ${r.decision === 'dismissed' ? 'selected' : ''}>Dismissed</option>
           </select>
-        ` : `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}">${r.decision}</span>`}
+        ` : `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}" style="font-size:11px;">${r.decision}</span>`}
       </div>
     `).join('');
   }
