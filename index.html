@@ -102,22 +102,26 @@
   }
   .muted { color: var(--muted); font-size: 13px; }
 
-  /* Hover-only info icon + tooltip (Alex, 2026-10-22: "move the text ... to an information icon
-     that pops up when hovered over") -- pure CSS, no JS needed; works anywhere via
-     <span class="info-icon">ⓘ<span class="info-tooltip">...</span></span> */
+  /* Info icon trigger only -- the actual tooltip is a single reusable position:fixed element
+     (#global-tooltip, built in JS below) appended to <body>, NOT nested inside this span.
+     Alex (2026-10-23): "When I hover over the information on 'Lead Time' the screen cuts off
+     some of the text." Root cause: the old nested-absolute tooltip was clipped by
+     .detail-modal's own `overflow-y: auto` (an absolutely-positioned descendant is clipped by
+     the nearest ancestor with overflow != visible, even though position:absolute normally
+     escapes layout) -- position:fixed on <body> escapes that entirely, and JS clamps it to the
+     viewport so it can never run off any edge either. */
   .info-icon {
     display: inline-flex; align-items: center; justify-content: center;
     width: 16px; height: 16px; border-radius: 50%; background: var(--border);
     color: var(--muted); font-size: 11px; font-style: normal; cursor: help; position: relative;
     flex-shrink: 0;
   }
-  .info-icon .info-tooltip {
-    display: none; position: absolute; z-index: 50; top: 22px; left: 0;
-    width: 320px; max-width: 70vw; background: #2B2622; color: #F4EFE6;
+  #global-tooltip {
+    display: none; position: fixed; z-index: 9999;
+    width: 320px; max-width: 80vw; background: #2B2622; color: #F4EFE6;
     padding: 10px 12px; border-radius: 8px; font-size: 11px; line-height: 1.5;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.25); text-align: left; font-weight: 400;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.3); text-align: left; font-weight: 400;
   }
-  .info-icon:hover .info-tooltip { display: block; }
 
   /* Floating Manny chat widget (Alex, 2026-10-22: "a little icon that will travel with you
      whichever tab you're on ... I want it to look and feel like an interaction right on the
@@ -616,10 +620,40 @@ function showRecommendationDetail(recId) {
   showDetail(`${r.products.display_name} — ${PROBLEM_LABELS[r.problem_type] || r.problem_type}`, body);
 }
 
-// Hover-only info icon (Alex, 2026-10-22: "move the text ... to an information icon that pops up
-// when hovered over") -- pure CSS tooltip, no click/JS state needed. `html` may contain markup.
+// Info icon + viewport-clamped tooltip (Alex, 2026-10-22: "move the text ... to an information
+// icon that pops up when hovered over"; fixed 2026-10-23 for the clipping issue -- see the CSS
+// comment on #global-tooltip above for why this moved off pure-CSS). `html` may contain markup.
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
 function infoIcon(html) {
-  return `<span class="info-icon">ⓘ<span class="info-tooltip">${html}</span></span>`;
+  return `<span class="info-icon" data-tip="${escapeAttr(html)}" onmouseenter="showGlobalTooltip(this)" onmouseleave="hideGlobalTooltip()">ⓘ</span>`;
+}
+function showGlobalTooltip(iconEl) {
+  let tip = document.getElementById('global-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'global-tooltip';
+    document.body.appendChild(tip);
+  }
+  tip.innerHTML = iconEl.dataset.tip || '';
+  tip.style.display = 'block';
+  tip.style.left = '-9999px'; tip.style.top = '-9999px'; // measure off-screen first
+  const iconRect = iconEl.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  const margin = 10;
+  let left = iconRect.left;
+  if (left + tipRect.width > window.innerWidth - margin) left = window.innerWidth - tipRect.width - margin;
+  if (left < margin) left = margin;
+  let top = iconRect.bottom + 6;
+  if (top + tipRect.height > window.innerHeight - margin) top = iconRect.top - tipRect.height - 6;
+  if (top < margin) top = margin;
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+function hideGlobalTooltip() {
+  const tip = document.getElementById('global-tooltip');
+  if (tip) tip.style.display = 'none';
 }
 
 function kpiTable(headers, rows, wrapIdx, colWidths, noWrapCols) {
@@ -685,10 +719,14 @@ function showContactsKpiDetail() {
         `<strong>${fmtDate(o.eta)}</strong>`,
         `<span class="pill ${overdue ? 'bad' : 'watch'}">${fmtDate(o.next_contact)}</span>`,
         buildActionDetail(o),
+        // Alex (2026-10-23): "I don't see the vendor contacts due that shows the message
+        // prepped to send to the vendor." -- a dedicated button opening the ready-to-copy
+        // outreach text, separate from "Why" (which explains the situation to US).
+        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="showVendorMessagePopup('${o.ledger_id}')">Message</button>`,
         `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
       ];
     });
-  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'Order #', 'ETA', 'Next Contact', 'Why', ''], rows, 5, null, [3]), 'wide');
+  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'Order #', 'ETA', 'Next Contact', 'Why', '', ''], rows, 5, null, [3, 6, 7]), 'wide');
 }
 
 function showQcKpiDetail() {
@@ -918,22 +956,21 @@ async function renderOverview() {
   if (!recs || recs.length === 0) {
     grid.innerHTML = `<div class="card empty-state" style="grid-column: 1 / -1;">No open recommendations — nothing needs a decision today.</div>`;
   } else {
-    // Alex (2026-10-23): "The agentic card recommendations can be much smaller, I like the
-    // subtext under the status but there should be a popup box that explains simply what's
-    // going on." Compacted the card (tighter padding/type scale, inventory folded into one
-    // inline line) while keeping the days-until-deadline subtext under the badge exactly as
-    // before, and added an explicit (i) info icon next to the badge -- a dedicated, obviously-
-    // clickable affordance for the plain-language popup, since the old "click the pill text"
-    // pattern wasn't a clear enough signal that it opened something.
+    // Alex (2026-10-23, round 2): "Instead of the pending picklist there should be an action
+    // button that pops up a mini box right next to it similar to the action box in the 'Open
+    // orders by product' section. Also the pop up box should be after clicking the status
+    // message 'Watch' or 'Critical'." Swapped the Pending/Approved/Dismissed <select> for a
+    // "..." button -> showAnchoredMenu (same pattern as showOrderActionsMenu), and moved the
+    // plain-language narrative popup onto the urgency badge itself -- removed the separate (i)
+    // icon from the first round since the badge now IS the click target, one affordance not two.
     grid.innerHTML = recs.map(r => `
       <div class="card" id="rec-card-${r.id}" style="padding:8px 10px; ${r.is_test ? 'border:2px dashed var(--watch-text);' : ''}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1px;">
           <div style="font-size:13px;"><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:11px;">${r.products.sku_code}</span></div>
           <div style="text-align:right; display:flex; align-items:center; gap:5px;">
             ${r.is_test ? '<span class="pill watch" style="font-size:9px;" title="Synthetic data for UI testing only -- not a real finding">⚠ TEST</span>' : ''}
-            <span class="urgency-badge urgency-${r.urgency}" style="font-size:10px; padding:2px 7px;">${r.urgency}</span>
-            <button type="button" onclick="showRecommendationDetail('${r.id}')" title="What's going on, in plain language" aria-label="Explain this recommendation"
-              style="width:18px; height:18px; line-height:16px; border-radius:50%; border:1px solid var(--border); background:var(--card-bg, #fff); color:var(--ink); font-size:11px; font-weight:700; font-family:'Inter'; cursor:pointer; padding:0;">i</button>
+            <span class="urgency-badge urgency-${r.urgency} clickable-pill" title="Click to see what's going on" onclick="showRecommendationDetail('${r.id}')" style="font-size:10px; padding:2px 7px;">${r.urgency}</span>
+            ${canEdit() ? `<button type="button" class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" title="Actions" onclick="showRecActionsMenu('${r.id}', this)">⋯</button>` : ''}
           </div>
         </div>
         <!-- Alex (2026-10-22): "The buttons top right should have a well thought out contextual
@@ -947,17 +984,11 @@ async function renderOverview() {
               ? `Only ${r.days_until_deadline} day${r.days_until_deadline === 1 ? '' : 's'} left to decide`
               : `${r.days_until_deadline} days until deadline — time to plan`
         }</div>
-        <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap;">
-          <span class="pill clickable-pill watch" style="font-size:11px; padding:2px 8px;" onclick="showRecommendationDetail('${r.id}')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
+        <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin-bottom:4px; flex-wrap:wrap;">
+          <span class="pill" style="font-size:11px; padding:2px 8px;">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
           <span style="font-size:11px;">On hand: <strong style="font-size:12px; color:${(() => { const ss = (window._safetyStockBySku || {})[r.products.sku_code]; if (r.current_qoh == null || ss == null) return 'var(--ink)'; if (r.current_qoh < ss) return 'var(--bad-text)'; if (r.current_qoh < ss * 1.25) return 'var(--watch-text)'; return 'var(--good-text)'; })()};">${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
         </div>
-        ${canEdit() ? `
-          <select onchange="decideRecommendation('${r.id}', this.value)" style="width:100%; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-family:'Inter'; font-size:12px;">
-            <option value="pending" ${r.decision === 'pending' ? 'selected' : ''}>Pending</option>
-            <option value="approved" ${r.decision === 'approved' ? 'selected' : ''}>Approved</option>
-            <option value="dismissed" ${r.decision === 'dismissed' ? 'selected' : ''}>Dismissed</option>
-          </select>
-        ` : `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}" style="font-size:11px;">${r.decision}</span>`}
+        ${!canEdit() ? `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}" style="font-size:11px;">${r.decision}</span>` : ''}
       </div>
     `).join('');
   }
@@ -1090,24 +1121,26 @@ async function showSafetyStockDetail(sku) {
   const basis = (window._safetyStockBasisBySku || {})[sku] || 'No rationale on file — this product may not have enough sales history yet for the calculation.';
   const detail = (window._safetyStockDetailBySku || {})[sku];
 
-  // Alex (2026-10-22): "we just really need easy to follow metrics from the text - right now it's
-  // too text heavy as a popup." Lead with a compact metric grid built from the same numbers the
-  // prose paragraph is generated from; keep the full sentence available but collapsed, for anyone
-  // who wants the narrative "why" rather than just the numbers.
+  // Alex (2026-10-23): "'Service Level' doesn't make sense as a metric" -- relabeled to say what
+  // it means in plain terms ("in-stock target"). "I don't need 'Daily Demand Variance' or 'Sample
+  // Window'. Remove so we can simplify" -- both dropped. "Remove the 'full explanation'" -- the
+  // collapsible <details> is gone; a short always-visible sentence (conciseExplanation below)
+  // replaces it, placed above the recommended action instead.
   const metricsHtml = detail ? `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; margin-bottom:10px;">
-      <div><div class="muted" style="font-size:10px;">SERVICE LEVEL ${infoIcon('The % of the time we want to have enough stock on hand to never run out, assuming demand behaves like it has historically. 98% means we accept roughly a 2% chance of a stockout before the next restock arrives.')}</div><div style="font-size:15px; font-weight:700;">${detail.service_level_pct}%</div></div>
+      <div><div class="muted" style="font-size:10px;">IN-STOCK TARGET ${infoIcon('How often we want to avoid a stockout, assuming demand keeps behaving like it has historically. 98% means we accept roughly a 2% chance of running out before the next restock arrives.')}</div><div style="font-size:15px; font-weight:700;">${detail.service_level_pct}%</div></div>
       <div><div class="muted" style="font-size:10px;">LEAD TIME ${infoIcon('How many days it takes to get more of this product\'s components once an order is placed — the longest lead time across its preferred vendors. The longer this is, the more buffer stock is needed to survive a bad forecast.')}</div><div style="font-size:15px; font-weight:700;">${detail.lead_time} days</div></div>
-      <div><div class="muted" style="font-size:10px;">DAILY DEMAND VARIANCE (σ) ${infoIcon('Standard deviation of daily unit sales over the sample window below. A bigger number means demand swings more day to day, so more buffer is needed to stay covered even on an unusually high-demand day.')}</div><div style="font-size:15px; font-weight:700;">±${Math.round(detail.sigma).toLocaleString()} units/day</div></div>
-      <div><div class="muted" style="font-size:10px;">SAMPLE WINDOW ${infoIcon('How many trailing days of real sales history the demand variance figure is calculated from.')}</div><div style="font-size:15px; font-weight:700;">${detail.n_days_sampled} days</div></div>
-      <div><div class="muted" style="font-size:10px;">STATISTICAL SAFETY STOCK ${infoIcon('The formula result before the MOQ buffer: Service Level Z-score × Daily Demand Variance × √(Lead Time). This covers demand uncertainty alone.')}</div><div style="font-size:15px; font-weight:700;">${detail.statistical_qty.toLocaleString()} units</div></div>
+      <div><div class="muted" style="font-size:10px;">STATISTICAL SAFETY STOCK ${infoIcon('How much buffer is needed to cover demand uncertainty alone, based on the in-stock target, lead time, and how much daily sales actually vary.')}</div><div style="font-size:15px; font-weight:700;">${detail.statistical_qty.toLocaleString()} units</div></div>
       <div><div class="muted" style="font-size:10px;">MOQ BUFFER ${infoIcon('An extra multiplier on top of the statistical figure, because our manufacturer requires minimum order quantities — we can\'t top up in small increments, so a bad read on timing leaves a bigger real-world gap than demand variance alone would suggest.')}</div><div style="font-size:15px; font-weight:700;">${detail.buffer_multiplier}x</div></div>
       <div style="grid-column:1 / -1; border-top:1px solid var(--border); margin-top:2px; padding-top:8px;">
         <div class="muted" style="font-size:10px;">FINAL SAFETY STOCK ${infoIcon('Statistical Safety Stock × MOQ Buffer — the actual number this product\'s inventory is checked against everywhere on the dashboard.')}</div><div style="font-size:19px; font-weight:800; color:var(--accent);">${detail.recommended_qty.toLocaleString()} units</div>
       </div>
     </div>
-    <details style="margin-bottom:12px;"><summary>Read the full explanation</summary><div class="muted" style="font-size:12px; margin-top:6px; line-height:1.5;">${basis}</div></details>
   ` : `<div style="margin-bottom:12px;">${basis}</div>`;
+
+  const conciseExplanation = detail
+    ? `<div class="muted" style="font-size:12px; margin-bottom:10px; line-height:1.5;">We keep <strong>${detail.recommended_qty.toLocaleString()} units</strong> on hand for ${displayName}: enough to cover a ${detail.lead_time}-day resupply at a ${detail.service_level_pct}% in-stock target, then multiplied ${detail.buffer_multiplier}x because our manufacturer requires minimum order quantities.</div>`
+    : '';
 
   let sellThroughBody = '<div class="muted">Loading sell-through data…</div>';
   showDetail(`${displayName} — Safety Stock`, `${metricsHtml}<div id="safety-stock-sellthrough">${sellThroughBody}</div>`);
@@ -1127,14 +1160,29 @@ async function showSafetyStockDetail(sku) {
   const next3 = monthsSorted.slice(0, 3).reduce((s, r) => s + (Number(r.projected_demand) || 0), 0);
   const next6 = monthsSorted.slice(0, 6).reduce((s, r) => s + (Number(r.projected_demand) || 0), 0);
 
+  // Alex (2026-10-23): "The average and projected sellthroughs are nice, a line of context right
+  // after them would be helpful" -- compares the projected pace against the actual trailing pace
+  // in plain terms, so it's clear whether demand is expected to speed up or slow down.
+  const projectedDailyNext90 = next3 / 90;
+  let trendContext = '';
+  if (avgDaily > 0 && isFinite(projectedDailyNext90)) {
+    const pctChange = ((projectedDailyNext90 - avgDaily) / avgDaily) * 100;
+    const direction = pctChange > 2 ? 'faster' : pctChange < -2 ? 'slower' : 'about the same pace as';
+    trendContext = (pctChange > 2 || pctChange < -2)
+      ? `<div class="muted" style="font-size:12px; margin-top:2px;">That's ${Math.abs(Math.round(pctChange))}% ${direction} than the last 90 days' actual pace.</div>`
+      : `<div class="muted" style="font-size:12px; margin-top:2px;">That's ${direction} the last 90 days' actual pace.</div>`;
+  }
+
   const textHtml = `
     <div style="line-height:1.7; font-size:13px;">
       <div style="margin-bottom:6px;"><strong>Average sell-through (last 90 days):</strong> ${avgDaily.toFixed(1)} units/day — ${Math.round(actualUnits90).toLocaleString()} units total.</div>
       <div style="margin-bottom:6px;"><strong>Projected sell-through (next 90 days):</strong> ${Math.round(next3).toLocaleString()} units.</div>
       <div><strong>Projected sell-through (next 180 days):</strong> ${Math.round(next6).toLocaleString()} units.</div>
+      ${trendContext}
     </div>
     <div style="height:110px; margin-top:14px;"><canvas id="safety-stock-chart"></canvas></div>
-    <div id="safety-stock-action" style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border); font-size:13px;"></div>
+    ${conciseExplanation ? `<div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">${conciseExplanation}</div>` : ''}
+    <div id="safety-stock-action" style="font-size:13px;"></div>
   `;
   const el = document.getElementById('safety-stock-sellthrough');
   if (el) el.innerHTML = textHtml;
@@ -1201,6 +1249,65 @@ function actionPillClass(action) {
   if (action === 'On Track') return 'good';
   if (action === 'Paused') return 'watch';
   return 'watch'; // Contact Due, ETA Soon
+}
+
+// Alex (2026-10-23): "I don't see the vendor contacts due that shows the message prepped to
+// send to the vendor." buildActionDetail() explains the situation TO US; this builds the actual
+// outreach text ready to copy and send TO the vendor contact -- a separate, shorter, second-
+// person message rather than our internal explanation.
+function buildVendorMessageDraft(o) {
+  const today = new Date().toISOString().slice(0, 10);
+  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
+  const qtyFmt = o.qty != null ? `${o.qty.toLocaleString()} units of ` : '';
+  const orderRef = (o.internal_ref || o.vendor_po_number) ? ` (order ${o.internal_ref || o.vendor_po_number})` : '';
+  const greeting = o.vendor_contact_name ? `Hi ${o.vendor_contact_name.split(' ')[0]},` : 'Hi,';
+
+  let ask;
+  if (o.eta && o.eta < today && !o.landed) {
+    const daysLate = Math.round((new Date(today) - new Date(o.eta)) / 86400000);
+    ask = `Checking in on our order${orderRef} for ${qtyFmt}${itemLabel} — it was expected ${fmtDate(o.eta)} and we haven't seen it land yet (${daysLate} day${daysLate === 1 ? '' : 's'} past the original date). Could you send an updated ETA and tracking info when you get a chance?`;
+  } else if (o.next_contact && o.next_contact < today) {
+    ask = `Following up on our order${orderRef} for ${qtyFmt}${itemLabel}. Could you confirm the current status and let us know if anything's changed?`;
+  } else if (o.eta) {
+    ask = `Just checking in ahead of our order${orderRef} for ${qtyFmt}${itemLabel}, expected ${fmtDate(o.eta)}. Could you confirm it's still on track and send tracking info once it ships?`;
+  } else {
+    ask = `Checking in on our order${orderRef} for ${qtyFmt}${itemLabel}. Could you confirm the current status?`;
+  }
+
+  return `${greeting}\n\n${ask}\n\nThanks,\nThird Layer`;
+}
+
+function showVendorMessagePopup(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const message = buildVendorMessageDraft(o);
+  const contactLine = o.vendor_contact_email
+    ? `<div class="muted" style="font-size:12px; margin-bottom:8px;">To: ${o.vendor_contact_name ? o.vendor_contact_name + ' — ' : ''}${o.vendor_contact_email}</div>`
+    : `<div class="muted" style="font-size:12px; margin-bottom:8px;">No contact email on file for ${o.vendor_name || 'this vendor'} — add one on the Components tab's vendor list.</div>`;
+  const body = `
+    ${contactLine}
+    <textarea id="vendor-message-text" readonly style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; line-height:1.5; box-sizing:border-box; resize:vertical;">${message}</textarea>
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="copyVendorMessage()">Copy message</button>
+      ${o.vendor_contact_email ? `<a class="btn btn-ghost" style="padding:6px 12px; font-size:12px; text-decoration:none;" href="mailto:${o.vendor_contact_email}?subject=${encodeURIComponent((o.product_name || 'Order') + ' update')}&body=${encodeURIComponent(message)}">Open in email</a>` : ''}
+      <span id="vendor-message-copied" class="muted" style="font-size:12px; align-self:center; display:none;">Copied ✓</span>
+    </div>
+  `;
+  showDetail(`Message for ${o.vendor_name || 'vendor'}`, body);
+}
+
+function copyVendorMessage() {
+  const el = document.getElementById('vendor-message-text');
+  if (!el) return;
+  const done = () => {
+    const note = document.getElementById('vendor-message-copied');
+    if (note) { note.style.display = 'inline'; setTimeout(() => { note.style.display = 'none'; }, 2500); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(el.value).then(done).catch(() => { el.select(); document.execCommand('copy'); done(); });
+  } else {
+    el.select(); document.execCommand('copy'); done();
+  }
 }
 
 function buildActionDetail(o) {
@@ -1522,6 +1629,18 @@ async function createNewOrder(type) {
   const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
   await logAction('inventory_ledger', inserted.id, 'create', `Added new ${type === 'componentry' ? 'component' : 'finished-good'} order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
   await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
+}
+
+function showRecActionsMenu(recId, btnEl) {
+  const r = (window._recsCache || []).find(x => x.id === recId);
+  if (!r) return;
+  const btn = (label, decision) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${r.decision === decision ? 'font-weight:700;' : ''}" onclick="closeAnchoredMenu(); decideRecommendation('${recId}', '${decision}')">${r.decision === decision ? '✓ ' : ''}${label}</button>`;
+  const body = `
+    ${btn('Pending', 'pending')}
+    ${btn('Approved', 'approved')}
+    ${btn('Dismissed', 'dismissed')}
+  `;
+  showAnchoredMenu(btnEl, body);
 }
 
 function showOrderActionsMenu(ledgerId, btnEl) {
