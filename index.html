@@ -889,11 +889,25 @@ async function renderOverview() {
     grid.innerHTML = `<div class="card empty-state" style="grid-column: 1 / -1;">No open recommendations — nothing needs a decision today.</div>`;
   } else {
     grid.innerHTML = recs.map(r => `
-      <div class="card" id="rec-card-${r.id}" style="padding:12px 14px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
+      <div class="card" id="rec-card-${r.id}" style="padding:12px 14px; ${r.is_test ? 'border:2px dashed var(--watch-text);' : ''}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:2px;">
           <div><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></div>
-          <span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span>
+          <div style="text-align:right;">
+            ${r.is_test ? '<span class="pill watch" style="font-size:9px; display:block; margin-bottom:3px;" title="Synthetic data for UI testing only -- not a real finding">⚠ TEST DATA</span>' : ''}
+            <span class="urgency-badge urgency-${r.urgency}">${r.urgency}</span>
+          </div>
         </div>
+        <!-- Alex (2026-10-22): "The buttons top right should have a well thought out contextual
+             reason presented simply" -- a one-line, plain-language reason for the urgency level,
+             right under the badge, so "why is this CRITICAL" is answered at a glance without a
+             click-through. -->
+        <div class="muted" style="font-size:11px; text-align:right; margin-bottom:6px;">${
+          r.days_until_deadline < 0
+            ? `Past deadline by ${Math.abs(r.days_until_deadline)} day${Math.abs(r.days_until_deadline) === 1 ? '' : 's'}`
+            : r.days_until_deadline <= 14
+              ? `Only ${r.days_until_deadline} day${r.days_until_deadline === 1 ? '' : 's'} left to decide`
+              : `${r.days_until_deadline} days until deadline — time to plan`
+        }</div>
         <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
           <span class="pill clickable-pill watch" onclick="showRecommendationDetail('${r.id}')">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
           <span style="font-size:12px;">Current inventory: <strong style="font-size:14px; color:${(() => { const ss = (window._safetyStockBySku || {})[r.products.sku_code]; if (r.current_qoh == null || ss == null) return 'var(--ink)'; if (r.current_qoh < ss) return 'var(--bad-text)'; if (r.current_qoh < ss * 1.25) return 'var(--watch-text)'; return 'var(--good-text)'; })()};">${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
@@ -1648,7 +1662,7 @@ async function renderComponents() {
     sb.from('products').select('id, sku_code, display_name, product_type'),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, product_id').eq('is_active', true),
-    sb.from('agent_recommendations').select('product_id, urgency, last_responsible_date, recommended_order_qty, component_recs').neq('decision', 'dismissed'),
+    sb.from('agent_recommendations').select('product_id, urgency, last_responsible_date, recommended_order_qty, component_recs').neq('decision', 'dismissed').eq('is_test', false),
   ]);
 
   const productBySku = {};
@@ -2148,7 +2162,7 @@ async function renderRevenue() {
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
     sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
     sb.from('component_qoh').select('*'),
-    sb.from('agent_recommendations').select('product_id, urgency, shortfall_month, shortfall_qty, last_responsible_date, recommended_order_qty, problem_type, decision'),
+    sb.from('agent_recommendations').select('product_id, urgency, shortfall_month, shortfall_qty, last_responsible_date, recommended_order_qty, problem_type, decision').eq('is_test', false),
     sb.from('product_inventory_snapshot').select('channel, qty, products(sku_code)').eq('channel', 'shopify'),
     sb.from('purchase_orders').select('*, vendors(vendor_name, default_lead_days), products(sku_code, display_name), revenue_scenarios(name)').not('source_scenario_id', 'is', null).order('created_at', { ascending: false }),
     sb.from('historical_revenue_pct').select('product_id, channel, month, gross_sales, net_items_sold').gte('month', histStartIso).eq('channel', 'shopify'),
