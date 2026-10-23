@@ -141,6 +141,7 @@
     padding: 12px 14px; background: #2B2622; color: #F4EFE6; display: flex;
     align-items: center; justify-content: space-between; flex-shrink: 0;
   }
+  #manny-chat-header .btn-ghost:hover { background: rgba(244,239,230,0.18) !important; }
   #manny-chat-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
   .manny-chat-bubble { max-width: 85%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.4; white-space: pre-wrap; }
   .manny-chat-bubble.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
@@ -231,8 +232,8 @@
   <div id="manny-chat-header">
     <div><strong>Manny</strong><div class="muted" style="font-size:10px; color:#C9BFAF;">Ask about anything on this dashboard</div></div>
     <div style="display:flex; gap:4px; align-items:center;">
-      <button class="btn btn-ghost" style="padding:2px 8px; font-size:11px; color:#F4EFE6;" onclick="startNewMannyChat()" title="Archive this conversation and start fresh">New chat</button>
-      <button class="btn btn-ghost" style="padding:2px 8px; font-size:14px; color:#F4EFE6;" onclick="toggleMannyChat()">✕</button>
+      <button class="btn btn-ghost" style="padding:2px 8px; font-size:11px; color:#F4EFE6; background:transparent; border-color:rgba(244,239,230,0.4);" onclick="startNewMannyChat()" title="Archive this conversation and start fresh">New chat</button>
+      <button class="btn btn-ghost" style="padding:2px 8px; font-size:14px; color:#F4EFE6; background:transparent; border-color:rgba(244,239,230,0.4);" onclick="toggleMannyChat()">✕</button>
     </div>
   </div>
   <div id="manny-chat-messages"></div>
@@ -734,15 +735,18 @@ async function renderOverview() {
     // comparable on the same methodology. Day 1 of the month has no meaningful "yesterday"
     // (that's last month's pacing, a different goal entirely), so it's left undefined.
     let pctOfPaceYesterday = null;
+    let mtdYesterday = null;
+    let expectedPaceYesterday = null;
     if (daysElapsed > 1) {
-      const mtdYesterday = chanActuals.filter(r => r.revenue_date < todayDateStr).reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0);
-      const expectedPaceYesterday = (forecastFullMonth / daysInMonth) * (daysElapsed - 1);
+      mtdYesterday = chanActuals.filter(r => r.revenue_date < todayDateStr).reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0);
+      expectedPaceYesterday = (forecastFullMonth / daysInMonth) * (daysElapsed - 1);
       pctOfPaceYesterday = expectedPaceYesterday > 0 ? (mtdYesterday / expectedPaceYesterday) * 100 : null;
     }
 
-    revenuePacing[channel] = { mtd, forecastFullMonth, expectedPace, pctOfGoal, pctOfPace, pctOfPaceYesterday };
+    revenuePacing[channel] = { mtd, forecastFullMonth, expectedPace, pctOfGoal, pctOfPace, pctOfPaceYesterday, mtdYesterday, expectedPaceYesterday, daysElapsed, daysInMonth };
   });
   window._revenuePacing = revenuePacing;
+  window._revenuePacingMonthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
   const today = new Date().toISOString().slice(0, 10);
   const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -775,13 +779,15 @@ async function renderOverview() {
     const fillPct = Math.min(100, p.pctOfGoal);
     const paceLabel = p.pctOfPace >= 100 ? `${(p.pctOfPace - 100).toFixed(0)}% ahead of pace` : `${(100 - p.pctOfPace).toFixed(0)}% behind pace`;
     // Day-over-day trend: how pctOfPace moved since yesterday's equivalent snapshot. "—" on day 1
-    // of the month, since there's no same-basis "yesterday" to compare against.
+    // of the month, since there's no same-basis "yesterday" to compare against. Made clickable
+    // (Alex, 2026-10-22: "more explanatory on the comparison to yesterday") -- the badge itself
+    // stays compact, full plain-language explanation lives in showPacingTrendDetail's popup.
     let trendHtml = '<span class="muted" style="font-size:11px;">—</span>';
     if (p.pctOfPaceYesterday != null) {
       const delta = p.pctOfPace - p.pctOfPaceYesterday;
       const trendColor = delta > 0.5 ? 'var(--good-text)' : (delta < -0.5 ? 'var(--bad-text)' : 'var(--text-muted, #8A7257)');
       const arrow = delta > 0.5 ? '▲' : (delta < -0.5 ? '▼' : '▬');
-      trendHtml = `<span style="font-size:11px; font-weight:700; color:${trendColor};">${arrow} ${Math.abs(delta).toFixed(0)} pt${Math.abs(delta) >= 1.5 ? 's' : ''} vs yesterday</span>`;
+      trendHtml = `<button class="btn btn-ghost clickable-pill" style="padding:2px 6px; font-size:11px; font-weight:700; color:${trendColor}; border-color:transparent; background:transparent;" onclick="showPacingTrendDetail('${channel}')">${arrow} ${Math.abs(delta).toFixed(0)} pt${Math.abs(delta) >= 1.5 ? 's' : ''} vs yesterday</button>`;
     }
     return `
       <div style="display:flex; align-items:center; gap:10px; padding:6px 0;">
@@ -981,14 +987,14 @@ async function showSafetyStockDetail(sku) {
   // who wants the narrative "why" rather than just the numbers.
   const metricsHtml = detail ? `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; margin-bottom:10px;">
-      <div><div class="muted" style="font-size:10px;">SERVICE LEVEL</div><div style="font-size:15px; font-weight:700;">${detail.service_level_pct}%</div></div>
-      <div><div class="muted" style="font-size:10px;">LEAD TIME</div><div style="font-size:15px; font-weight:700;">${detail.lead_time} days</div></div>
-      <div><div class="muted" style="font-size:10px;">DAILY DEMAND VARIANCE (σ)</div><div style="font-size:15px; font-weight:700;">±${Math.round(detail.sigma).toLocaleString()} units/day</div></div>
-      <div><div class="muted" style="font-size:10px;">SAMPLE WINDOW</div><div style="font-size:15px; font-weight:700;">${detail.n_days_sampled} days</div></div>
-      <div><div class="muted" style="font-size:10px;">STATISTICAL SAFETY STOCK</div><div style="font-size:15px; font-weight:700;">${detail.statistical_qty.toLocaleString()} units</div></div>
-      <div><div class="muted" style="font-size:10px;">MOQ BUFFER</div><div style="font-size:15px; font-weight:700;">${detail.buffer_multiplier}x</div></div>
+      <div><div class="muted" style="font-size:10px;">SERVICE LEVEL ${infoIcon('The % of the time we want to have enough stock on hand to never run out, assuming demand behaves like it has historically. 98% means we accept roughly a 2% chance of a stockout before the next restock arrives.')}</div><div style="font-size:15px; font-weight:700;">${detail.service_level_pct}%</div></div>
+      <div><div class="muted" style="font-size:10px;">LEAD TIME ${infoIcon('How many days it takes to get more of this product\'s components once an order is placed — the longest lead time across its preferred vendors. The longer this is, the more buffer stock is needed to survive a bad forecast.')}</div><div style="font-size:15px; font-weight:700;">${detail.lead_time} days</div></div>
+      <div><div class="muted" style="font-size:10px;">DAILY DEMAND VARIANCE (σ) ${infoIcon('Standard deviation of daily unit sales over the sample window below. A bigger number means demand swings more day to day, so more buffer is needed to stay covered even on an unusually high-demand day.')}</div><div style="font-size:15px; font-weight:700;">±${Math.round(detail.sigma).toLocaleString()} units/day</div></div>
+      <div><div class="muted" style="font-size:10px;">SAMPLE WINDOW ${infoIcon('How many trailing days of real sales history the demand variance figure is calculated from.')}</div><div style="font-size:15px; font-weight:700;">${detail.n_days_sampled} days</div></div>
+      <div><div class="muted" style="font-size:10px;">STATISTICAL SAFETY STOCK ${infoIcon('The formula result before the MOQ buffer: Service Level Z-score × Daily Demand Variance × √(Lead Time). This covers demand uncertainty alone.')}</div><div style="font-size:15px; font-weight:700;">${detail.statistical_qty.toLocaleString()} units</div></div>
+      <div><div class="muted" style="font-size:10px;">MOQ BUFFER ${infoIcon('An extra multiplier on top of the statistical figure, because our manufacturer requires minimum order quantities — we can\'t top up in small increments, so a bad read on timing leaves a bigger real-world gap than demand variance alone would suggest.')}</div><div style="font-size:15px; font-weight:700;">${detail.buffer_multiplier}x</div></div>
       <div style="grid-column:1 / -1; border-top:1px solid var(--border); margin-top:2px; padding-top:8px;">
-        <div class="muted" style="font-size:10px;">FINAL SAFETY STOCK</div><div style="font-size:19px; font-weight:800; color:var(--accent);">${detail.recommended_qty.toLocaleString()} units</div>
+        <div class="muted" style="font-size:10px;">FINAL SAFETY STOCK ${infoIcon('Statistical Safety Stock × MOQ Buffer — the actual number this product\'s inventory is checked against everywhere on the dashboard.')}</div><div style="font-size:19px; font-weight:800; color:var(--accent);">${detail.recommended_qty.toLocaleString()} units</div>
       </div>
     </div>
     <details style="margin-bottom:12px;"><summary>Read the full explanation</summary><div class="muted" style="font-size:12px; margin-top:6px; line-height:1.5;">${basis}</div></details>
@@ -2707,6 +2713,31 @@ function showOutlookStatusDetail(productId) {
     </div>
   `;
   showDetail(`${p.display_name} — Status`, body);
+}
+
+function showPacingTrendDetail(channel) {
+  const p = (window._revenuePacing || {})[channel];
+  const label = channel === 'shopify' ? 'Shopify' : 'Amazon';
+  const monthLabel = window._revenuePacingMonthLabel || '';
+  if (!p || p.noForecast || p.pctOfPaceYesterday == null) {
+    showDetail(`${label} — Pacing Trend`, `<div class="muted">No day-over-day comparison available yet (either no forecast is set for ${monthLabel}, or it's the 1st of the month — there's no same-basis "yesterday" to compare against; that would be last month's different goal).</div>`);
+    return;
+  }
+  const delta = p.pctOfPace - p.pctOfPaceYesterday;
+  const direction = delta > 0.5 ? 'improved' : (delta < -0.5 ? 'slipped' : 'held steady');
+  const narrative = `As of today (day ${p.daysElapsed} of ${p.daysInMonth}), ${label} is pacing at <strong>${p.pctOfPace.toFixed(0)}%</strong> of where it should be to hit the ${monthLabel} goal of ${fmtMoney(p.forecastFullMonth)}. Yesterday (day ${p.daysElapsed - 1}), that same figure was <strong>${p.pctOfPaceYesterday.toFixed(0)}%</strong>. So pace has <strong>${direction}</strong> by ${Math.abs(delta).toFixed(1)} point${Math.abs(delta) >= 1.5 ? 's' : ''} in the last 24 hours.`;
+  const methodNote = `"Pace" compares actual MTD revenue to what you'd expect if the month's revenue landed perfectly evenly across every day (full-month goal ÷ days in month × days elapsed). 100% means exactly on track; above 100% means ahead; below means behind. The day-over-day number is the same calculation run one day apart, so it isolates whether the LAST day specifically helped or hurt your pace — not just whether you're ahead or behind overall.`;
+  const body = `
+    <div style="font-size:13px; line-height:1.6; margin-bottom:10px;">${narrative}</div>
+    <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:10px;">
+      <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">MTD revenue (today)</td><td style="padding:3px 8px; text-align:right; font-weight:700;">${fmtMoney(p.mtd)}</td></tr>
+      <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">MTD revenue (yesterday)</td><td style="padding:3px 8px; text-align:right; font-weight:700;">${fmtMoney(p.mtdYesterday)}</td></tr>
+      <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">Expected pace (today)</td><td style="padding:3px 8px; text-align:right;">${fmtMoney(p.expectedPace)}</td></tr>
+      <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">Expected pace (yesterday)</td><td style="padding:3px 8px; text-align:right;">${fmtMoney(p.expectedPaceYesterday)}</td></tr>
+    </table>
+    <details><summary>How "pace" is calculated</summary><div class="muted" style="font-size:12px; margin-top:6px; line-height:1.5;">${methodNote}</div></details>
+  `;
+  showDetail(`${label} — Pacing Trend`, body);
 }
 
 function checkComponentFeasibility(productSku, qty) {
