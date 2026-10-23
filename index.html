@@ -701,9 +701,11 @@ async function renderOverview() {
   const now = new Date();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysElapsed = now.getDate();
+  const todayDateStr = now.toISOString().slice(0, 10);
   const revenuePacing = {};
   ['shopify', 'amazon'].forEach(channel => {
-    const mtd = (revActuals || []).filter(r => r.channel === channel).reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0);
+    const chanActuals = (revActuals || []).filter(r => r.channel === channel);
+    const mtd = chanActuals.reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0);
     const forecastRow = (revForecasts || []).find(r => r.channel === channel);
     if (!forecastRow) {
       revenuePacing[channel] = { mtd, noForecast: true };
@@ -713,7 +715,19 @@ async function renderOverview() {
     const expectedPace = daysInMonth ? (forecastFullMonth / daysInMonth) * daysElapsed : 0;
     const pctOfGoal = forecastFullMonth > 0 ? (mtd / forecastFullMonth) * 100 : 0;
     const pctOfPace = expectedPace > 0 ? (mtd / expectedPace) * 100 : 0;
-    revenuePacing[channel] = { mtd, forecastFullMonth, expectedPace, pctOfGoal, pctOfPace };
+
+    // "How were we pacing yesterday" -- reconstruct the same pctOfPace figure as of yesterday
+    // (MTD excluding today's partial day, days-elapsed minus 1), so the two are directly
+    // comparable on the same methodology. Day 1 of the month has no meaningful "yesterday"
+    // (that's last month's pacing, a different goal entirely), so it's left undefined.
+    let pctOfPaceYesterday = null;
+    if (daysElapsed > 1) {
+      const mtdYesterday = chanActuals.filter(r => r.revenue_date < todayDateStr).reduce((sum, r) => sum + Number(r.gross_revenue || 0), 0);
+      const expectedPaceYesterday = (forecastFullMonth / daysInMonth) * (daysElapsed - 1);
+      pctOfPaceYesterday = expectedPaceYesterday > 0 ? (mtdYesterday / expectedPaceYesterday) * 100 : null;
+    }
+
+    revenuePacing[channel] = { mtd, forecastFullMonth, expectedPace, pctOfGoal, pctOfPace, pctOfPaceYesterday };
   });
   window._revenuePacing = revenuePacing;
 
@@ -747,14 +761,26 @@ async function renderOverview() {
     const barColor = p.pctOfPace >= 95 ? 'var(--good-text)' : (p.pctOfPace >= 80 ? 'var(--watch-text)' : 'var(--bad-text)');
     const fillPct = Math.min(100, p.pctOfGoal);
     const paceLabel = p.pctOfPace >= 100 ? `${(p.pctOfPace - 100).toFixed(0)}% ahead of pace` : `${(100 - p.pctOfPace).toFixed(0)}% behind pace`;
+    // Day-over-day trend: how pctOfPace moved since yesterday's equivalent snapshot. "—" on day 1
+    // of the month, since there's no same-basis "yesterday" to compare against.
+    let trendHtml = '<span class="muted" style="font-size:11px;">—</span>';
+    if (p.pctOfPaceYesterday != null) {
+      const delta = p.pctOfPace - p.pctOfPaceYesterday;
+      const trendColor = delta > 0.5 ? 'var(--good-text)' : (delta < -0.5 ? 'var(--bad-text)' : 'var(--text-muted, #8A7257)');
+      const arrow = delta > 0.5 ? '▲' : (delta < -0.5 ? '▼' : '▬');
+      trendHtml = `<span style="font-size:11px; font-weight:700; color:${trendColor};">${arrow} ${Math.abs(delta).toFixed(0)} pt${Math.abs(delta) >= 1.5 ? 's' : ''} vs yesterday</span>`;
+    }
     return `
       <div style="display:flex; align-items:center; gap:10px; padding:6px 0;">
         <div style="width:70px; font-size:12px; font-weight:600;">${label}</div>
-        <div style="flex:1; background:var(--border); border-radius:6px; height:10px; overflow:hidden;">
-          <div style="width:${fillPct}%; background:${barColor}; height:100%;"></div>
+        <div style="position:relative; flex:1; background:var(--border); border-radius:6px; height:24px; overflow:hidden;">
+          <div style="position:absolute; inset:0; width:${fillPct}%; background:${barColor}; height:100%; border-radius:6px;"></div>
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.55); white-space:nowrap; padding:0 6px;">
+            ${fmtMoney(p.mtd)} of ${fmtMoney(p.forecastFullMonth)} goal — ${paceLabel}
+          </div>
         </div>
         <div style="width:42px; text-align:right; font-size:13px; font-weight:700; color:${barColor};">${p.pctOfGoal.toFixed(0)}%</div>
-        <div class="muted" style="font-size:11px; width:230px;">${fmtMoney(p.mtd)} of ${fmtMoney(p.forecastFullMonth)} goal — ${paceLabel}</div>
+        <div style="width:120px; text-align:right;">${trendHtml}</div>
         <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="editRevenueForecast('${channel}')">✎</button>
       </div>
     `;
