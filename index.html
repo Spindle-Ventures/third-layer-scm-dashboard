@@ -455,6 +455,26 @@ function buildRecommendationNarrative(r) {
   return sentence;
 }
 
+// Alex (2026-10-23, round 3): "The reasoning for the recommendation can take up the space next
+// to 'Shortfall'." A short, single-line version of the narrative above for the compact card --
+// fills the space previously used by the "On hand: N" badge, which is still visible in the full
+// popup (click the urgency badge) for anyone who wants it.
+function buildRecShortReason(r) {
+  if (r.problem_type === 'shortfall' && r.shortfall_qty != null && r.shortfall_month) {
+    return `${r.shortfall_qty.toLocaleString()} short by ${fmtDate(r.shortfall_month)}`;
+  }
+  if (r.problem_type === 'vendor_delay') {
+    return r.shortfall_month ? `Vendor delay risks a shortfall by ${fmtDate(r.shortfall_month)}` : 'Vendor delay puts the timeline at risk';
+  }
+  if (r.problem_type === 'overdue_contact') {
+    return 'Vendor check-in is overdue';
+  }
+  if (r.problem_type === 'safety_stock_review') {
+    return 'Safety stock policy due for review';
+  }
+  return r.shortfall_qty != null ? `${r.shortfall_qty.toLocaleString()} units short` : 'Needs a decision';
+}
+
 const PROBLEM_LABELS = {
   shortfall: 'Shortfall',
   vendor_delay: 'Vendor Delay',
@@ -956,13 +976,10 @@ async function renderOverview() {
   if (!recs || recs.length === 0) {
     grid.innerHTML = `<div class="card empty-state" style="grid-column: 1 / -1;">No open recommendations — nothing needs a decision today.</div>`;
   } else {
-    // Alex (2026-10-23, round 2): "Instead of the pending picklist there should be an action
-    // button that pops up a mini box right next to it similar to the action box in the 'Open
-    // orders by product' section. Also the pop up box should be after clicking the status
-    // message 'Watch' or 'Critical'." Swapped the Pending/Approved/Dismissed <select> for a
-    // "..." button -> showAnchoredMenu (same pattern as showOrderActionsMenu), and moved the
-    // plain-language narrative popup onto the urgency badge itself -- removed the separate (i)
-    // icon from the first round since the badge now IS the click target, one affordance not two.
+    // Alex (2026-10-23, round 3): "The reasoning for the recommendation can take up the space
+    // next to 'Shortfall', the action button should be more intuitive ... The three dots isn't
+    // intuitive." Replaced "On hand: N" with the short plain-language reason; replaced "..." with
+    // a labeled "Decide" button so it reads as the actionable control, not a generic overflow menu.
     grid.innerHTML = recs.map(r => `
       <div class="card" id="rec-card-${r.id}" style="padding:8px 10px; ${r.is_test ? 'border:2px dashed var(--watch-text);' : ''}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1px;">
@@ -970,7 +987,7 @@ async function renderOverview() {
           <div style="text-align:right; display:flex; align-items:center; gap:5px;">
             ${r.is_test ? '<span class="pill watch" style="font-size:9px;" title="Synthetic data for UI testing only -- not a real finding">⚠ TEST</span>' : ''}
             <span class="urgency-badge urgency-${r.urgency} clickable-pill" title="Click to see what's going on" onclick="showRecommendationDetail('${r.id}')" style="font-size:10px; padding:2px 7px;">${r.urgency}</span>
-            ${canEdit() ? `<button type="button" class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" title="Actions" onclick="showRecActionsMenu('${r.id}', this)">⋯</button>` : ''}
+            ${canEdit() ? `<button type="button" class="btn btn-primary" style="padding:3px 9px; font-size:11px; line-height:1.3; white-space:nowrap;" title="Decide: Pending, Approved, or Dismissed" onclick="showRecActionsMenu('${r.id}', this)">Decide ▾</button>` : ''}
           </div>
         </div>
         <!-- Alex (2026-10-22): "The buttons top right should have a well thought out contextual
@@ -984,9 +1001,9 @@ async function renderOverview() {
               ? `Only ${r.days_until_deadline} day${r.days_until_deadline === 1 ? '' : 's'} left to decide`
               : `${r.days_until_deadline} days until deadline — time to plan`
         }</div>
-        <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin-bottom:4px; flex-wrap:wrap;">
-          <span class="pill" style="font-size:11px; padding:2px 8px;">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
-          <span style="font-size:11px;">On hand: <strong style="font-size:12px; color:${(() => { const ss = (window._safetyStockBySku || {})[r.products.sku_code]; if (r.current_qoh == null || ss == null) return 'var(--ink)'; if (r.current_qoh < ss) return 'var(--bad-text)'; if (r.current_qoh < ss * 1.25) return 'var(--watch-text)'; return 'var(--good-text)'; })()};">${r.current_qoh != null ? r.current_qoh.toLocaleString() : '—'}</strong></span>
+        <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin-bottom:4px; flex-wrap:nowrap;">
+          <span class="pill" style="font-size:11px; padding:2px 8px; flex-shrink:0;">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
+          <span class="muted" style="font-size:11px; text-align:right;">${buildRecShortReason(r)}</span>
         </div>
         ${!canEdit() ? `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}" style="font-size:11px;">${r.decision}</span>` : ''}
       </div>
