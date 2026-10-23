@@ -674,7 +674,7 @@ async function renderOverview() {
     sb.from('open_orders_by_product').select('*'),
     sb.from('qc_runs').select('*').order('run_at', { ascending: false }).limit(1),
     sb.from('product_inventory_snapshot').select('*, products(sku_code)'),
-    sb.from('product_qoh').select('product_id, sku_code, display_name, safety_stock_qty, safety_stock_basis'),
+    sb.from('product_qoh').select('product_id, sku_code, display_name, safety_stock_qty, safety_stock_basis, safety_stock_detail'),
     sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', monthStartIso).lte('revenue_date', todayIso),
     sb.from('revenue_forecasts').select('channel, forecast_revenue').eq('forecast_month', monthStartIso),
   ]);
@@ -688,10 +688,12 @@ async function renderOverview() {
   });
   window._safetyStockBySku = {};
   window._safetyStockBasisBySku = {};
+  window._safetyStockDetailBySku = {};
   window._productBySku = {};
   (qohRows || []).forEach(r => {
     window._safetyStockBySku[r.sku_code] = r.safety_stock_qty;
     window._safetyStockBasisBySku[r.sku_code] = r.safety_stock_basis;
+    window._safetyStockDetailBySku[r.sku_code] = r.safety_stock_detail;
     window._productBySku[r.sku_code] = { product_id: r.product_id, display_name: r.display_name };
   });
 
@@ -960,9 +962,29 @@ async function showSafetyStockDetail(sku) {
   const product = (window._productBySku || {})[sku];
   const displayName = product?.display_name || sku;
   const basis = (window._safetyStockBasisBySku || {})[sku] || 'No rationale on file — this product may not have enough sales history yet for the calculation.';
+  const detail = (window._safetyStockDetailBySku || {})[sku];
+
+  // Alex (2026-10-22): "we just really need easy to follow metrics from the text - right now it's
+  // too text heavy as a popup." Lead with a compact metric grid built from the same numbers the
+  // prose paragraph is generated from; keep the full sentence available but collapsed, for anyone
+  // who wants the narrative "why" rather than just the numbers.
+  const metricsHtml = detail ? `
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; margin-bottom:10px;">
+      <div><div class="muted" style="font-size:10px;">SERVICE LEVEL</div><div style="font-size:15px; font-weight:700;">${detail.service_level_pct}%</div></div>
+      <div><div class="muted" style="font-size:10px;">LEAD TIME</div><div style="font-size:15px; font-weight:700;">${detail.lead_time} days</div></div>
+      <div><div class="muted" style="font-size:10px;">DAILY DEMAND VARIANCE (σ)</div><div style="font-size:15px; font-weight:700;">±${Math.round(detail.sigma).toLocaleString()} units/day</div></div>
+      <div><div class="muted" style="font-size:10px;">SAMPLE WINDOW</div><div style="font-size:15px; font-weight:700;">${detail.n_days_sampled} days</div></div>
+      <div><div class="muted" style="font-size:10px;">STATISTICAL SAFETY STOCK</div><div style="font-size:15px; font-weight:700;">${detail.statistical_qty.toLocaleString()} units</div></div>
+      <div><div class="muted" style="font-size:10px;">MOQ BUFFER</div><div style="font-size:15px; font-weight:700;">${detail.buffer_multiplier}x</div></div>
+      <div style="grid-column:1 / -1; border-top:1px solid var(--border); margin-top:2px; padding-top:8px;">
+        <div class="muted" style="font-size:10px;">FINAL SAFETY STOCK</div><div style="font-size:19px; font-weight:800; color:var(--accent);">${detail.recommended_qty.toLocaleString()} units</div>
+      </div>
+    </div>
+    <details style="margin-bottom:12px;"><summary>Read the full explanation</summary><div class="muted" style="font-size:12px; margin-top:6px; line-height:1.5;">${basis}</div></details>
+  ` : `<div style="margin-bottom:12px;">${basis}</div>`;
 
   let sellThroughBody = '<div class="muted">Loading sell-through data…</div>';
-  showDetail(`${displayName} — Safety Stock`, `<div style="margin-bottom:12px;">${basis}</div><div id="safety-stock-sellthrough">${sellThroughBody}</div>`);
+  showDetail(`${displayName} — Safety Stock`, `${metricsHtml}<div id="safety-stock-sellthrough">${sellThroughBody}</div>`);
 
   if (!product?.product_id) return;
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -2109,7 +2131,7 @@ async function renderRevenue() {
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
     sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
     sb.from('component_qoh').select('*'),
-    sb.from('agent_recommendations').select('product_id, urgency, shortfall_month, shortfall_qty, last_responsible_date, recommended_order_qty, problem_type').neq('decision', 'dismissed'),
+    sb.from('agent_recommendations').select('product_id, urgency, shortfall_month, shortfall_qty, last_responsible_date, recommended_order_qty, problem_type, decision'),
     sb.from('product_inventory_snapshot').select('channel, qty, products(sku_code)').eq('channel', 'shopify'),
     sb.from('purchase_orders').select('*, vendors(vendor_name, default_lead_days), products(sku_code, display_name), revenue_scenarios(name)').not('source_scenario_id', 'is', null).order('created_at', { ascending: false }),
     sb.from('historical_revenue_pct').select('product_id, channel, month, gross_sales, net_items_sold').gte('month', histStartIso).eq('channel', 'shopify'),
@@ -2199,8 +2221,14 @@ async function renderRevenue() {
     scenarios: scenarios || [], selectedScenarioId: window._revState?.selectedScenarioId || 'live',
     draftChannel: null, draftMix: null,
     vendors: vendors || [], componentQoh: componentQoh || [],
-    activeRecByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r.urgency])),
-    activeRecFullByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r])),
+    // activeRecFullByProduct/activeRecByProduct: ACTIVE (non-dismissed) only -- drives urgency
+    // sort/pills and the "engine disagrees" flag. anyRecFullByProduct: every rec regardless of
+    // decision, including dismissed -- so the Status popup can always show "the real engine found
+    // this, here's what happened to it" rather than silently hiding a dismissed finding (Alex,
+    // 2026-10-22: "why doesn't it show up in the Product Mix Inventory outlook as an issue").
+    activeRecByProduct: Object.fromEntries((activeRecs || []).filter(r => r.decision !== 'dismissed').map(r => [r.product_id, r.urgency])),
+    activeRecFullByProduct: Object.fromEntries((activeRecs || []).filter(r => r.decision !== 'dismissed').map(r => [r.product_id, r])),
+    anyRecFullByProduct: Object.fromEntries((activeRecs || []).map(r => [r.product_id, r])),
     draftPOs: [],
     committedScenarioPOs: committedScenarioPOs || [],
     shippingShareByChannel, historicalAspByProduct,
@@ -2609,14 +2637,17 @@ function showOutlookStatusDetail(productId) {
   const series = projections[p.sku_code] || [];
   const safety = p.safety_stock_qty || 0;
   const outlookStatus = window.RevenueLogic.computeOutlookStatus({ series, safetyStock: safety });
-  const backendRec = S.activeRecFullByProduct?.[productId];
+  const backendRec = S.anyRecFullByProduct?.[productId];
+  const backendRecIsActive = backendRec && backendRec.decision !== 'dismissed';
   const isLiveView = S.selectedScenarioId === 'live';
-  // Prefer the real PO-recommendation engine's numbers when an active one exists; otherwise fall
+  // Prefer the real PO-recommendation engine's numbers when an ACTIVE one exists; otherwise fall
   // back to this tab's own quick estimate (computeRecommendedPoQty) -- either way, "If the Status
-  // is Issue it should come with a recommended PO initiation with all info filled out" (Alex).
+  // is Issue it should come with a recommended PO initiation with all info filled out" (Alex). A
+  // DISMISSED backend rec is shown for context only (see body below) -- a human already decided
+  // it needs no action, so it must never silently drive what this button pre-fills.
   const fallbackQty = window.RevenueLogic.computeRecommendedPoQty({ series, firstIssueIndex: outlookStatus.firstIssueIndex, safetyStock: safety });
-  const recommendedQty = backendRec ? (backendRec.recommended_order_qty || 0) : fallbackQty;
-  const recommendedMonth = backendRec?.shortfall_month
+  const recommendedQty = backendRecIsActive ? (backendRec.recommended_order_qty || 0) : fallbackQty;
+  const recommendedMonth = backendRecIsActive && backendRec.shortfall_month
     ? backendRec.shortfall_month.slice(0, 7)
     : (outlookStatus.firstIssueIndex != null ? months[outlookStatus.firstIssueIndex] : months[0]);
 
@@ -2639,14 +2670,14 @@ function showOutlookStatusDetail(productId) {
       <div class="section-label" style="margin:10px 0 4px; font-size:11px;">Recommendation</div>
       ${backendRec ? `
         <div class="muted" style="font-size:12px; margin-bottom:4px;">
-          The full PO-recommendation engine (Overview tab) already has an active
+          The full PO-recommendation engine (Overview tab) ${backendRecIsActive ? 'already has an active' : 'found a'}
           <span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:9px;">${backendRec.urgency}</span>
           recommendation — shortfall of ${(backendRec.shortfall_qty || 0).toLocaleString()} units by
-          ${fmtDate(backendRec.shortfall_month)}.
+          ${fmtDate(backendRec.shortfall_month)}${backendRecIsActive ? '.' : `, but it was <strong>dismissed</strong> — a human already reviewed this and decided no action is needed. Shown here for context only; the button below uses this tab's own quick estimate instead.`}
         </div>
-        <div style="font-size:12px; margin-bottom:8px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>
+        ${backendRecIsActive ? `<div style="font-size:12px; margin-bottom:8px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>` : ''}
       ` : outlookStatus.status === 'ISSUE' ? `
-        <div class="muted" style="font-size:12px; margin-bottom:8px;">No active recommendation from the Overview tab's engine yet — the ${recommendedQty.toLocaleString()}-unit suggestion below is this tab's own quick estimate (enough to bring ${monthLabelShort(months[outlookStatus.firstIssueIndex])}'s projection back up to safety stock).</div>
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">No recommendation from the Overview tab's engine yet — the ${recommendedQty.toLocaleString()}-unit suggestion below is this tab's own quick estimate (enough to bring ${monthLabelShort(months[outlookStatus.firstIssueIndex])}'s projection back up to safety stock).</div>
       ` : ''}
       ${canEdit() && outlookStatus.status === 'ISSUE' ? `
         <button class="btn btn-primary" style="padding:6px 12px; font-size:12px; margin-bottom:4px;" onclick="document.getElementById('detail-modal-backdrop').remove(); ${
@@ -2965,8 +2996,16 @@ function renderRevenueBody() {
     // Alex (2026-10-22): "to the right of EOM Mar 27 let's have a Status where it'll show healthy
     // or an issue and then a pop up box with the recommendations."
     const outlookStatus = window.RevenueLogic.computeOutlookStatus({ series, safetyStock: p.safety_stock_qty || 0 });
-    const statusCell = `<button class="btn btn-ghost" style="padding:0;" onclick="showOutlookStatusDetail('${p.product_id}')">
-      <span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span>
+    // "Why doesn't it show up in the Product Mix Inventory outlook as an issue" (Alex, 2026-10-22)
+    // -- this tab's own quick continuous-demand estimate and the real lead-time/MOQ-aware
+    // PO-recommendation engine (Overview tab) can genuinely disagree. When the real engine has an
+    // ACTIVE (non-dismissed) finding but this tab's own quick check says Healthy, flag it visibly
+    // right on the pill rather than only in the popup -- so a disagreement is never silently
+    // invisible at a glance.
+    const activeBackendRec = S.activeRecFullByProduct?.[p.product_id];
+    const disagrees = outlookStatus.status === 'HEALTHY' && !!activeBackendRec;
+    const statusCell = `<button class="btn btn-ghost" style="padding:0;" onclick="showOutlookStatusDetail('${p.product_id}')" title="${disagrees ? 'The Overview tab recommendation engine has an active finding for this product that this quick check does not catch -- click for details.' : ''}">
+      <span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span>${disagrees ? ' <span class="pill watch" style="margin-left:2px;">⚠ engine disagrees</span>' : ''}
     </button>`;
     // Alex (2026-10-22): "Outside of scenarios I should be able to initiate a draft and commit a
     // PO to see how that solves the problem" -- answered via clarify: committed directly against
