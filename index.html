@@ -230,7 +230,10 @@
 <div id="manny-chat-panel" class="hidden">
   <div id="manny-chat-header">
     <div><strong>Manny</strong><div class="muted" style="font-size:10px; color:#C9BFAF;">Ask about anything on this dashboard</div></div>
-    <button class="btn btn-ghost" style="padding:2px 8px; font-size:14px; color:#F4EFE6;" onclick="toggleMannyChat()">✕</button>
+    <div style="display:flex; gap:4px; align-items:center;">
+      <button class="btn btn-ghost" style="padding:2px 8px; font-size:11px; color:#F4EFE6;" onclick="startNewMannyChat()" title="Archive this conversation and start fresh">New chat</button>
+      <button class="btn btn-ghost" style="padding:2px 8px; font-size:14px; color:#F4EFE6;" onclick="toggleMannyChat()">✕</button>
+    </div>
   </div>
   <div id="manny-chat-messages"></div>
   <div id="manny-chat-input-row">
@@ -311,7 +314,7 @@ async function loadApp(session) {
 // not just a link out to Slack.
 let mannyChatChannel = null;
 async function initMannyChat() {
-  const { data: history } = await sb.from('dashboard_chat_messages').select('*').order('created_at', { ascending: true }).limit(100);
+  const { data: history } = await sb.from('dashboard_chat_messages').select('*').eq('archived', false).order('created_at', { ascending: true }).limit(100);
   const el = document.getElementById('manny-chat-messages');
   el.innerHTML = (history && history.length)
     ? history.map(renderMannyChatBubble).join('')
@@ -350,6 +353,14 @@ function toggleMannyChat() {
     const msgEl = document.getElementById('manny-chat-messages');
     msgEl.scrollTop = msgEl.scrollHeight;
   }
+}
+
+async function startNewMannyChat() {
+  if (!(await showConfirmModal('Start a new conversation?', 'This archives the current chat (it stays in the database, just hidden) and clears Manny\'s memory of it -- the next message starts fresh.', 'Start New'))) return;
+  const { error } = await sb.from('dashboard_chat_messages').update({ archived: true }).eq('archived', false);
+  if (error) { alert('Failed: ' + error.message); return; }
+  const el = document.getElementById('manny-chat-messages');
+  el.innerHTML = `<div class="muted" style="font-size:12px; text-align:center; margin-top:20px;">New conversation started.</div>`;
 }
 
 async function sendMannyChatMessage() {
