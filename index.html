@@ -475,6 +475,35 @@ function showDetail(title, body, size) {
   document.body.appendChild(el);
 }
 
+// Alex (2026-10-22): "The actions button should pop up the actions popup box right next to the
+// icon when clicked and stick there when scrolling." A small action-list popup (Actions menu on
+// an order row) reads wrong as a big centered modal -- it should anchor to the exact icon that
+// opened it. Uses document-flow `position:absolute` coordinates (not `fixed`), so the menu scrolls
+// together with its anchor row rather than staying pinned to one spot on screen while the row
+// scrolls away underneath it.
+function showAnchoredMenu(anchorEl, itemsHtml) {
+  document.getElementById('anchored-menu')?.remove();
+  document.getElementById('anchored-menu-backdrop')?.remove();
+  const rect = anchorEl.getBoundingClientRect();
+  const menuWidth = 190;
+  const left = Math.min(rect.left + window.scrollX, document.documentElement.scrollWidth - menuWidth - 12);
+  const backdrop = document.createElement('div');
+  backdrop.id = 'anchored-menu-backdrop';
+  backdrop.style.cssText = 'position:fixed; inset:0; z-index:2500; background:transparent;';
+  backdrop.onclick = () => { backdrop.remove(); menu.remove(); };
+  const menu = document.createElement('div');
+  menu.id = 'anchored-menu';
+  menu.className = 'card';
+  menu.style.cssText = `position:absolute; top:${rect.bottom + window.scrollY + 4}px; left:${left}px; width:${menuWidth}px; z-index:2501; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,0.22);`;
+  menu.innerHTML = itemsHtml;
+  document.body.appendChild(backdrop);
+  document.body.appendChild(menu);
+}
+function closeAnchoredMenu() {
+  document.getElementById('anchored-menu')?.remove();
+  document.getElementById('anchored-menu-backdrop')?.remove();
+}
+
 // Styled replacements for window.prompt()/confirm() -- same detail-modal visual language as the
 // rest of the dashboard, matching Alex's request (2026-10-21) to drop the browser-chrome dialogs.
 function showPromptModal(title, message, defaultValue, inputType) {
@@ -1300,7 +1329,7 @@ function renderOpenOrderRow(o, editing) {
   }
   return `
     <tr id="row-${o.ledger_id}">
-      <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}')" title="Actions">⋯</button>` : ''}</td>
+      <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}', this)" title="Actions">⋯</button>` : ''}</td>
       <td><span class="pill watch">${orderTypeLabel}</span></td>
       <td>${componentText}</td>
       <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showOpenOrderDetail('${o.ledger_id}')">${o.action_needed}</span></td>
@@ -1423,10 +1452,10 @@ async function createNewOrder(type) {
   await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
 }
 
-function showOrderActionsMenu(ledgerId) {
+function showOrderActionsMenu(ledgerId, btnEl) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const btn = (label, action, danger) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${danger ? 'color:var(--bad-text);' : ''}" onclick="document.getElementById('detail-modal-backdrop').remove(); handleOrderAction('${ledgerId}', '${action}')">${label}</button>`;
+  const btn = (label, action, danger) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${danger ? 'color:var(--bad-text);' : ''}" onclick="closeAnchoredMenu(); handleOrderAction('${ledgerId}', '${action}')">${label}</button>`;
   const body = `
     ${btn('Split', 'split')}
     ${btn('Delay', 'delay')}
@@ -1435,7 +1464,7 @@ function showOrderActionsMenu(ledgerId) {
     ${btn('Mark Landed', 'land')}
     ${canDelete() ? btn('Delete Row', 'delete', true) : ''}
   `;
-  showDetail(`${o.product_name} — Actions`, body);
+  showAnchoredMenu(btnEl, body);
 }
 
 function handleOrderAction(ledgerId, action) {
@@ -1575,7 +1604,7 @@ function applyLandedOrdersFilter() {
   });
 
   const rows = filtered.map(r => [
-    canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" onclick="showLandedOrderActionsMenu('${r.ledger_id}')" title="Actions">⋯</button>` : '',
+    canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" onclick="showLandedOrderActionsMenu('${r.ledger_id}', this)" title="Actions">⋯</button>` : '',
     `<span class="pill ${r.order_type === 'componentry' ? 'watch' : 'good'}">${r.order_type === 'componentry' ? 'Component' : 'Finished Good'}</span>`,
     r.order_type === 'componentry'
       ? `<strong>${componentShortLabel(r.component_name)}</strong><br><span class="muted" style="font-size:10px;">for ${r.product_name}</span>`
@@ -1590,10 +1619,10 @@ function applyLandedOrdersFilter() {
     : '<div class="muted">No landed orders match this filter.</div>';
 }
 
-function showLandedOrderActionsMenu(ledgerId) {
+function showLandedOrderActionsMenu(ledgerId, btnEl) {
   const o = (window._landedOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const btn = (label, fn, danger) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${danger ? 'color:var(--bad-text);' : ''}" onclick="document.getElementById('detail-modal-backdrop').remove(); ${fn}">${label}</button>`;
+  const btn = (label, fn, danger) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${danger ? 'color:var(--bad-text);' : ''}" onclick="closeAnchoredMenu(); ${fn}">${label}</button>`;
   const body = `
     ${btn('Edit Quantity', `editLandedField('${ledgerId}','qty_in','number','Quantity',${o.qty})`)}
     ${btn('Edit Order #', `editLandedField('${ledgerId}','order_number','text','Order #','${(o.internal_ref || '').replace(/'/g, "\\'")}')`)}
@@ -1601,7 +1630,7 @@ function showLandedOrderActionsMenu(ledgerId) {
     ${btn('Edit Date Landed', `editLandedDate('${ledgerId}')`)}
     ${canDelete() ? btn('Delete Row', `deleteLandedOrderRow('${ledgerId}')`, true) : ''}
   `;
-  showDetail(`${o.product_name} — Actions`, body);
+  showAnchoredMenu(btnEl, body);
 }
 
 async function editLandedField(ledgerId, field, inputType, label, currentVal) {
@@ -2165,7 +2194,7 @@ async function renderRevenue() {
     sb.from('agent_recommendations').select('product_id, urgency, shortfall_month, shortfall_qty, last_responsible_date, recommended_order_qty, problem_type, decision').eq('is_test', false),
     sb.from('product_inventory_snapshot').select('channel, qty, products(sku_code)').eq('channel', 'shopify'),
     sb.from('purchase_orders').select('*, vendors(vendor_name, default_lead_days), products(sku_code, display_name), revenue_scenarios(name)').not('source_scenario_id', 'is', null).order('created_at', { ascending: false }),
-    sb.from('historical_revenue_pct').select('product_id, channel, month, gross_sales, net_items_sold').gte('month', histStartIso).eq('channel', 'shopify'),
+    sb.from('historical_revenue_pct').select('product_id, channel, month, gross_sales, total_sales, net_items_sold').gte('month', histStartIso).eq('channel', 'shopify'),
   ]);
 
   // Shopify's live inventory API is the canonical source of truth for finished-good QOH (same
@@ -2209,13 +2238,18 @@ async function renderRevenue() {
   };
   // Historical ASP, from real Shopify order data (not an assumption) -- Alex (2026-10-22): "you
   // should have historical information to drive average selling price projections and put
-  // context into the pop up box." historical_revenue_pct already records gross_sales and
-  // net_items_sold per product per month (computed via ShopifyQL); actual ASP = gross/units.
+  // context into the pop up box." Alex (2026-10-22, data-confidence follow-up): "The metric in our
+  // source sheet takes total sales divided by net units sold. The database uses gross sales
+  // divided by net units sold ... I'd like to convert to use total sales." ASP now reads
+  // total_sales (net_sales + shipping + taxes -- Shopify's "what the customer actually paid"
+  // figure), matching the source sheet's methodology; verified against live ShopifyQL data,
+  // gross-based ASP ran 12-20% high across every SKU vs. total-sales-based. gross_sales is still
+  // used separately for the revenue-mix-% calculation below, which Alex did not ask to change.
   const historicalAspByProduct = {}; // product_id -> [{month, asp, units}] oldest..newest, Shopify only
   (historicalPct || []).forEach(h => {
-    if (!h.net_items_sold) return;
+    if (!h.net_items_sold || h.total_sales == null) return;
     if (!historicalAspByProduct[h.product_id]) historicalAspByProduct[h.product_id] = [];
-    historicalAspByProduct[h.product_id].push({ month: h.month.slice(0, 7), asp: Number(h.gross_sales) / Number(h.net_items_sold), units: h.net_items_sold });
+    historicalAspByProduct[h.product_id].push({ month: h.month.slice(0, 7), asp: Number(h.total_sales) / Number(h.net_items_sold), units: h.net_items_sold });
   });
   Object.values(historicalAspByProduct).forEach(arr => arr.sort((a, b) => a.month.localeCompare(b.month)));
   const liveForecast = {};
