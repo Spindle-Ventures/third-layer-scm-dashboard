@@ -305,6 +305,34 @@ async function loadApp(session) {
 
   await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog()]);
   initMannyChat();
+  applyUrlDeepLink();
+}
+
+// Alex (2026-10-27): "buttons under each section" -- the daily digest's Landing-section button
+// links here as ?tab=overview&highlight=<ledgerId1,ledgerId2,...>, reusing the existing
+// scrollToOrderRow() "Take me there" behavior (switches to Overview, clears filters, scrolls +
+// briefly highlights). Multiple ids (several orders landing the same day) each get a quick
+// highlight flash in sequence so none of them get missed.
+function applyUrlDeepLink() {
+  const params = new URLSearchParams(window.location.search);
+  const highlight = params.get('highlight');
+  if (!highlight) return;
+  const ids = highlight.split(',').map(s => s.trim()).filter(Boolean);
+  if (!ids.length) return;
+  // scrollToOrderRow already switches to Overview + clears filters; only need to call it once
+  // (for the first id) to land in the right place, then flash the rest in place without re-
+  // scrolling away from where the user is looking.
+  scrollToOrderRow(ids[0]);
+  ids.slice(1).forEach((id, i) => {
+    setTimeout(() => {
+      const row = document.getElementById('row-' + id);
+      if (!row) return;
+      row.style.transition = 'background-color 0.3s';
+      const prevBg = row.style.backgroundColor;
+      row.style.backgroundColor = 'var(--watch-bg)';
+      setTimeout(() => { row.style.backgroundColor = prevBg; }, 1800);
+    }, (i + 1) * 400);
+  });
 }
 
 // ---------- Manny chat widget ----------
