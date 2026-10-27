@@ -608,6 +608,7 @@ function scrollToOrderRow(ledgerId) {
   if (overviewTabBtn && !overviewTabBtn.classList.contains('active')) overviewTabBtn.click();
   document.getElementById('filter-product').value = 'all';
   document.getElementById('filter-type').value = 'all';
+  document.getElementById('filter-contact-date').value = '';
   window._needsActionFilter = false;
   const toggleBtn = document.getElementById('needs-action-toggle-btn');
   if (toggleBtn) { toggleBtn.textContent = '⚑ Show Needs-Attention Only'; toggleBtn.className = 'btn btn-ghost'; }
@@ -950,6 +951,10 @@ async function renderOverview() {
             <option value="componentry">Component</option>
           </select>
         </label>
+        <label style="font-size:13px; font-weight:500;">Contact Scheduled For:
+          <input type="date" id="filter-contact-date" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:4px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';" />
+          <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px; margin-left:4px;" onclick="document.getElementById('filter-contact-date').value=''; applyOpenOrdersFilter();" title="Clear date filter">✕</button>
+        </label>
         <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
         <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
         ${canEdit() ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="showAddOrderMenu()">+ Add Order</button>` : ''}
@@ -965,8 +970,10 @@ async function renderOverview() {
   // Preserve filter selections across re-renders (e.g. after an action) instead of resetting them.
   const prevProduct = window._filterState?.product || 'all';
   const prevType = window._filterState?.type || 'all';
+  const prevContactDate = window._filterState?.contactDate || ''; // default null/empty per Alex's request
   productSelect.innerHTML = '<option value="all">All products</option>' + uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${sku === prevProduct ? 'selected' : ''}>${name} (${sku})</option>`).join('');
   document.getElementById('filter-type').value = prevType;
+  document.getElementById('filter-contact-date').value = prevContactDate;
   if (window._needsActionFilter === undefined) window._needsActionFilter = true;
 
   applyOpenOrdersFilter();
@@ -1022,12 +1029,14 @@ function applyOpenOrdersFilter() {
   const all = window._openOrdersCache || [];
   const productFilter = document.getElementById('filter-product').value;
   const typeFilter = document.getElementById('filter-type').value;
+  const contactDateFilter = document.getElementById('filter-contact-date').value; // '' = no filter (default null, per Alex's request)
   const onlyAction = window._needsActionFilter !== false;
-  window._filterState = { product: productFilter, type: typeFilter };
+  window._filterState = { product: productFilter, type: typeFilter, contactDate: contactDateFilter };
 
   const filtered = all.filter(o => {
     if (productFilter !== 'all' && o.product_sku !== productFilter) return false;
     if (typeFilter !== 'all' && o.order_type !== typeFilter) return false;
+    if (contactDateFilter && o.next_contact !== contactDateFilter) return false;
     if (onlyAction && o.action_needed === 'On Track') return false;
     return true;
   });
