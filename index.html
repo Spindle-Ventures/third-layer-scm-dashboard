@@ -2429,21 +2429,31 @@ async function renderCatalog() {
   const canAct = canEdit();
 
   const rows = (vendors || []).map(v => {
+    const isComponentSupplier = v.vendor_type === 'component_supplier';
     if (!canAct) {
-      return [v.vendor_name, v.contact_name || '—', v.contact_email || '—', v.preferred_contact_channel || '—', v.default_lead_days ?? '—', v.default_cadence_days ?? '—', v.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>', v.notes || '—'];
+      return [v.vendor_name, v.contact_name || '—', v.contact_email || '—', v.preferred_contact_channel || '—', v.default_lead_days ?? '—', v.default_cadence_days ?? '—', v.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>', isComponentSupplier ? 'Component Supplier' : 'Finished-Good Manufacturer', v.notes || '—', ''];
     }
     return [
-      `<input type="text" id="cat-vendor-name-${v.id}" value="${(v.vendor_name || '').replace(/"/g, '&quot;')}" style="width:140px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<input type="text" id="cat-vendor-contact-${v.id}" value="${(v.contact_name || '').replace(/"/g, '&quot;')}" style="width:120px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<input type="email" id="cat-vendor-email-${v.id}" value="${(v.contact_email || '').replace(/"/g, '&quot;')}" style="width:160px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="text" id="cat-vendor-name-${v.id}" value="${(v.vendor_name || '').replace(/"/g, '&quot;')}" style="width:130px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="text" id="cat-vendor-contact-${v.id}" value="${(v.contact_name || '').replace(/"/g, '&quot;')}" style="width:110px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="email" id="cat-vendor-email-${v.id}" value="${(v.contact_email || '').replace(/"/g, '&quot;')}" style="width:150px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
       `<select id="cat-vendor-channel-${v.id}" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border);">
         ${['email', 'slack', 'phone'].map(c => `<option value="${c}" ${v.preferred_contact_channel === c ? 'selected' : ''}>${c}</option>`).join('')}
       </select>`,
-      `<input type="number" id="cat-vendor-leaddays-${v.id}" value="${v.default_lead_days ?? ''}" style="width:70px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<input type="number" id="cat-vendor-cadence-${v.id}" value="${v.default_cadence_days ?? ''}" style="width:70px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="number" id="cat-vendor-leaddays-${v.id}" value="${v.default_lead_days ?? ''}" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="number" id="cat-vendor-cadence-${v.id}" value="${v.default_cadence_days ?? ''}" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
       `<input type="checkbox" id="cat-vendor-active-${v.id}" ${v.is_active ? 'checked' : ''} />`,
-      `<input type="text" id="cat-vendor-notes-${v.id}" value="${(v.notes || '').replace(/"/g, '&quot;')}" style="width:160px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />
-       <button class="btn btn-primary" style="padding:4px 10px; font-size:11px; margin-left:6px;" onclick="saveCatalogVendor('${v.id}')">Save</button>`,
+      // Alex (2026-10-30): "Private Label is always finished goods manufacturer." Editable (in
+      // case a vendor's role genuinely changes), but defaults reflect real data, not a guess.
+      `<select id="cat-vendor-type-${v.id}" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border);">
+        <option value="component_supplier" ${v.vendor_type === 'component_supplier' ? 'selected' : ''}>Component Supplier</option>
+        <option value="finished_good_manufacturer" ${v.vendor_type === 'finished_good_manufacturer' ? 'selected' : ''}>Finished-Good Manufacturer</option>
+      </select>
+      ${isComponentSupplier ? `<div style="margin-top:4px;"><button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="showManageComponentsModal('${v.id}', '${(v.vendor_name || '').replace(/'/g, "\\'")}')">Manage components</button></div>` : ''}`,
+      // Alex (2026-10-30): "Make the notes section more readable" -- was a narrow single-line
+      // <input>, now a real <textarea> that wraps and shows more than a few characters at once.
+      `<textarea id="cat-vendor-notes-${v.id}" rows="3" style="width:200px; padding:6px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter'; font-size:12px; resize:vertical;">${(v.notes || '')}</textarea>`,
+      `<button class="btn btn-primary" id="cat-vendor-save-${v.id}" style="padding:4px 10px; font-size:11px;" onclick="saveCatalogVendor('${v.id}')">Save</button>`,
     ];
   });
 
@@ -2452,9 +2462,10 @@ async function renderCatalog() {
       <div class="section-label" style="margin:0 0 4px;">Catalog — Vendors</div>
       <div class="muted" style="font-size:12px; margin-bottom:10px;">
         Full vendor record, editable in place. Changing lead time or contact cadence asks whether
-        to apply it to existing recommendations immediately or only going forward.
+        to apply it to existing recommendations immediately or only going forward. Editing one
+        vendor never discards unsaved edits you're mid-typing on another row.
       </div>
-      ${kpiTable(['Vendor', 'Contact', 'Email', 'Channel', 'Lead Days', 'Cadence Days', 'Active', 'Notes'], rows, -1)}
+      ${kpiTable(['Vendor', 'Contact', 'Email', 'Channel', 'Lead Days', 'Cadence Days', 'Active', 'Type', 'Notes', ''], rows, -1)}
     </div>
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 4px;">Catalog — Products &amp; Components</div>
@@ -2467,6 +2478,74 @@ async function renderCatalog() {
   `;
 }
 
+async function showManageComponentsModal(vendorId, vendorName) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const [{ data: allComponents }, { data: linked }] = await Promise.all([
+    sb.from('components').select('id, component_name').order('component_name'),
+    sb.from('component_vendors').select('*').eq('vendor_id', vendorId),
+  ]);
+  const linkedByComponent = {};
+  (linked || []).forEach(l => { linkedByComponent[l.component_id] = l; });
+
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  const rowsHtml = (allComponents || []).map(c => {
+    const link = linkedByComponent[c.id];
+    return `
+      <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
+        <input type="checkbox" id="mc-check-${c.id}" ${link ? 'checked' : ''} onchange="document.getElementById('mc-lead-${c.id}').disabled = !this.checked;" />
+        <div style="flex:1;">${c.component_name}</div>
+        <label style="font-size:12px; color:var(--muted);">Lead days:
+          <input type="number" id="mc-lead-${c.id}" value="${link?.lead_days ?? ''}" ${link ? '' : 'disabled'}
+            style="width:60px; padding:3px 6px; border-radius:6px; border:1px solid var(--border); margin-left:4px;"
+            placeholder="vendor default" />
+        </label>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:520px;">
+      <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Components — ${vendorName}</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+        Check every component this vendor supplies. Lead days is optional — leave blank to use
+        the vendor's default lead time (${document.getElementById(`cat-vendor-leaddays-${vendorId}`)?.value || '—'} days) for that component.
+      </div>
+      <div style="max-height:360px; overflow-y:auto;">${rowsHtml || '<div class="muted">No components found.</div>'}</div>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="btn btn-primary" id="mc-save-btn">Save</button>
+        <button class="btn btn-ghost" id="mc-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('mc-cancel-btn').onclick = () => el.remove();
+  document.getElementById('mc-save-btn').onclick = async () => {
+    const toInsert = [];
+    const toUpdate = [];
+    const toDeleteIds = [];
+    for (const c of (allComponents || [])) {
+      const checked = document.getElementById(`mc-check-${c.id}`).checked;
+      const leadVal = document.getElementById(`mc-lead-${c.id}`).value;
+      const lead_days = leadVal === '' ? null : Number(leadVal);
+      const existing = linkedByComponent[c.id];
+      if (checked && !existing) {
+        toInsert.push({ component_id: c.id, vendor_id: vendorId, lead_days, is_preferred: true });
+      } else if (checked && existing) {
+        if (existing.lead_days !== lead_days) toUpdate.push({ id: existing.id, lead_days });
+      } else if (!checked && existing) {
+        toDeleteIds.push(existing.id);
+      }
+    }
+    if (toInsert.length) await sb.from('component_vendors').insert(toInsert);
+    for (const u of toUpdate) await sb.from('component_vendors').update({ lead_days: u.lead_days }).eq('id', u.id);
+    if (toDeleteIds.length) await sb.from('component_vendors').delete().in('id', toDeleteIds);
+    await logAction('component_vendors', vendorId, 'update', `Updated component assignments for ${vendorName} (${toInsert.length} added, ${toUpdate.length} lead-time changes, ${toDeleteIds.length} removed)`, linked, null);
+    el.remove();
+  };
+}
+
 async function saveCatalogVendor(vendorId) {
   const { data: before } = await sb.from('vendors').select('*').eq('id', vendorId).single();
   const after = {
@@ -2477,6 +2556,7 @@ async function saveCatalogVendor(vendorId) {
     default_lead_days: Number(document.getElementById(`cat-vendor-leaddays-${vendorId}`).value) || null,
     default_cadence_days: Number(document.getElementById(`cat-vendor-cadence-${vendorId}`).value) || null,
     is_active: document.getElementById(`cat-vendor-active-${vendorId}`).checked,
+    vendor_type: document.getElementById(`cat-vendor-type-${vendorId}`).value,
     notes: document.getElementById(`cat-vendor-notes-${vendorId}`).value.trim() || null,
   };
 
@@ -2495,10 +2575,19 @@ async function saveCatalogVendor(vendorId) {
 
   if (decision === 'now') {
     await requestRecalc('vendor', vendorId);
-    alert('Saved — recalculating recommendations now (about 15 seconds).');
   }
 
-  renderCatalog();
+  // Alex (2026-10-30): "When I edit information but don't save the information shouldn't
+  // delete." Root cause: this used to call renderCatalog(), which re-fetches EVERY vendor from
+  // the DB and rebuilds the whole table -- wiping any uncommitted edits a user was mid-typing on
+  // a DIFFERENT row they hadn't saved yet. Fix: only touch the row that was actually saved (a
+  // quick visual confirmation), never rebuild rows nobody asked to save.
+  const saveBtn = document.getElementById(`cat-vendor-save-${vendorId}`);
+  if (saveBtn) {
+    const original = saveBtn.textContent;
+    saveBtn.textContent = decision === 'now' ? 'Saved — recalculating…' : 'Saved ✓';
+    setTimeout(() => { if (document.getElementById(`cat-vendor-save-${vendorId}`)) saveBtn.textContent = original; }, 2500);
+  }
 }
 
 async function saveOrderEdit(ledgerId) {
