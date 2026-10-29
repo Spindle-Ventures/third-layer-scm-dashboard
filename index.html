@@ -297,6 +297,7 @@
     <button class="tab-btn" data-tab="components">Components</button>
     <button class="tab-btn" data-tab="landed">Landed Orders</button>
     <button class="tab-btn" data-tab="activity">Activity Log</button>
+    <button class="tab-btn" data-tab="catalog">Catalog</button>
   </nav>
 </header>
 
@@ -306,6 +307,7 @@
   <div id="tab-components" class="tab-panel hidden"></div>
   <div id="tab-landed" class="tab-panel hidden"></div>
   <div id="tab-activity" class="tab-panel hidden"></div>
+  <div id="tab-catalog" class="tab-panel hidden"></div>
 </main>
 
 <!-- Floating Manny chat widget -- lives at the #app level (not inside any tab-panel), so it's
@@ -383,7 +385,7 @@ async function loadApp(session) {
   document.getElementById('subtitle-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   document.getElementById('snapshot-pill').textContent = 'Snapshot · updated on page load';
 
-  await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog()]);
+  await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog(), renderCatalog()]);
   initMannyChat();
   applyUrlDeepLink();
 }
@@ -2369,6 +2371,134 @@ async function renderActivityLog() {
       ${kpiTable(['When', 'Action', 'What happened', 'By', ''], rows, 2)}
     </div>
   `;
+}
+
+// ---------- Catalog tab (Phase 1 of the product/component/vendor management build) ----------
+// Alex (2026-10-30): "I also think there are more items to do from the original design such as
+// new product, component, vendor introduction and having a place to manage the metadata for
+// those 3 as items change." Scoped into 3 phases (repository/edit -> new-item wizard ->
+// historical-data pull-in); this ships Phase 1 for Vendors (the full record, editable in place).
+// Products/Components are the next slice -- shown here as an honest "not built yet" placeholder
+// rather than a half-working stub.
+
+// Fields that feed into po_recommendations.py / demand_engine.py -- changing these needs the
+// "apply now vs. going forward" decision (Alex, 2026-10-30: "let's make that a per edit decision
+// point within the dashboard"). Every other field (name, contact info, notes, active flag) is
+// pure identity/display data -- no recalculation question makes sense for those, so they just save.
+const VENDOR_RECALC_FIELDS = ['default_lead_days', 'default_cadence_days'];
+
+function showRecalcDecisionModal(changedFieldLabels) {
+  return new Promise(resolve => {
+    document.getElementById('detail-modal-backdrop')?.remove();
+    const el = document.createElement('div');
+    el.id = 'detail-modal-backdrop';
+    el.className = 'detail-modal-backdrop';
+    const finish = (val) => { el.remove(); resolve(val); };
+    el.onclick = (e) => { if (e.target === el) finish(null); };
+    el.innerHTML = `
+      <div class="detail-modal" style="max-width:480px;">
+        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Apply this change now, or just going forward?</div>
+        <div style="font-size:14px; line-height:1.5; margin-bottom:12px;">
+          You changed <strong>${changedFieldLabels.join(', ')}</strong>, which feeds into existing recommendations and order deadlines.
+        </div>
+        <div style="font-size:13px; line-height:1.5; margin-bottom:16px; color:var(--muted);">
+          <strong>Apply now</strong> re-runs the recommendation engine immediately (takes about 15 seconds) so today's recommendations reflect the new value right away.<br>
+          <strong>Going forward only</strong> saves the change but leaves today's recommendations as-is — the daily scheduled run (noon UTC) will pick it up naturally tomorrow.
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-primary" id="recalc-now-btn">Apply now (~15s)</button>
+          <button class="btn btn-ghost" id="recalc-later-btn">Going forward only</button>
+          <button class="btn btn-ghost" id="recalc-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    document.getElementById('recalc-now-btn').onclick = () => finish('now');
+    document.getElementById('recalc-later-btn').onclick = () => finish('later');
+    document.getElementById('recalc-cancel-btn').onclick = () => finish(null);
+  });
+}
+
+async function requestRecalc(scopeType, scopeId) {
+  await sb.from('recalc_requests').insert({ scope_type: scopeType, scope_id: scopeId, requested_by: currentUserRow?.email || 'dashboard' });
+}
+
+async function renderCatalog() {
+  const el = document.getElementById('tab-catalog');
+  const { data: vendors } = await sb.from('vendors').select('*').order('vendor_name');
+  const canAct = canEdit();
+
+  const rows = (vendors || []).map(v => {
+    if (!canAct) {
+      return [v.vendor_name, v.contact_name || '—', v.contact_email || '—', v.preferred_contact_channel || '—', v.default_lead_days ?? '—', v.default_cadence_days ?? '—', v.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>', v.notes || '—'];
+    }
+    return [
+      `<input type="text" id="cat-vendor-name-${v.id}" value="${(v.vendor_name || '').replace(/"/g, '&quot;')}" style="width:140px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="text" id="cat-vendor-contact-${v.id}" value="${(v.contact_name || '').replace(/"/g, '&quot;')}" style="width:120px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="email" id="cat-vendor-email-${v.id}" value="${(v.contact_email || '').replace(/"/g, '&quot;')}" style="width:160px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<select id="cat-vendor-channel-${v.id}" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border);">
+        ${['email', 'slack', 'phone'].map(c => `<option value="${c}" ${v.preferred_contact_channel === c ? 'selected' : ''}>${c}</option>`).join('')}
+      </select>`,
+      `<input type="number" id="cat-vendor-leaddays-${v.id}" value="${v.default_lead_days ?? ''}" style="width:70px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="number" id="cat-vendor-cadence-${v.id}" value="${v.default_cadence_days ?? ''}" style="width:70px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
+      `<input type="checkbox" id="cat-vendor-active-${v.id}" ${v.is_active ? 'checked' : ''} />`,
+      `<input type="text" id="cat-vendor-notes-${v.id}" value="${(v.notes || '').replace(/"/g, '&quot;')}" style="width:160px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />
+       <button class="btn btn-primary" style="padding:4px 10px; font-size:11px; margin-left:6px;" onclick="saveCatalogVendor('${v.id}')">Save</button>`,
+    ];
+  });
+
+  el.innerHTML = `
+    <div class="card" style="padding:14px 16px; margin-bottom:14px;">
+      <div class="section-label" style="margin:0 0 4px;">Catalog — Vendors</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+        Full vendor record, editable in place. Changing lead time or contact cadence asks whether
+        to apply it to existing recommendations immediately or only going forward.
+      </div>
+      ${kpiTable(['Vendor', 'Contact', 'Email', 'Channel', 'Lead Days', 'Cadence Days', 'Active', 'Notes'], rows, -1)}
+    </div>
+    <div class="card" style="padding:14px 16px;">
+      <div class="section-label" style="margin:0 0 4px;">Catalog — Products &amp; Components</div>
+      <div class="muted" style="font-size:13px;">
+        Not built yet — this is Phase 1 of 3 (Vendors only). Products and Components (safety
+        stock, COGS, lead-time-dependent fields, the new-item wizard, and the historical
+        3/6-month data pull-in) are the next slice of this build.
+      </div>
+    </div>
+  `;
+}
+
+async function saveCatalogVendor(vendorId) {
+  const { data: before } = await sb.from('vendors').select('*').eq('id', vendorId).single();
+  const after = {
+    vendor_name: document.getElementById(`cat-vendor-name-${vendorId}`).value.trim(),
+    contact_name: document.getElementById(`cat-vendor-contact-${vendorId}`).value.trim() || null,
+    contact_email: document.getElementById(`cat-vendor-email-${vendorId}`).value.trim() || null,
+    preferred_contact_channel: document.getElementById(`cat-vendor-channel-${vendorId}`).value,
+    default_lead_days: Number(document.getElementById(`cat-vendor-leaddays-${vendorId}`).value) || null,
+    default_cadence_days: Number(document.getElementById(`cat-vendor-cadence-${vendorId}`).value) || null,
+    is_active: document.getElementById(`cat-vendor-active-${vendorId}`).checked,
+    notes: document.getElementById(`cat-vendor-notes-${vendorId}`).value.trim() || null,
+  };
+
+  const changedRecalcFields = VENDOR_RECALC_FIELDS.filter(f => before && before[f] !== after[f]);
+  let decision = null;
+  if (changedRecalcFields.length) {
+    const labels = { default_lead_days: 'Lead Time', default_cadence_days: 'Contact Cadence' };
+    decision = await showRecalcDecisionModal(changedRecalcFields.map(f => labels[f] || f));
+    if (decision === null) return; // cancelled -- don't save anything
+  }
+
+  const { error } = await sb.from('vendors').update(after).eq('id', vendorId);
+  if (error) { alert('Save failed: ' + error.message); return; }
+
+  await logAction('vendors', vendorId, 'update', `Edited vendor ${after.vendor_name}`, before, after);
+
+  if (decision === 'now') {
+    await requestRecalc('vendor', vendorId);
+    alert('Saved — recalculating recommendations now (about 15 seconds).');
+  }
+
+  renderCatalog();
 }
 
 async function saveOrderEdit(ledgerId) {
