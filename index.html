@@ -203,13 +203,45 @@
       padding: 0 10px; gap: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch;
       flex-wrap: nowrap; scrollbar-width: thin;
     }
-    nav.tabs button { white-space: nowrap; padding: 9px 2px; }
+    nav.tabs button { white-space: nowrap; padding: 12px 4px; font-size: 15px; } /* bigger tap target + more legible */
     .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+    .kpi-card { padding: 4px; } /* the whole tile is clickable (.clickable-pill) -- give it room to be an easy, deliberate tap */
     .kpi-value { font-size: 20px; }
-    table { font-size: 13px; }
-    th, td { padding: 7px 8px; }
-    .btn { padding: 8px 12px; } /* keep touch targets comfortable even at the smaller font size */
-    .detail-modal { padding: 16px 16px; }
+    .kpi-label { font-size: 13px; }
+    table { font-size: 14px; }
+    th, td { padding: 9px 10px; }
+
+    /* Alex (2026-10-27): "design the mobile outlook with buttons and text size and actions
+       optimized." Every .btn -- including the dense inline-styled ⋯/Decide table-action buttons,
+       which set their own padding/font-size inline and so don't inherit a class-level padding
+       bump -- gets a real minimum tap target (Apple/Google guidance is ~44px; 40px here balances
+       that against not blowing out table row height on a dense Overview table). min-height/
+       min-width only, never touching the inline padding/font-size that each button already sets. */
+    .btn { min-height: 40px; min-width: 40px; box-sizing: border-box; }
+
+    /* Checkboxes (bulk-select column) are easy to miss at native size on a touchscreen. */
+    input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
+
+    /* Prevent iOS Safari's automatic zoom-on-focus, which fires on any text input rendered
+       below 16px -- several inline-edit inputs (ETA date, qty, tracking) set 11-14px explicitly,
+       which inline styles would otherwise win over a plain class rule. */
+    input, select, textarea { font-size: 16px !important; }
+
+    /* Button rows (Save/Cancel, bulk-action bars, etc.) are mostly `display:flex; gap:8px`
+       inline with no wrap -- fine at desktop widths, but two 40px-tall buttons with real labels
+       can overflow a 360px-wide modal. Wrap any flex row that directly contains 2+ buttons,
+       without having to touch each inline style individually. */
+    div:has(> .btn + .btn) { flex-wrap: wrap !important; }
+
+    /* Detail modals become a bottom sheet on mobile -- full width, flush to the bottom edge,
+       rounded top corners only. This is a deliberate mobile pattern (not just "doesn't
+       overflow"): it puts the Close/primary action within comfortable one-handed thumb reach
+       instead of requiring a reach to a small centered box. */
+    .detail-modal-backdrop { align-items: flex-end; }
+    .detail-modal {
+      width: 100%; max-width: 100%; border-radius: 16px 16px 0 0; padding: 18px 16px 24px 16px;
+      max-height: 85vh;
+    }
   }
 </style>
 </head>
