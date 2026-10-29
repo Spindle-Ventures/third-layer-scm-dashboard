@@ -3423,10 +3423,21 @@ function renderRevenueBody() {
           // Alex (2026-10-22): "I think there could be differences in predicted average asking
           // price from month to month in future months ... I want a smaller green or red icon
           // representing an increase from the last month with a numerical value as well." Compares
-          // this month's ASP against the PRIOR visible month's ASP (same channel/product); first
-          // column has no prior month in view, so no indicator renders for it.
+          // this month's ASP against the PRIOR visible month's ASP (same channel/product).
+          // Alex (2026-10-30): "address" the known first-column gap -- the first visible month has
+          // no prior VISIBLE month, but real historical actuals already exist (Shopify only, via
+          // historical_revenue_pct/S.historicalAspByProduct). Fall back to the most recent real
+          // actual month so the first column gets a comparison too, not a silent blank.
           const prevM = months[mi - 1];
-          const prevAsp = prevM ? S.draftMix[channel][p.product_id]?.[prevM]?.avg_selling_price : null;
+          let prevAsp = prevM ? S.draftMix[channel][p.product_id]?.[prevM]?.avg_selling_price : null;
+          let vsActual = false;
+          if (prevAsp == null && mi === 0 && channel === 'shopify') {
+            const hist = S.historicalAspByProduct[p.product_id];
+            if (hist && hist.length) {
+              prevAsp = hist[hist.length - 1].asp;
+              vsActual = true;
+            }
+          }
           const curAsp = mix.avg_selling_price;
           let deltaHtml = '';
           if (prevAsp != null && curAsp != null && Math.abs(prevAsp) > 0.001) {
@@ -3435,7 +3446,8 @@ function renderRevenueBody() {
               const up = diff > 0;
               const pct = (diff / prevAsp) * 100;
               const color = up ? 'var(--good-text)' : 'var(--bad-text)';
-              deltaHtml = `<div style="font-size:9px; color:${color}; margin-top:1px;">${up ? '▲' : '▼'} ${up ? '+' : ''}${fmtMoney2(diff)} (${up ? '+' : ''}${pct.toFixed(1)}%)</div>`;
+              const title = vsActual ? 'vs. last real actual month (Shopify)' : 'vs. prior month shown';
+              deltaHtml = `<div style="font-size:9px; color:${color}; margin-top:1px;" title="${title}">${up ? '▲' : '▼'} ${up ? '+' : ''}${fmtMoney2(diff)} (${up ? '+' : ''}${pct.toFixed(1)}%)${vsActual ? ' <span class="muted" style="font-size:8px;">vs actual</span>' : ''}</div>`;
             }
           }
           return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong>${deltaHtml}</button>`;
