@@ -202,12 +202,31 @@
     nav.tabs {
       padding: 0 10px; gap: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch;
       flex-wrap: nowrap; scrollbar-width: thin;
+      /* Alex's screenshot showed "Landed Orde..." cut off at the screen edge with zero hint
+         that there's more to scroll to. A fade mask is the standard affordance for a
+         horizontally-scrolling nav strip -- makes the cutoff look intentional. */
+      mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
+      -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
     }
     nav.tabs button { white-space: nowrap; padding: 12px 4px; font-size: 15px; } /* bigger tap target + more legible */
     .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
     .kpi-card { padding: 4px; } /* the whole tile is clickable (.clickable-pill) -- give it room to be an easy, deliberate tap */
     .kpi-value { font-size: 20px; }
     .kpi-label { font-size: 13px; }
+
+    /* REAL BUG, found from Alex's screenshot (not guessed): #recs-grid is a fixed
+       `grid-template-columns: 1fr 1fr` -- CSS Grid tracks don't shrink below a cell's
+       min-content width by default, so a dense recommendation card (urgency pill + "Decide"
+       button + shortfall text) forced its column wider than the viewport, which looked like a
+       half-broken "horizontal scroll" with the second card and its Decide button cut off.
+       Fix: stack to a single column on mobile so every card renders at full, uncramped width. */
+    #recs-grid { grid-template-columns: 1fr !important; }
+
+    /* The floating Manny chat FAB is position:fixed (always bottom-right of the viewport, not
+       the page) -- Alex's screenshot showed it sitting directly over a recommendation card's
+       Decide button at his scroll position. Shrinking it + nudging it in reduces how much
+       content it can cover without losing the "always reachable" point of the widget. */
+    #manny-chat-fab { width: 46px; height: 46px; bottom: 16px; right: 14px; font-size: 18px; }
     table { font-size: 14px; }
     th, td { padding: 9px 10px; }
 
@@ -973,7 +992,7 @@ async function renderOverview() {
         <div style="width:70px; font-size:12px; font-weight:600;">${label}</div>
         <div style="position:relative; flex:1; background:var(--border); border-radius:6px; height:24px; overflow:hidden;">
           <div style="position:absolute; inset:0; width:${fillPct}%; background:${barColor}; height:100%; border-radius:6px;"></div>
-          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.55); white-space:nowrap; padding:0 6px;">
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:${fillPct < 30 ? 'var(--ink)' : '#fff'}; text-shadow:${fillPct < 30 ? 'none' : '0 1px 3px rgba(0,0,0,0.55)'}; white-space:nowrap; padding:0 6px;">
             ${fmtMoney(p.mtd)} of ${fmtMoney(p.forecastFullMonth)} goal — ${paceLabel}
           </div>
         </div>
