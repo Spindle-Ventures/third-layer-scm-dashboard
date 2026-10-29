@@ -2425,47 +2425,73 @@ async function requestRecalc(scopeType, scopeId) {
 
 async function renderCatalog() {
   const el = document.getElementById('tab-catalog');
-  const { data: vendors } = await sb.from('vendors').select('*').order('vendor_name');
+  const [{ data: vendors }, { data: allContacts }] = await Promise.all([
+    sb.from('vendors').select('*').order('vendor_name'),
+    sb.from('vendor_contacts').select('*'),
+  ]);
   const canAct = canEdit();
+  const contactsByVendor = {};
+  (allContacts || []).forEach(c => { (contactsByVendor[c.vendor_id] = contactsByVendor[c.vendor_id] || []).push(c); });
 
+  // Alex (2026-10-30): "Optimize the spacing for no scrolling. We can use the 'on file' button
+  // functionality we use in the overview." Replaced a wide row of always-open inputs (name,
+  // contact, email, channel, lead days, cadence, notes all expanded at once) with the same
+  // compact "On File" / "Missing" clickable-pill pattern Overview already uses for order #/
+  // tracking -- each opens a focused modal instead of sitting open in the table permanently.
+  // This also shrinks the window where backgrounding the tab could lose an in-progress edit
+  // (Alex: "I input information and then went to another chrome tab and then came back and my
+  // information deleted" -- a long-lived inline form is much more exposed to that than a short,
+  // single-purpose modal opened right before saving).
   const rows = (vendors || []).map(v => {
     const isComponentSupplier = v.vendor_type === 'component_supplier';
-    if (!canAct) {
-      return [v.vendor_name, v.contact_name || '—', v.contact_email || '—', v.preferred_contact_channel || '—', v.default_lead_days ?? '—', v.default_cadence_days ?? '—', v.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>', isComponentSupplier ? 'Component Supplier' : 'Finished-Good Manufacturer', v.notes || '—', ''];
-    }
-    return [
-      `<input type="text" id="cat-vendor-name-${v.id}" value="${(v.vendor_name || '').replace(/"/g, '&quot;')}" style="width:130px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<input type="text" id="cat-vendor-contact-${v.id}" value="${(v.contact_name || '').replace(/"/g, '&quot;')}" style="width:110px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<input type="email" id="cat-vendor-email-${v.id}" value="${(v.contact_email || '').replace(/"/g, '&quot;')}" style="width:150px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<select id="cat-vendor-channel-${v.id}" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border);">
-        ${['email', 'slack', 'phone'].map(c => `<option value="${c}" ${v.preferred_contact_channel === c ? 'selected' : ''}>${c}</option>`).join('')}
-      </select>`,
-      `<input type="number" id="cat-vendor-leaddays-${v.id}" value="${v.default_lead_days ?? ''}" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<input type="number" id="cat-vendor-cadence-${v.id}" value="${v.default_cadence_days ?? ''}" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border);" />`,
-      `<input type="checkbox" id="cat-vendor-active-${v.id}" ${v.is_active ? 'checked' : ''} />`,
-      // Alex (2026-10-30): "Private Label is always finished goods manufacturer." Editable (in
-      // case a vendor's role genuinely changes), but defaults reflect real data, not a guess.
-      `<select id="cat-vendor-type-${v.id}" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border);">
-        <option value="component_supplier" ${v.vendor_type === 'component_supplier' ? 'selected' : ''}>Component Supplier</option>
-        <option value="finished_good_manufacturer" ${v.vendor_type === 'finished_good_manufacturer' ? 'selected' : ''}>Finished-Good Manufacturer</option>
-      </select>
-      ${isComponentSupplier ? `<div style="margin-top:4px;"><button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="showManageComponentsModal('${v.id}', '${(v.vendor_name || '').replace(/'/g, "\\'")}')">Manage components</button></div>` : ''}`,
-      // Alex (2026-10-30): "Make the notes section more readable" -- was a narrow single-line
-      // <input>, now a real <textarea> that wraps and shows more than a few characters at once.
-      `<textarea id="cat-vendor-notes-${v.id}" rows="3" style="width:200px; padding:6px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter'; font-size:12px; resize:vertical;">${(v.notes || '')}</textarea>`,
-      `<button class="btn btn-primary" id="cat-vendor-save-${v.id}" style="padding:4px 10px; font-size:11px;" onclick="saveCatalogVendor('${v.id}')">Save</button>`,
-    ];
+    const contacts = contactsByVendor[v.id] || [];
+    const primaryCount = contacts.filter(c => c.is_primary_poc).length;
+    const contactPillLabel = contacts.length ? `${contacts.length} on file${primaryCount ? ` (${primaryCount} primary)` : ''}` : 'Missing';
+    const notesPillLabel = v.notes ? 'On File' : 'Missing';
+    const vendorNameSafe = (v.vendor_name || '').replace(/'/g, "\\'");
+
+    const typeCell = canAct
+      ? `<select id="cat-vendor-type-${v.id}" onchange="saveCatalogVendor('${v.id}')" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;">
+          <option value="component_supplier" ${v.vendor_type === 'component_supplier' ? 'selected' : ''}>Component Supplier</option>
+          <option value="finished_good_manufacturer" ${v.vendor_type === 'finished_good_manufacturer' ? 'selected' : ''}>Finished-Good Mfr</option>
+        </select>`
+      : (isComponentSupplier ? 'Component Supplier' : 'Finished-Good Manufacturer');
+
+    const activeCell = canAct
+      ? `<input type="checkbox" id="cat-vendor-active-${v.id}" ${v.is_active ? 'checked' : ''} onchange="saveCatalogVendor('${v.id}')" />`
+      : (v.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>');
+
+    const nameCell = canAct
+      ? `<input type="text" id="cat-vendor-name-${v.id}" value="${(v.vendor_name || '').replace(/"/g, '&quot;')}" onblur="saveCatalogVendor('${v.id}')" style="width:120px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" />`
+      : v.vendor_name;
+
+    const leadCell = canAct
+      ? `<span class="pill clickable-pill ${v.default_lead_days ? 'good' : 'watch'}" onclick="showVendorLeadTimeModal('${v.id}')">${v.default_lead_days ? v.default_lead_days + 'd / ' + (v.default_cadence_days || '—') + 'd' : 'Missing'}</span>`
+      : `${v.default_lead_days ?? '—'}d lead / ${v.default_cadence_days ?? '—'}d cadence`;
+
+    const contactCell = canAct
+      ? `<span class="pill clickable-pill ${contacts.length ? 'good' : 'watch'}" onclick="showVendorContactsModal('${v.id}', '${vendorNameSafe}')">${contactPillLabel}</span>`
+      : (contacts.map(c => c.name).join(', ') || '—');
+
+    const notesCell = canAct
+      ? `<span class="pill clickable-pill ${v.notes ? 'good' : 'watch'}" onclick="showVendorNotesModal('${v.id}', '${vendorNameSafe}')">${notesPillLabel}</span>`
+      : (v.notes || '—');
+
+    const componentsCell = isComponentSupplier
+      ? (canAct ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="showManageComponentsModal('${v.id}', '${vendorNameSafe}')">Manage</button>` : 'Supplier')
+      : '<span class="muted">—</span>';
+
+    return [nameCell, typeCell, activeCell, contactCell, leadCell, componentsCell, notesCell];
   });
 
   el.innerHTML = `
     <div class="card" style="padding:14px 16px; margin-bottom:14px;">
       <div class="section-label" style="margin:0 0 4px;">Catalog — Vendors</div>
       <div class="muted" style="font-size:12px; margin-bottom:10px;">
-        Full vendor record, editable in place. Changing lead time or contact cadence asks whether
-        to apply it to existing recommendations immediately or only going forward. Editing one
-        vendor never discards unsaved edits you're mid-typing on another row.
+        Click a pill to view/edit that detail. Lead time changes ask whether to apply to existing
+        recommendations immediately or only going forward.
       </div>
-      ${kpiTable(['Vendor', 'Contact', 'Email', 'Channel', 'Lead Days', 'Cadence Days', 'Active', 'Type', 'Notes', ''], rows, -1)}
+      ${kpiTable(['Vendor', 'Type', 'Active', 'Contacts', 'Lead/Cadence', 'Components', 'Notes'], rows, -1)}
     </div>
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 4px;">Catalog — Products &amp; Components</div>
@@ -2480,9 +2506,10 @@ async function renderCatalog() {
 
 async function showManageComponentsModal(vendorId, vendorName) {
   document.getElementById('detail-modal-backdrop')?.remove();
-  const [{ data: allComponents }, { data: linked }] = await Promise.all([
+  const [{ data: allComponents }, { data: linked }, { data: vendor }] = await Promise.all([
     sb.from('components').select('id, component_name').order('component_name'),
     sb.from('component_vendors').select('*').eq('vendor_id', vendorId),
+    sb.from('vendors').select('default_lead_days').eq('id', vendorId).single(),
   ]);
   const linkedByComponent = {};
   (linked || []).forEach(l => { linkedByComponent[l.component_id] = l; });
@@ -2510,7 +2537,7 @@ async function showManageComponentsModal(vendorId, vendorName) {
       <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Components — ${vendorName}</div>
       <div class="muted" style="font-size:12px; margin-bottom:10px;">
         Check every component this vendor supplies. Lead days is optional — leave blank to use
-        the vendor's default lead time (${document.getElementById(`cat-vendor-leaddays-${vendorId}`)?.value || '—'} days) for that component.
+        the vendor's default lead time (${vendor?.default_lead_days ?? '—'} days) for that component.
       </div>
       <div style="max-height:360px; overflow-y:auto;">${rowsHtml || '<div class="muted">No components found.</div>'}</div>
       <div style="display:flex; gap:8px; margin-top:14px;">
@@ -2543,51 +2570,203 @@ async function showManageComponentsModal(vendorId, vendorName) {
     if (toDeleteIds.length) await sb.from('component_vendors').delete().in('id', toDeleteIds);
     await logAction('component_vendors', vendorId, 'update', `Updated component assignments for ${vendorName} (${toInsert.length} added, ${toUpdate.length} lead-time changes, ${toDeleteIds.length} removed)`, linked, null);
     el.remove();
+    renderCatalog();
+  };
+}
+
+function showVendorNotesModal(vendorId, vendorName) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  sb.from('vendors').select('notes').eq('id', vendorId).single().then(({ data }) => {
+    const el = document.createElement('div');
+    el.id = 'detail-modal-backdrop';
+    el.className = 'detail-modal-backdrop';
+    el.onclick = (e) => { if (e.target === el) el.remove(); };
+    el.innerHTML = `
+      <div class="detail-modal" style="max-width:480px;">
+        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Notes — ${vendorName}</div>
+        <textarea id="vn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; resize:vertical;">${data?.notes || ''}</textarea>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button class="btn btn-primary" id="vn-save-btn">Save</button>
+          <button class="btn btn-ghost" id="vn-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    document.getElementById('vn-cancel-btn').onclick = () => el.remove();
+    document.getElementById('vn-save-btn').onclick = async () => {
+      const notes = document.getElementById('vn-notes-input').value.trim() || null;
+      const { error } = await sb.from('vendors').update({ notes }).eq('id', vendorId);
+      if (error) { alert('Save failed: ' + error.message); return; }
+      await logAction('vendors', vendorId, 'update', `Edited notes for ${vendorName}`, { notes: data?.notes }, { notes });
+      el.remove();
+      renderCatalog();
+    };
+  });
+}
+
+async function showVendorLeadTimeModal(vendorId) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const { data: v } = await sb.from('vendors').select('vendor_name, default_lead_days, default_cadence_days').eq('id', vendorId).single();
+  if (!v) return;
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:420px;">
+      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Lead Time &amp; Cadence — ${v.vendor_name}</div>
+      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Default lead time (days)</label>
+      <input type="number" id="vl-leaddays-input" value="${v.default_lead_days ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
+      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Default contact cadence (days)</label>
+      <input type="number" id="vl-cadence-input" value="${v.default_cadence_days ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" id="vl-save-btn">Save</button>
+        <button class="btn btn-ghost" id="vl-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('vl-cancel-btn').onclick = () => el.remove();
+  document.getElementById('vl-save-btn').onclick = async () => {
+    const after = {
+      default_lead_days: Number(document.getElementById('vl-leaddays-input').value) || null,
+      default_cadence_days: Number(document.getElementById('vl-cadence-input').value) || null,
+    };
+    const changed = VENDOR_RECALC_FIELDS.filter(f => v[f] !== after[f]);
+    el.remove();
+    let decision = null;
+    if (changed.length) {
+      const labels = { default_lead_days: 'Lead Time', default_cadence_days: 'Contact Cadence' };
+      decision = await showRecalcDecisionModal(changed.map(f => labels[f] || f));
+      if (decision === null) return;
+    }
+    const { error } = await sb.from('vendors').update(after).eq('id', vendorId);
+    if (error) { alert('Save failed: ' + error.message); return; }
+    await logAction('vendors', vendorId, 'update', `Edited lead time/cadence for ${v.vendor_name}`, v, after);
+    if (decision === 'now') await requestRecalc('vendor', vendorId);
+    renderCatalog();
+  };
+}
+
+// Alex (2026-10-30): "I also need to be able to establish multiple contact points per vendor...
+// I should be able to add more and determine a main POC as well who should be the one being
+// reached out to for updates and it could be multiple." -- is_primary_poc is per-CONTACT, so more
+// than one person can be marked primary at once, matching "it could be multiple" exactly.
+// For Slack: a display name alone can't be used to DM/mention someone -- the Slack member ID
+// (looks like U0XXXXXXX, found in that person's Slack profile) is what's actually required.
+async function showVendorContactsModal(vendorId, vendorName) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const { data: contacts } = await sb.from('vendor_contacts').select('*').eq('vendor_id', vendorId).order('created_at');
+
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+
+  const contactRowHtml = (c) => `
+    <div class="card" id="vc-row-${c.id}" style="padding:10px 12px; margin-bottom:8px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+        <input type="text" id="vc-name-${c.id}" value="${(c.name || '').replace(/"/g, '&quot;')}" placeholder="Name" style="flex:1; min-width:120px; padding:6px 8px; border-radius:6px; border:1px solid var(--border);" />
+        <label style="font-size:12px; display:flex; align-items:center; gap:4px; white-space:nowrap;">
+          <input type="checkbox" id="vc-primary-${c.id}" ${c.is_primary_poc ? 'checked' : ''} /> Primary POC
+        </label>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+        <input type="email" id="vc-email-${c.id}" value="${(c.email || '').replace(/"/g, '&quot;')}" placeholder="Email" style="flex:1; min-width:150px; padding:6px 8px; border-radius:6px; border:1px solid var(--border);" />
+        <input type="tel" id="vc-phone-${c.id}" value="${(c.phone || '').replace(/"/g, '&quot;')}" placeholder="Phone" style="width:140px; padding:6px 8px; border-radius:6px; border:1px solid var(--border);" />
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input type="text" id="vc-slack-${c.id}" value="${(c.slack_user_id || '').replace(/"/g, '&quot;')}" placeholder="Slack member ID (e.g. U012AB3CD)" style="flex:1; min-width:170px; padding:6px 8px; border-radius:6px; border:1px solid var(--border);" />
+        <select id="vc-channel-${c.id}" style="padding:6px 8px; border-radius:6px; border:1px solid var(--border);">
+          ${['email', 'slack', 'phone'].map(ch => `<option value="${ch}" ${c.preferred_contact_channel === ch ? 'selected' : ''}>${ch}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px; color:var(--bad-text);" onclick="document.getElementById('vc-row-${c.id}').remove()" title="Remove this contact">Remove</button>
+      </div>
+    </div>`;
+
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:560px;">
+      <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Contacts — ${vendorName}</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+        Add every contact point at this vendor. More than one can be "Primary POC" if updates
+        should reach multiple people. For Slack, you need the person's member ID (not just their
+        name) — find it on their Slack profile.
+      </div>
+      <div id="vc-contacts-list" style="max-height:360px; overflow-y:auto;">${(contacts || []).map(contactRowHtml).join('')}</div>
+      <button class="btn btn-ghost" id="vc-add-btn" style="margin-top:4px; font-size:12px;">+ Add another contact</button>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="btn btn-primary" id="vc-save-btn">Save</button>
+        <button class="btn btn-ghost" id="vc-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('vc-cancel-btn').onclick = () => el.remove();
+  document.getElementById('vc-add-btn').onclick = () => {
+    const tempId = 'new-' + Math.random().toString(36).slice(2);
+    document.getElementById('vc-contacts-list').insertAdjacentHTML('beforeend', contactRowHtml({ id: tempId, name: '', email: '', phone: '', slack_user_id: '', preferred_contact_channel: 'email', is_primary_poc: false }));
+  };
+  document.getElementById('vc-save-btn').onclick = async () => {
+    const rows = Array.from(document.getElementById('vc-contacts-list').children);
+    const existingIds = new Set((contacts || []).map(c => c.id));
+    const keptIds = new Set();
+    const toInsert = [];
+    const toUpdate = [];
+    for (const row of rows) {
+      const id = row.id.replace('vc-row-', '');
+      const name = document.getElementById(`vc-name-${id}`).value.trim();
+      if (!name) continue; // skip blank rows rather than saving an empty contact
+      const record = {
+        name,
+        email: document.getElementById(`vc-email-${id}`).value.trim() || null,
+        phone: document.getElementById(`vc-phone-${id}`).value.trim() || null,
+        slack_user_id: document.getElementById(`vc-slack-${id}`).value.trim() || null,
+        preferred_contact_channel: document.getElementById(`vc-channel-${id}`).value,
+        is_primary_poc: document.getElementById(`vc-primary-${id}`).checked,
+      };
+      if (id.startsWith('new-')) {
+        toInsert.push({ ...record, vendor_id: vendorId });
+      } else {
+        keptIds.add(id);
+        toUpdate.push({ id, ...record });
+      }
+    }
+    const toDeleteIds = [...existingIds].filter(id => !keptIds.has(id));
+
+    if (toInsert.length) await sb.from('vendor_contacts').insert(toInsert);
+    for (const u of toUpdate) { const { id, ...rest } = u; await sb.from('vendor_contacts').update(rest).eq('id', id); }
+    if (toDeleteIds.length) await sb.from('vendor_contacts').delete().in('id', toDeleteIds);
+
+    // Keep the legacy single-contact fields on vendors in sync (open_orders_by_product and the
+    // Components-tab vendor list still read these directly -- see migrations/040 for the
+    // follow-up note about moving those call sites onto vendor_contacts directly).
+    const { data: refreshed } = await sb.from('vendor_contacts').select('*').eq('vendor_id', vendorId).order('created_at');
+    const primary = (refreshed || []).find(c => c.is_primary_poc) || (refreshed || [])[0] || null;
+    await sb.from('vendors').update({
+      contact_name: primary?.name || null,
+      contact_email: primary?.email || null,
+      slack_user_id: primary?.slack_user_id || null,
+      preferred_contact_channel: primary?.preferred_contact_channel || null,
+    }).eq('id', vendorId);
+
+    await logAction('vendor_contacts', vendorId, 'update', `Updated contacts for ${vendorName} (${toInsert.length} added, ${toUpdate.length} edited, ${toDeleteIds.length} removed)`, contacts, refreshed);
+    el.remove();
+    renderCatalog();
   };
 }
 
 async function saveCatalogVendor(vendorId) {
   const { data: before } = await sb.from('vendors').select('*').eq('id', vendorId).single();
   const after = {
-    vendor_name: document.getElementById(`cat-vendor-name-${vendorId}`).value.trim(),
-    contact_name: document.getElementById(`cat-vendor-contact-${vendorId}`).value.trim() || null,
-    contact_email: document.getElementById(`cat-vendor-email-${vendorId}`).value.trim() || null,
-    preferred_contact_channel: document.getElementById(`cat-vendor-channel-${vendorId}`).value,
-    default_lead_days: Number(document.getElementById(`cat-vendor-leaddays-${vendorId}`).value) || null,
-    default_cadence_days: Number(document.getElementById(`cat-vendor-cadence-${vendorId}`).value) || null,
-    is_active: document.getElementById(`cat-vendor-active-${vendorId}`).checked,
-    vendor_type: document.getElementById(`cat-vendor-type-${vendorId}`).value,
-    notes: document.getElementById(`cat-vendor-notes-${vendorId}`).value.trim() || null,
+    vendor_name: document.getElementById(`cat-vendor-name-${vendorId}`)?.value.trim() || before.vendor_name,
+    is_active: document.getElementById(`cat-vendor-active-${vendorId}`)?.checked ?? before.is_active,
+    vendor_type: document.getElementById(`cat-vendor-type-${vendorId}`)?.value || before.vendor_type,
   };
-
-  const changedRecalcFields = VENDOR_RECALC_FIELDS.filter(f => before && before[f] !== after[f]);
-  let decision = null;
-  if (changedRecalcFields.length) {
-    const labels = { default_lead_days: 'Lead Time', default_cadence_days: 'Contact Cadence' };
-    decision = await showRecalcDecisionModal(changedRecalcFields.map(f => labels[f] || f));
-    if (decision === null) return; // cancelled -- don't save anything
-  }
 
   const { error } = await sb.from('vendors').update(after).eq('id', vendorId);
   if (error) { alert('Save failed: ' + error.message); return; }
-
   await logAction('vendors', vendorId, 'update', `Edited vendor ${after.vendor_name}`, before, after);
-
-  if (decision === 'now') {
-    await requestRecalc('vendor', vendorId);
-  }
-
-  // Alex (2026-10-30): "When I edit information but don't save the information shouldn't
-  // delete." Root cause: this used to call renderCatalog(), which re-fetches EVERY vendor from
-  // the DB and rebuilds the whole table -- wiping any uncommitted edits a user was mid-typing on
-  // a DIFFERENT row they hadn't saved yet. Fix: only touch the row that was actually saved (a
-  // quick visual confirmation), never rebuild rows nobody asked to save.
-  const saveBtn = document.getElementById(`cat-vendor-save-${vendorId}`);
-  if (saveBtn) {
-    const original = saveBtn.textContent;
-    saveBtn.textContent = decision === 'now' ? 'Saved — recalculating…' : 'Saved ✓';
-    setTimeout(() => { if (document.getElementById(`cat-vendor-save-${vendorId}`)) saveBtn.textContent = original; }, 2500);
-  }
+  renderCatalog();
 }
 
 async function saveOrderEdit(ledgerId) {
