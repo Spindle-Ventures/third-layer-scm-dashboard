@@ -2493,15 +2493,316 @@ async function renderCatalog() {
       </div>
       ${kpiTable(['Vendor', 'Type', 'Active', 'Contacts', 'Lead/Cadence', 'Components', 'Notes'], rows, -1)}
     </div>
+    <div id="tab-catalog-products" style="margin-bottom:14px;"></div>
+    <div id="tab-catalog-components"></div>
+  `;
+
+  await renderCatalogProducts();
+  await renderCatalogComponents();
+}
+
+// Alex (2026-10-30 / completing Phase 1 2026-11-03): "I also think there are more items to do...
+// having a place to manage the metadata for those 3 as items change." Products section, same
+// compact on-file pattern as Vendors above -- safety stock basis and COGS are the two fields
+// that feed po_recommendations.py/demand_engine.py, so those are the only two behind the
+// apply-now/later decision; everything else (display name, active flag) just saves.
+const PRODUCT_RECALC_FIELDS = ['unit_cogs', 'safety_stock_qty'];
+
+async function renderCatalogProducts() {
+  const el = document.getElementById('tab-catalog-products');
+  if (!el) return;
+  const { data: products } = await sb.from('products').select('*').order('sku_code');
+  const canAct = canEdit();
+
+  const rows = (products || []).map(p => {
+    const nameCell = canAct
+      ? `<input type="text" id="cp-name-${p.id}" value="${(p.display_name || '').replace(/"/g, '&quot;')}" onblur="saveCatalogProductName('${p.id}')" style="width:150px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" />`
+      : p.display_name;
+    const typeCell = p.product_type === 'bundle' ? 'Bundle' : 'Root';
+    const activeCell = canAct
+      ? `<input type="checkbox" id="cp-active-${p.id}" ${p.is_active ? 'checked' : ''} onchange="saveCatalogProductActive('${p.id}')" />`
+      : (p.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>');
+    // Alex (2026-10-22, carried from the dashboard's Safety Stock popup): safety stock is
+    // computed (dynamic mode) from real sales variance + lead time, not hand-typed day to day --
+    // this pill shows the current computed value and opens the SAME detail popup the Overview
+    // tab already uses, rather than inventing a second UI for the same number.
+    const ssCell = canAct
+      ? `<span class="pill clickable-pill ${p.safety_stock_qty ? 'good' : 'watch'}" onclick="showSafetyStockDetail('${p.sku_code}')">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : 'Missing'}</span>`
+      : (p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : '—');
+    const cogsCell = canAct
+      ? `<span class="pill clickable-pill ${p.unit_cogs ? 'good' : 'watch'}" onclick="showProductCogsModal('${p.id}')">${p.unit_cogs ? fmtMoney2(p.unit_cogs) : 'Missing'}</span>`
+      : (p.unit_cogs ? fmtMoney2(p.unit_cogs) : '—');
+    const slCell = `${(Number(p.service_level_pct) * 100).toFixed(0)}%`;
+    const notesCell = canAct
+      ? `<span class="pill clickable-pill ${p.notes ? 'good' : 'watch'}" onclick="showProductNotesModal('${p.id}', '${(p.display_name || '').replace(/'/g, "\\'")}')">${p.notes ? 'On File' : 'Missing'}</span>`
+      : (p.notes || '—');
+    return [p.sku_code, nameCell, typeCell, activeCell, ssCell, cogsCell, slCell, notesCell];
+  });
+
+  el.innerHTML = `
     <div class="card" style="padding:14px 16px;">
-      <div class="section-label" style="margin:0 0 4px;">Catalog — Products &amp; Components</div>
-      <div class="muted" style="font-size:13px;">
-        Not built yet — this is Phase 1 of 3 (Vendors only). Products and Components (safety
-        stock, COGS, lead-time-dependent fields, the new-item wizard, and the historical
-        3/6-month data pull-in) are the next slice of this build.
+      <div class="section-label" style="margin:0 0 4px;">Catalog — Products</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+        Safety stock is computed from real sales variance + vendor lead time (same figure shown
+        on Overview) — click it to see the full breakdown, same popup as the rest of the app.
+        Changing COGS or overriding safety stock asks whether to apply to existing recommendations
+        immediately or only going forward.
+      </div>
+      ${kpiTable(['SKU', 'Name', 'Type', 'Active', 'Safety Stock', 'COGS', 'Service Level', 'Notes'], rows, -1)}
+    </div>
+  `;
+}
+
+async function saveCatalogProductName(productId) {
+  const input = document.getElementById(`cp-name-${productId}`);
+  if (!input) return;
+  const { data: before } = await sb.from('products').select('display_name').eq('id', productId).single();
+  const display_name = input.value.trim();
+  if (display_name === before?.display_name) return; // no-op, avoid a no-change activity_log entry
+  const { error } = await sb.from('products').update({ display_name }).eq('id', productId);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  await logAction('products', productId, 'update', `Renamed product to ${display_name}`, before, { display_name });
+}
+
+async function saveCatalogProductActive(productId) {
+  const checked = document.getElementById(`cp-active-${productId}`).checked;
+  const { data: before } = await sb.from('products').select('display_name, is_active').eq('id', productId).single();
+  const { error } = await sb.from('products').update({ is_active: checked }).eq('id', productId);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  await logAction('products', productId, 'update', `${checked ? 'Activated' : 'Deactivated'} ${before?.display_name || 'product'}`, before, { ...before, is_active: checked });
+}
+
+function showProductNotesModal(productId, productName) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  sb.from('products').select('notes').eq('id', productId).single().then(({ data }) => {
+    const el = document.createElement('div');
+    el.id = 'detail-modal-backdrop';
+    el.className = 'detail-modal-backdrop';
+    el.onclick = (e) => { if (e.target === el) el.remove(); };
+    el.innerHTML = `
+      <div class="detail-modal" style="max-width:480px;">
+        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Notes — ${productName}</div>
+        <textarea id="pn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; resize:vertical;">${data?.notes || ''}</textarea>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button class="btn btn-primary" id="pn-save-btn">Save</button>
+          <button class="btn btn-ghost" id="pn-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    document.getElementById('pn-cancel-btn').onclick = () => el.remove();
+    document.getElementById('pn-save-btn').onclick = async () => {
+      const notes = document.getElementById('pn-notes-input').value.trim() || null;
+      const { error } = await sb.from('products').update({ notes }).eq('id', productId);
+      if (error) { alert('Save failed: ' + error.message); return; }
+      await logAction('products', productId, 'update', `Edited notes for ${productName}`, { notes: data?.notes }, { notes });
+      el.remove();
+    };
+  });
+}
+
+async function showProductCogsModal(productId) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const { data: p } = await sb.from('products').select('display_name, unit_cogs, safety_stock_qty').eq('id', productId).single();
+  if (!p) return;
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:380px;">
+      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">COGS — ${p.display_name}</div>
+      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Unit COGS ($)</label>
+      <input type="number" step="0.01" id="pc-cogs-input" value="${p.unit_cogs ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+        Feeds "cash locked up" / "cash at risk" figures on recommendations and the Revenue tab.
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" id="pc-save-btn">Save</button>
+        <button class="btn btn-ghost" id="pc-cancel-btn">Cancel</button>
       </div>
     </div>
   `;
+  document.body.appendChild(el);
+  document.getElementById('pc-cancel-btn').onclick = () => el.remove();
+  document.getElementById('pc-save-btn').onclick = async () => {
+    const unit_cogs = Number(document.getElementById('pc-cogs-input').value) || null;
+    el.remove();
+    let decision = null;
+    if (unit_cogs !== p.unit_cogs) {
+      decision = await showRecalcDecisionModal(['Unit COGS']);
+      if (decision === null) return;
+    }
+    const { error } = await sb.from('products').update({ unit_cogs }).eq('id', productId);
+    if (error) { alert('Save failed: ' + error.message); return; }
+    await logAction('products', productId, 'update', `Edited COGS for ${p.display_name}`, p, { ...p, unit_cogs });
+    if (decision === 'now') await requestRecalc('product', productId);
+    renderCatalogProducts();
+  };
+}
+
+// ---------- Components section ----------
+async function renderCatalogComponents() {
+  const el = document.getElementById('tab-catalog-components');
+  if (!el) return;
+  const [{ data: components }, { data: products }] = await Promise.all([
+    sb.from('components').select('*').order('component_name'),
+    sb.from('products').select('id, display_name').order('display_name'),
+  ]);
+  const canAct = canEdit();
+  const productById = {};
+  (products || []).forEach(p => { productById[p.id] = p.display_name; });
+
+  const rows = (components || []).map(c => {
+    const nameCell = canAct
+      ? `<input type="text" id="cc-name-${c.id}" value="${(c.component_name || '').replace(/"/g, '&quot;')}" onblur="saveCatalogComponentName('${c.id}')" style="width:150px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" />`
+      : c.component_name;
+    const productCell = productById[c.product_id] || '<span class="muted">—</span>';
+    const uomCell = canAct
+      ? `<input type="text" id="cc-uom-${c.id}" value="${(c.unit_of_measure || '').replace(/"/g, '&quot;')}" onblur="saveCatalogComponentUom('${c.id}')" style="width:70px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" />`
+      : (c.unit_of_measure || '—');
+    const qtyPerCell = c.qty_per_unit ?? '—';
+    const notesCell = canAct
+      ? `<span class="pill clickable-pill ${c.notes ? 'good' : 'watch'}" onclick="showComponentNotesModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">${c.notes ? 'On File' : 'Missing'}</span>`
+      : (c.notes || '—');
+    const vendorsCell = canAct
+      ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="showComponentVendorsModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">Manage</button>`
+      : '';
+    return [nameCell, productCell, uomCell, qtyPerCell, vendorsCell, notesCell];
+  });
+
+  el.innerHTML = `
+    <div class="card" style="padding:14px 16px;">
+      <div class="section-label" style="margin:0 0 4px;">Catalog — Components</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+        "Vendors" opens the same assignment modal as a vendor's own "Manage components" button —
+        edits in either place are the same underlying data.
+      </div>
+      ${kpiTable(['Component', 'Finished Good', 'Unit of Measure', 'Qty per Unit', 'Vendors', 'Notes'], rows, -1)}
+    </div>
+  `;
+}
+
+async function saveCatalogComponentName(componentId) {
+  const input = document.getElementById(`cc-name-${componentId}`);
+  if (!input) return;
+  const { data: before } = await sb.from('components').select('component_name').eq('id', componentId).single();
+  const component_name = input.value.trim();
+  if (component_name === before?.component_name) return;
+  const { error } = await sb.from('components').update({ component_name }).eq('id', componentId);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  await logAction('components', componentId, 'update', `Renamed component to ${component_name}`, before, { component_name });
+}
+
+async function saveCatalogComponentUom(componentId) {
+  const input = document.getElementById(`cc-uom-${componentId}`);
+  if (!input) return;
+  const { data: before } = await sb.from('components').select('unit_of_measure, component_name').eq('id', componentId).single();
+  const unit_of_measure = input.value.trim() || null;
+  if (unit_of_measure === before?.unit_of_measure) return;
+  const { error } = await sb.from('components').update({ unit_of_measure }).eq('id', componentId);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  await logAction('components', componentId, 'update', `Edited unit of measure for ${before?.component_name}`, before, { ...before, unit_of_measure });
+}
+
+function showComponentNotesModal(componentId, componentName) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  sb.from('components').select('notes').eq('id', componentId).single().then(({ data }) => {
+    const el = document.createElement('div');
+    el.id = 'detail-modal-backdrop';
+    el.className = 'detail-modal-backdrop';
+    el.onclick = (e) => { if (e.target === el) el.remove(); };
+    el.innerHTML = `
+      <div class="detail-modal" style="max-width:480px;">
+        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Notes — ${componentName}</div>
+        <textarea id="ccn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; resize:vertical;">${data?.notes || ''}</textarea>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button class="btn btn-primary" id="ccn-save-btn">Save</button>
+          <button class="btn btn-ghost" id="ccn-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    document.getElementById('ccn-cancel-btn').onclick = () => el.remove();
+    document.getElementById('ccn-save-btn').onclick = async () => {
+      const notes = document.getElementById('ccn-notes-input').value.trim() || null;
+      const { error } = await sb.from('components').update({ notes }).eq('id', componentId);
+      if (error) { alert('Save failed: ' + error.message); return; }
+      await logAction('components', componentId, 'update', `Edited notes for ${componentName}`, { notes: data?.notes }, { notes });
+      el.remove();
+    };
+  });
+}
+
+// Reuses the exact same insert/update/delete-against-component_vendors logic as
+// showManageComponentsModal (vendor-first entry point) -- just the other direction into the
+// same junction table, so edits made from either screen are visible from both immediately.
+async function showComponentVendorsModal(componentId, componentName) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const [{ data: allVendors }, { data: linked }] = await Promise.all([
+    sb.from('vendors').select('id, vendor_name').eq('vendor_type', 'component_supplier').order('vendor_name'),
+    sb.from('component_vendors').select('*').eq('component_id', componentId),
+  ]);
+  const linkedByVendor = {};
+  (linked || []).forEach(l => { linkedByVendor[l.vendor_id] = l; });
+
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  const rowsHtml = (allVendors || []).map(v => {
+    const link = linkedByVendor[v.id];
+    return `
+      <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
+        <input type="checkbox" id="cv-check-${v.id}" ${link ? 'checked' : ''} onchange="document.getElementById('cv-lead-${v.id}').disabled = !this.checked;" />
+        <div style="flex:1;">${v.vendor_name}</div>
+        <label style="font-size:12px; color:var(--muted);">Lead days:
+          <input type="number" id="cv-lead-${v.id}" value="${link?.lead_days ?? ''}" ${link ? '' : 'disabled'}
+            style="width:60px; padding:3px 6px; border-radius:6px; border:1px solid var(--border); margin-left:4px;"
+            placeholder="vendor default" />
+        </label>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:480px;">
+      <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Vendors — ${componentName}</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+        Check every vendor that supplies this component. Same data as each vendor's own "Manage
+        components" button.
+      </div>
+      <div style="max-height:360px; overflow-y:auto;">${rowsHtml || '<div class="muted">No component-supplier vendors found.</div>'}</div>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="btn btn-primary" id="cv-save-btn">Save</button>
+        <button class="btn btn-ghost" id="cv-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('cv-cancel-btn').onclick = () => el.remove();
+  document.getElementById('cv-save-btn').onclick = async () => {
+    const toInsert = [];
+    const toUpdate = [];
+    const toDeleteIds = [];
+    for (const v of (allVendors || [])) {
+      const checked = document.getElementById(`cv-check-${v.id}`).checked;
+      const leadVal = document.getElementById(`cv-lead-${v.id}`).value;
+      const lead_days = leadVal === '' ? null : Number(leadVal);
+      const existing = linkedByVendor[v.id];
+      if (checked && !existing) {
+        toInsert.push({ component_id: componentId, vendor_id: v.id, lead_days, is_preferred: true });
+      } else if (checked && existing) {
+        if (existing.lead_days !== lead_days) toUpdate.push({ id: existing.id, lead_days });
+      } else if (!checked && existing) {
+        toDeleteIds.push(existing.id);
+      }
+    }
+    if (toInsert.length) await sb.from('component_vendors').insert(toInsert);
+    for (const u of toUpdate) await sb.from('component_vendors').update({ lead_days: u.lead_days }).eq('id', u.id);
+    if (toDeleteIds.length) await sb.from('component_vendors').delete().in('id', toDeleteIds);
+    await logAction('component_vendors', componentId, 'update', `Updated vendor assignments for ${componentName} (${toInsert.length} added, ${toUpdate.length} lead-time changes, ${toDeleteIds.length} removed)`, linked, null);
+    el.remove();
+  };
 }
 
 async function showManageComponentsModal(vendorId, vendorName) {
