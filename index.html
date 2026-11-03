@@ -880,7 +880,7 @@ async function renderOverview() {
   const el = document.getElementById('tab-overview');
   const todayIso = new Date().toISOString().slice(0, 10);
   const monthStartIso = todayIso.slice(0, 7) + '-01';
-  const [{ data: recs }, { data: pos }, { data: openOrders }, { data: qcRuns }, { data: invSnapshot }, { data: qohRows }, { data: revActuals }, { data: revForecasts }] = await Promise.all([
+  const [{ data: recs }, { data: pos }, { data: openOrders }, { data: qcRuns }, { data: invSnapshot }, { data: qohRows }, { data: revActuals }, { data: revForecasts }, { data: allActiveProducts }] = await Promise.all([
     sb.from('agent_recommendations').select('*, products(sku_code, display_name)').neq('decision', 'dismissed').order('days_until_deadline', { ascending: true }),
     sb.from('purchase_orders').select('*').in('status', ['draft', 'pending_approval', 'approved', 'placed', 'in_transit']),
     sb.from('open_orders_by_product').select('*'),
@@ -889,7 +889,19 @@ async function renderOverview() {
     sb.from('product_qoh').select('product_id, sku_code, display_name, safety_stock_qty, safety_stock_basis, safety_stock_detail'),
     sb.from('revenue_actuals').select('channel, gross_revenue, revenue_date').gte('revenue_date', monthStartIso).lte('revenue_date', todayIso),
     sb.from('revenue_forecasts').select('channel, forecast_revenue').eq('forecast_month', monthStartIso),
+    // Alex (2026-11-03): "Somehow we've lost all progress on the night oil patches - they should
+    // be there and treated as a product. We shouldn't have lost that progress." Real root cause,
+    // NOT data loss: every inventory_ledger row for TL007 landed or was cancelled, so it has
+    // zero rows in open_orders_by_product (that view is open-orders-only, by design) -- the
+    // product silently disappeared from Overview's product filter AND its own group, because
+    // both were built by iterating `openOrders`, never the actual product list. Fetching every
+    // active root product here (not just ones with an open order) lets applyOpenOrdersFilter
+    // render a real "no open orders right now" group instead of nothing at all.
+    sb.from('products').select('sku_code, display_name').eq('is_active', true).eq('product_type', 'root'),
   ]);
+
+  window._allActiveProductsCache = allActiveProducts || [];
+
 
   window._invSnapshotBySku = {};
   (invSnapshot || []).forEach(s => {
@@ -1083,7 +1095,11 @@ async function renderOverview() {
 
   window._openOrdersCache = openOrders || [];
   const productSelect = document.getElementById('filter-product');
-  const uniqueProducts = [...new Map((openOrders || []).map(o => [o.product_sku, o.product_name])).entries()];
+  // Union of products with an open order AND every active product, so one with zero open orders
+  // (e.g. everything landed/cancelled) still appears in the filter instead of silently vanishing.
+  const uniqueProductsMap = new Map((openOrders || []).map(o => [o.product_sku, o.product_name]));
+  (window._allActiveProductsCache || []).forEach(p => { if (!uniqueProductsMap.has(p.sku_code)) uniqueProductsMap.set(p.sku_code, p.display_name); });
+  const uniqueProducts = [...uniqueProductsMap.entries()];
   uniqueProducts.sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
   // Preserve filter selections across re-renders (e.g. after an action) instead of resetting them.
   const prevProduct = window._filterState?.product || 'all';
@@ -1164,16 +1180,31 @@ function applyOpenOrdersFilter() {
   });
 
   const groupsEl = document.getElementById('open-orders-groups');
-  if (filtered.length === 0) {
-    groupsEl.innerHTML = `<div class="card empty-state">Nothing matches these filters${onlyAction ? ' — try the "Show All Orders" button' : ''}.</div>`;
-    return;
-  }
 
   const byProduct = new Map();
   filtered.forEach(o => {
     if (!byProduct.has(o.product_sku)) byProduct.set(o.product_sku, { name: o.product_name, rows: [] });
     byProduct.get(o.product_sku).rows.push(o);
   });
+
+  // Alex (2026-11-03): an active product with zero OPEN orders right now (e.g. everything
+  // landed/cancelled) still needs its own group -- showing current inventory and an explicit
+  // "no open orders" message -- instead of disappearing from the page entirely. Only add these
+  // when the product filter and needs-action filter wouldn't already exclude every real order
+  // for a DIFFERENT reason (type/status/contact-date filters don't apply to a product with no
+  // rows at all, so those are fine to ignore here).
+  if (!onlyAction) {
+    (window._allActiveProductsCache || []).forEach(p => {
+      if (productFilter !== 'all' && p.sku_code !== productFilter) return;
+      if (!byProduct.has(p.sku_code)) byProduct.set(p.sku_code, { name: p.display_name, rows: [] });
+    });
+  }
+
+  if (byProduct.size === 0) {
+    groupsEl.innerHTML = `<div class="card empty-state">Nothing matches these filters${onlyAction ? ' — try the "Show All Orders" button' : ''}.</div>`;
+    return;
+  }
+
 
   groupsEl.innerHTML = [...byProduct.entries()].sort((a, b) => productSortRank(a[1].name) - productSortRank(b[1].name) || a[1].name.localeCompare(b[1].name)).map(([sku, group]) => {
     const inv = (window._invSnapshotBySku || {})[sku] || {};
@@ -1198,10 +1229,12 @@ function applyOpenOrdersFilter() {
         </div>
         <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
       </div>
-      <table style="white-space:nowrap;">
+      ${group.rows.length === 0
+        ? `<div class="empty-state" style="padding:14px;">No open orders right now — everything has landed or been cancelled. Use "+ Add Order" above to place a new one.</div>`
+        : `<table style="white-space:nowrap;">
         <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Contact Schedule</th></tr></thead>
         <tbody>${group.rows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
-      </table>
+      </table>`}
     </div>
   `;
   }).join('');
@@ -2087,13 +2120,28 @@ async function renderComponents() {
     const backendRec = product ? backendRecByProductAndComponent[`${product.id}::${c.component_name}`] : null;
     return { c, product, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, demandUnits, consumption, startQty, backendRec };
   });
-  window._componentsCache = { rows, months };
+
+  // Alex (2026-11-03): this tab is built entirely by iterating raw components, so a product with
+  // NO linked components (Night Oil Patches is tracked via product_id directly in
+  // inventory_ledger, by design -- see sync_componentry_ledger.py's SINGLE_COMPONENT_SKU_TO_PRODUCT)
+  // has no row here at all and can look like it's missing. That's correct for this tab (there's
+  // no raw component to show), but make it visible rather than silent.
+  const skusWithComponents = new Set((componentQoh || []).map(c => c.product_sku));
+  const singleComponentProducts = (products || []).filter(p => p.product_type === 'root' && !skusWithComponents.has(p.sku_code));
+  const singleComponentNotice = singleComponentProducts.length
+    ? `<div class="card muted" style="padding:10px 14px; margin-top:10px; font-size:12px;">
+        ${singleComponentProducts.map(p => p.display_name).join(', ')} ${singleComponentProducts.length === 1 ? 'is' : 'are'} tracked
+        directly (no separate raw-component breakdown) — see the Overview tab for current stock
+        and open orders.
+      </div>`
+    : '';
+  window._componentsCache = { rows, months, singleComponentNotice };
 
   renderComponentsTable();
 }
 
 function renderComponentsTable() {
-  const { rows, months } = window._componentsCache || { rows: [], months: [] };
+  const { rows, months, singleComponentNotice } = window._componentsCache || { rows: [], months: [], singleComponentNotice: '' };
   const el = document.getElementById('tab-components');
   const productFilter = window._componentsProductFilter || 'all';
 
@@ -2149,6 +2197,7 @@ function renderComponentsTable() {
         ? kpiTable(['Component', 'Product', 'QOH', 'In-Flight', 'Vendor', 'Lead Time', 'Cadence', 'Status', 'Runs Out', ''], tableRows, null, null, [2, 3, 4, 5, 6, 7, 8, 9])
         : '<div class="empty-state">No components match this filter.</div>'}
     </div>
+    ${singleComponentNotice}
   `;
 }
 
