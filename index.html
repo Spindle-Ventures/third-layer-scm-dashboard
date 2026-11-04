@@ -2476,15 +2476,25 @@ async function requestRecalc(scopeType, scopeId) {
 // components as expandable, but default drop down with products first. For each product I
 // should see child records as components, and child records to those components to see vendor
 // information for the components. I also want a related record list if the product is a part
-// of a bundle. I should be able to build and adjust bundles." -- three top-level accordions
-// (Vendors / Products / Components), Products open by default; each product row expands to its
-// Components, each component expands to its linked vendors; bundle-type products get an inline
-// editable bundle-contents list, and a root product that's part of a bundle shows a jump-to pill.
+// of a bundle. I should be able to build and adjust bundles." Round 2 (2026-11-04): "The
+// expansion and contractions are glitching, they should only open when I open them. The product
+// container should be first. ... I want to see the full product name, the sku nomenclature
+// should be there upon clicking the button alongside some preliminary stock information. Let's
+// have 'Bundle' be a column with a multi-clickable button for each bundle." -- root cause of the
+// glitching: every toggle (accordion open/close, product/component expand) was calling a full
+// data refetch + DOM rebuild. Fixed by rendering everything ONCE per tab load/save and making
+// every toggle a pure CSS display flip on the already-rendered DOM node -- nothing can glitch
+// because nothing rebuilds just from opening/closing something. Products is now the first
+// accordion. Collapsed product rows show only the full product name (no SKU/stock crowding);
+// clicking in reveals SKU + live Shopify qty + safety stock as a compact strip, then Components.
+// Bundle membership is its own column: a pill per bundle a root product belongs to (jumps to and
+// expands that bundle), or a "Manage Bundle" button for an actual bundle product that opens the
+// add/remove/qty editor in a modal instead of sitting inline in every expanded row.
 async function renderCatalog() {
   const el = document.getElementById('tab-catalog');
   el.innerHTML = `
+    ${catalogAccordion('products', 'Catalog — Products', 'Click a product to expand it: SKU, live stock, then its components. Click a component to see which vendors supply it.', true)}
     ${catalogAccordion('vendors', 'Catalog — Vendors', 'Click a pill to view/edit that detail. Lead time changes ask whether to apply to existing recommendations immediately or only going forward.', false)}
-    ${catalogAccordion('products', 'Catalog — Products', 'Click a product to expand its components; click a component to see which vendors supply it. Bundle products show an editable list of what they contain; a root product that belongs to a bundle shows a pill linking back to it.', true)}
     ${catalogAccordion('components', 'Catalog — Components', "Standalone list for quick admin outside a product's context — the same underlying rows as the ones nested under Products above.", false)}
   `;
   await Promise.all([renderCatalogVendors(), renderCatalogProducts(), renderCatalogComponents()]);
@@ -2495,23 +2505,29 @@ function catalogAccordion(id, title, subtitle, openDefault) {
   if (!(id in window._catalogAccordionOpen)) window._catalogAccordionOpen[id] = !!openDefault;
   const open = window._catalogAccordionOpen[id];
   return `
-    <div class="card" style="padding:0; margin-bottom:14px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; cursor:pointer;" onclick="toggleCatalogAccordion('${id}')">
+    <div class="card" style="padding:0; margin-bottom:12px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; cursor:pointer;" onclick="toggleCatalogAccordion('${id}')">
         <div style="flex:1; padding-right:10px;">
           <div class="section-label" style="margin:0;">${title}</div>
-          ${subtitle ? `<div class="muted" style="font-size:12px; margin-top:4px; font-weight:400; text-transform:none; letter-spacing:normal;">${subtitle}</div>` : ''}
+          ${subtitle ? `<div class="muted" style="font-size:12px; margin-top:3px; font-weight:400; text-transform:none; letter-spacing:normal;">${subtitle}</div>` : ''}
         </div>
-        <span class="muted" style="font-size:13px; white-space:nowrap;">${open ? '▾ Collapse' : '▸ Expand'}</span>
+        <span class="muted" id="catalog-accordion-caret-${id}" style="font-size:13px; white-space:nowrap;">${open ? '▾ Collapse' : '▸ Expand'}</span>
       </div>
-      <div id="catalog-accordion-body-${id}" style="${open ? 'padding:0 16px 16px 16px;' : 'display:none;'}"></div>
+      <div id="catalog-accordion-body-${id}" style="${open ? 'padding:0 16px 14px 16px;' : 'display:none; padding:0 16px 14px 16px;'}"></div>
     </div>
   `;
 }
 
+// Pure CSS toggle -- content is rendered once by renderCatalog() and stays in the DOM; opening
+// or closing a section never refetches or rebuilds anything, so it can't glitch.
 function toggleCatalogAccordion(id) {
   window._catalogAccordionOpen = window._catalogAccordionOpen || {};
-  window._catalogAccordionOpen[id] = !window._catalogAccordionOpen[id];
-  renderCatalog();
+  const open = !window._catalogAccordionOpen[id];
+  window._catalogAccordionOpen[id] = open;
+  const body = document.getElementById(`catalog-accordion-body-${id}`);
+  const caret = document.getElementById(`catalog-accordion-caret-${id}`);
+  if (body) body.style.display = open ? '' : 'none';
+  if (caret) caret.textContent = open ? '▾ Collapse' : '▸ Expand';
 }
 
 async function renderCatalogVendors() {
@@ -2590,51 +2606,59 @@ const PRODUCT_RECALC_FIELDS = ['unit_cogs', 'safety_stock_qty'];
 async function renderCatalogProducts() {
   const el = document.getElementById('catalog-accordion-body-products');
   if (!el) return;
-  const [{ data: products }, { data: components }, { data: componentVendors }, { data: bundleCompositions }] = await Promise.all([
+  const [{ data: products }, { data: components }, { data: componentVendors }, { data: bundleCompositions }, { data: invSnapshot }] = await Promise.all([
     sb.from('products').select('*').order('sku_code'),
     sb.from('components').select('*').order('component_name'),
     sb.from('component_vendors').select('*, vendors(vendor_name, default_lead_days)'),
     sb.from('bundle_compositions').select('*'),
+    sb.from('product_inventory_snapshot').select('product_id, channel, qty').eq('channel', 'shopify'),
   ]);
-  window._catalogProductsCache = { products: products || [], components: components || [], componentVendors: componentVendors || [], bundleCompositions: bundleCompositions || [] };
+  window._catalogProductsCache = {
+    products: products || [], components: components || [], componentVendors: componentVendors || [],
+    bundleCompositions: bundleCompositions || [], invSnapshot: invSnapshot || [],
+  };
   renderCatalogProductsTable();
 }
 
+// Pure CSS toggle -- same fix as the accordion: the detail row already exists in the DOM
+// (rendered once, hidden by default), so expanding/collapsing a product never rebuilds anything.
 function toggleCatalogProductExpand(productId) {
-  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
-  if (window._catalogExpandedProducts.has(productId)) window._catalogExpandedProducts.delete(productId);
-  else window._catalogExpandedProducts.add(productId);
-  renderCatalogProductsTable();
+  const row = document.getElementById(`cp-detail-${productId}`);
+  const caret = document.getElementById(`cp-caret-${productId}`);
+  if (!row) return;
+  const nowOpen = row.style.display === 'none';
+  row.style.display = nowOpen ? '' : 'none';
+  if (caret) caret.textContent = nowOpen ? '▾' : '▸';
 }
 
 function toggleCatalogComponentExpand(componentId) {
-  window._catalogExpandedComponents = window._catalogExpandedComponents || new Set();
-  if (window._catalogExpandedComponents.has(componentId)) window._catalogExpandedComponents.delete(componentId);
-  else window._catalogExpandedComponents.add(componentId);
-  renderCatalogProductsTable();
+  const row = document.getElementById(`cc-vendors-${componentId}`);
+  const caret = document.getElementById(`cc-caret-${componentId}`);
+  if (!row) return;
+  const nowOpen = row.style.display === 'none';
+  row.style.display = nowOpen ? '' : 'none';
+  if (caret) caret.textContent = nowOpen ? '▾' : '▸';
 }
 
-// From a "In bundle: X" pill on a root product, jump to and expand the bundle's own row.
+// From a bundle-membership pill on a root product, jump to and expand the bundle's own row.
 function jumpToCatalogProduct(productId) {
-  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
-  window._catalogExpandedProducts.add(productId);
   window._catalogAccordionOpen = window._catalogAccordionOpen || {};
-  window._catalogAccordionOpen['products'] = true;
-  renderCatalog().then(() => {
-    document.getElementById(`cp-row-${productId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
+  if (!window._catalogAccordionOpen['products']) toggleCatalogAccordion('products');
+  const row = document.getElementById(`cp-detail-${productId}`);
+  if (row && row.style.display === 'none') toggleCatalogProductExpand(productId);
+  document.getElementById(`cp-row-${productId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function renderCatalogProductsTable() {
-  const { products, components, componentVendors, bundleCompositions } = window._catalogProductsCache || { products: [], components: [], componentVendors: [], bundleCompositions: [] };
+  const { products, components, componentVendors, bundleCompositions, invSnapshot } = window._catalogProductsCache || { products: [], components: [], componentVendors: [], bundleCompositions: [], invSnapshot: [] };
   const el = document.getElementById('catalog-accordion-body-products');
   if (!el) return;
   const canAct = canEdit();
-  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
-  window._catalogExpandedComponents = window._catalogExpandedComponents || new Set();
 
   const productById = {};
   products.forEach(p => { productById[p.id] = p; });
+  const liveQtyByProduct = {};
+  invSnapshot.forEach(s => { liveQtyByProduct[s.product_id] = s.qty; });
   const componentsByProduct = {};
   components.forEach(c => { (componentsByProduct[c.product_id] = componentsByProduct[c.product_id] || []).push(c); });
   const vendorsByComponent = {};
@@ -2644,15 +2668,17 @@ function renderCatalogProductsTable() {
   const bundlesContainingProduct = {};
   bundleCompositions.forEach(bc => { (bundlesContainingProduct[bc.root_product_id] = bundlesContainingProduct[bc.root_product_id] || []).push(bc); });
   const rootProducts = products.filter(p => p.product_type === 'root');
+  window._catalogRootProducts = rootProducts;
+  window._catalogBundleContentsByBundle = bundleContentsByBundle;
 
   const renderComponentVendorsBlock = (component) => {
     const links = (vendorsByComponent[component.id] || []).slice().sort((a, b) => (b.is_preferred ? 1 : 0) - (a.is_preferred ? 1 : 0));
-    if (!links.length) return `<div class="muted" style="font-size:12px; padding:4px 0 4px 24px;">No vendors assigned yet.</div>`;
+    if (!links.length) return `<div class="muted" style="font-size:12px; padding:3px 0 6px 22px;">No vendors assigned yet.</div>`;
     return `
-      <div style="padding:2px 0 4px 24px;">
+      <div style="padding:2px 0 6px 22px;">
         ${links.map(l => `
-          <div style="font-size:12px; padding:3px 0; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-            <span style="min-width:140px;">${l.vendors?.vendor_name || '—'}${l.is_preferred ? ' <span class="pill good" style="font-size:10px; padding:1px 6px;">Preferred</span>' : ''}</span>
+          <div style="font-size:12px; padding:2px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <span style="min-width:130px;">${l.vendors?.vendor_name || '—'}${l.is_preferred ? ' <span class="pill good" style="font-size:10px; padding:1px 6px;">Preferred</span>' : ''}</span>
             <span class="muted">${l.lead_days ?? l.vendors?.default_lead_days ?? '—'}d lead</span>
             ${l.moq != null ? `<span class="muted">MOQ ${l.moq}</span>` : ''}
             ${l.unit_cost != null ? `<span class="muted">${fmtMoney2(l.unit_cost)}/unit</span>` : ''}
@@ -2664,76 +2690,47 @@ function renderCatalogProductsTable() {
 
   const renderComponentsBlock = (product) => {
     const comps = componentsByProduct[product.id] || [];
-    if (!comps.length) return `<div class="muted" style="font-size:12px; padding:6px 0;">No components on file for this product.</div>`;
+    if (!comps.length) return `<div class="muted" style="font-size:12px; padding:4px 0;">No components on file for this product.</div>`;
     return comps.map(c => {
-      const compExpanded = window._catalogExpandedComponents.has(c.id);
       const vendorNames = (vendorsByComponent[c.id] || []).map(l => l.vendors?.vendor_name).filter(Boolean);
       return `
-        <div style="border-bottom:1px solid var(--border); padding:6px 0;">
-          <div style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap;" onclick="toggleCatalogComponentExpand('${c.id}')">
-            <span class="muted" style="width:14px; display:inline-block;">${compExpanded ? '▾' : '▸'}</span>
-            <strong style="flex:1; font-size:13px; min-width:120px;">${c.component_name}</strong>
+        <div style="border-bottom:1px solid var(--border); padding:5px 0;">
+          <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex-wrap:wrap;" onclick="toggleCatalogComponentExpand('${c.id}')">
+            <span class="muted" id="cc-caret-${c.id}" style="width:12px; display:inline-block;">▸</span>
+            <strong style="flex:1; font-size:13px; min-width:110px;">${c.component_name}</strong>
             <span class="muted" style="font-size:12px;">${c.qty_per_unit ?? 1} ${c.unit_of_measure || 'each'}</span>
-            <span class="muted" style="font-size:12px; min-width:140px; text-align:right;">${vendorNames.length ? vendorNames.join(', ') : 'No vendors'}</span>
-            ${canAct ? `<button class="btn btn-ghost" style="padding:2px 8px; font-size:11px;" onclick="event.stopPropagation(); showComponentVendorsModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">Manage vendors</button>` : ''}
+            <span class="muted" style="font-size:12px; min-width:120px; text-align:right;">${vendorNames.length ? vendorNames.join(', ') : 'No vendors'}</span>
+            ${canAct ? `<button class="btn btn-ghost" style="padding:2px 7px; font-size:11px;" onclick="event.stopPropagation(); showComponentVendorsModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">Manage vendors</button>` : ''}
           </div>
-          ${compExpanded ? renderComponentVendorsBlock(c) : ''}
+          <div id="cc-vendors-${c.id}" style="display:none;">${renderComponentVendorsBlock(c)}</div>
         </div>
       `;
     }).join('');
   };
 
-  const renderBundleBlock = (product) => {
-    const contents = bundleContentsByBundle[product.id] || [];
-    const addOptions = rootProducts.filter(rp => !contents.some(bc => bc.root_product_id === rp.id));
-    return `
-      <div style="margin-top:12px;">
-        <div class="section-label" style="margin:0 0 6px;">Bundle Contents</div>
-        ${contents.length ? contents.map(bc => `
-          <div style="display:flex; align-items:center; gap:10px; padding:4px 0; flex-wrap:wrap;">
-            <span style="flex:1; font-size:13px; min-width:140px;">${productById[bc.root_product_id]?.display_name || 'Unknown product'}</span>
-            ${canAct ? `
-              <label class="muted" style="font-size:11px;">Qty
-                <input type="number" min="1" value="${bc.qty_per_bundle}" id="bc-qty-${bc.id}" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px; margin-left:4px;" onblur="saveBundleQty('${bc.id}', '${product.id}')" />
-              </label>
-              <button class="btn btn-ghost" style="padding:2px 8px; font-size:11px; color:var(--bad-text);" onclick="removeBundleComponent('${bc.id}', '${product.id}')">Remove</button>
-            ` : `<span class="muted" style="font-size:12px;">× ${bc.qty_per_bundle}</span>`}
-          </div>
-        `).join('') : '<div class="muted" style="font-size:12px;">Empty bundle — add a product below.</div>'}
-        ${canAct ? `
-          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-            <select id="bc-add-select-${product.id}" style="flex:1; min-width:140px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'}>
-              ${addOptions.length ? addOptions.map(rp => `<option value="${rp.id}">${rp.display_name}</option>`).join('') : '<option value="">No more products to add</option>'}
-            </select>
-            <input type="number" min="1" value="1" id="bc-add-qty-${product.id}" style="width:60px; padding:5px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'} />
-            <button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" ${addOptions.length ? '' : 'disabled'} onclick="addBundleComponent('${product.id}')">+ Add</button>
-          </div>
-        ` : ''}
-      </div>
-    `;
+  // Alex (2026-11-04): "Let's have 'Bundle' be a column with a multi-clickable button for each
+  // bundle." -- a root product in N bundles gets N small jump-to pills; a bundle-type product
+  // gets a single "Manage Bundle" button that opens the add/remove/qty editor in a modal (moved
+  // out of the always-expanded inline block from the first version, per this round's feedback).
+  const renderBundleCell = (p) => {
+    if (p.product_type === 'bundle') {
+      const count = (bundleContentsByBundle[p.id] || []).length;
+      return `<button class="btn btn-ghost" style="padding:3px 9px; font-size:11px;" onclick="event.stopPropagation(); showManageBundleModal('${p.id}')">Manage Bundle${count ? ` (${count})` : ''}</button>`;
+    }
+    const memberOf = bundlesContainingProduct[p.id] || [];
+    if (!memberOf.length) return '<span class="muted">—</span>';
+    return memberOf.map(bc => `<span class="pill clickable-pill watch" style="font-size:10px; margin:1px 3px 1px 0;" onclick="event.stopPropagation(); jumpToCatalogProduct('${bc.bundle_id}')">${(productById[bc.bundle_id]?.display_name || 'Unknown').replace(/"/g, '&quot;')}</span>`).join('');
   };
 
   const rows = products.map(p => {
-    const expanded = window._catalogExpandedProducts.has(p.id);
     const isBundle = p.product_type === 'bundle';
     const nameCell = canAct
-      ? `<input type="text" id="cp-name-${p.id}" value="${(p.display_name || '').replace(/"/g, '&quot;')}" onblur="saveCatalogProductName('${p.id}')" style="width:150px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" />`
-      : p.display_name;
-    // Alex (2026-11-04): "I also want a related record list if the product is a part of a
-    // bundle" -- a small jump-to pill on the root product's own row, rather than requiring the
-    // user to open the bundle to discover membership.
-    const memberOf = bundlesContainingProduct[p.id] || [];
-    const memberOfHtml = memberOf.length
-      ? `<div style="margin-top:4px;">${memberOf.map(bc => `<span class="pill clickable-pill watch" style="font-size:10px; margin-right:4px;" onclick="event.stopPropagation(); jumpToCatalogProduct('${bc.bundle_id}')">In bundle: ${(productById[bc.bundle_id]?.display_name || 'Unknown').replace(/"/g, '&quot;')}</span>`).join('')}</div>`
-      : '';
+      ? `<input type="text" id="cp-name-${p.id}" value="${(p.display_name || '').replace(/"/g, '&quot;')}" onblur="saveCatalogProductName('${p.id}')" style="width:100%; min-width:160px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onclick="event.stopPropagation();" />`
+      : `<span style="font-size:13px;">${p.display_name}</span>`;
     const typeCell = isBundle ? '<span class="pill watch">Bundle</span>' : 'Root';
     const activeCell = canAct
-      ? `<input type="checkbox" id="cp-active-${p.id}" ${p.is_active ? 'checked' : ''} onchange="saveCatalogProductActive('${p.id}')" />`
+      ? `<input type="checkbox" id="cp-active-${p.id}" ${p.is_active ? 'checked' : ''} onchange="saveCatalogProductActive('${p.id}')" onclick="event.stopPropagation();" />`
       : (p.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>');
-    // Alex (2026-10-22, carried from the dashboard's Safety Stock popup): safety stock is
-    // computed (dynamic mode) from real sales variance + lead time, not hand-typed day to day --
-    // this pill shows the current computed value and opens the SAME detail popup the Overview
-    // tab already uses, rather than inventing a second UI for the same number.
     const ssCell = canAct
       ? `<span class="pill clickable-pill ${p.safety_stock_qty ? 'good' : 'watch'}" onclick="event.stopPropagation(); showSafetyStockDetail('${p.sku_code}')">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : 'Missing'}</span>`
       : (p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : '—');
@@ -2743,44 +2740,115 @@ function renderCatalogProductsTable() {
     const notesCell = canAct
       ? `<span class="pill clickable-pill ${p.notes ? 'good' : 'watch'}" onclick="event.stopPropagation(); showProductNotesModal('${p.id}', '${(p.display_name || '').replace(/'/g, "\\'")}')">${p.notes ? 'On File' : 'Missing'}</span>`
       : (p.notes || '—');
+    const bundleCell = renderBundleCell(p);
+
+    // Alex (2026-11-04): "the sku nomenclature should be there upon clicking the button alongside
+    // some preliminary stock information" -- SKU + live Shopify qty + safety stock as a compact
+    // strip at the TOP of the expanded detail, before Components. Live qty mirrors the same
+    // Shopify-is-truth rule the Overview/Revenue tabs use (product_inventory_snapshot), falling
+    // back to "—" for products never live in Shopify (e.g. unlaunched SKUs) or bundles (which
+    // have no inventory of their own).
+    const liveQty = liveQtyByProduct[p.id];
+    const statStripHtml = `
+      <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:baseline; padding:6px 0 10px; border-bottom:1px solid var(--border); margin-bottom:8px;">
+        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">SKU</span><br><strong style="font-size:13px;">${p.sku_code}</strong></div>
+        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Live Stock</span><br><strong style="font-size:13px;">${liveQty != null ? liveQty.toLocaleString() + ' units' : '—'}</strong></div>
+        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Safety Stock</span><br><strong style="font-size:13px;">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : '—'}</strong></div>
+      </div>
+    `;
 
     const nestedHtml = `
+      ${statStripHtml}
       <div class="section-label" style="margin:0 0 6px;">Components</div>
       ${renderComponentsBlock(p)}
-      ${isBundle ? renderBundleBlock(p) : ''}
     `;
 
     return `
-      <tr id="cp-row-${p.id}">
-        <td style="padding:8px 6px; border-bottom:1px solid var(--border); cursor:pointer;" onclick="toggleCatalogProductExpand('${p.id}')"><span class="muted">${expanded ? '▾' : '▸'}</span></td>
-        <td style="padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap; cursor:pointer;" onclick="toggleCatalogProductExpand('${p.id}')">${p.sku_code}</td>
-        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${nameCell}${memberOfHtml}</td>
-        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${typeCell}</td>
-        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${activeCell}</td>
-        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${ssCell}</td>
-        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${cogsCell}</td>
-        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${notesCell}</td>
+      <tr id="cp-row-${p.id}" style="cursor:pointer;" onclick="toggleCatalogProductExpand('${p.id}')">
+        <td style="padding:7px 6px; border-bottom:1px solid var(--border);"><span class="muted" id="cp-caret-${p.id}">▸</span></td>
+        <td style="padding:7px 10px; border-bottom:1px solid var(--border);" onclick="${canAct ? 'event.stopPropagation();' : ''}">${nameCell}</td>
+        <td style="padding:7px 10px; border-bottom:1px solid var(--border);">${typeCell}</td>
+        <td style="padding:7px 10px; border-bottom:1px solid var(--border);">${activeCell}</td>
+        <td style="padding:7px 10px; border-bottom:1px solid var(--border);">${ssCell}</td>
+        <td style="padding:7px 10px; border-bottom:1px solid var(--border);">${cogsCell}</td>
+        <td style="padding:7px 10px; border-bottom:1px solid var(--border);">${bundleCell}</td>
+        <td style="padding:7px 10px; border-bottom:1px solid var(--border);">${notesCell}</td>
       </tr>
-      ${expanded ? `<tr><td colspan="8" style="padding:4px 10px 16px 34px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);">${nestedHtml}</td></tr>` : ''}
+      <tr id="cp-detail-${p.id}" style="display:none;"><td colspan="8" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
     `;
   }).join('');
 
   el.innerHTML = `
-    <div class="muted" style="font-size:12px; margin-bottom:10px;">
-      Safety stock is computed from real sales variance + vendor lead time (same figure shown on
-      Overview) — click it to see the full breakdown. Changing COGS or overriding safety stock
-      asks whether to apply to existing recommendations immediately or only going forward.
+    <div class="muted" style="font-size:12px; margin-bottom:8px;">
+      Click a product name to expand SKU, live stock, and components. Safety stock is computed
+      from real sales variance + vendor lead time (same figure shown on Overview). Changing COGS
+      or overriding safety stock asks whether to apply to existing recommendations immediately or
+      only going forward.
     </div>
     <div style="overflow-x:auto;">
       <table style="width:100%; font-size:13px; border-collapse:collapse;">
         <thead><tr>
-          <th style="padding:8px 6px; width:24px;"></th>
-          ${['SKU', 'Name', 'Type', 'Active', 'Safety Stock', 'COGS', 'Notes'].map(h => `<th style="padding:8px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
+          <th style="padding:7px 6px; width:20px;"></th>
+          ${['Name', 'Type', 'Active', 'Safety Stock', 'COGS', 'Bundle', 'Notes'].map(h => `<th style="padding:7px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
         </tr></thead>
         <tbody>${rows || '<tr><td colspan="8" class="muted" style="padding:10px;">No products found.</td></tr>'}</tbody>
       </table>
     </div>
   `;
+}
+
+// Alex (2026-11-04): "Bundle" is now a column; a bundle-type product's "Manage Bundle" button
+// opens the add/remove/qty editor here instead of it sitting inline, always-expanded, in every
+// product row (which was crowding the Components view for the common non-bundle case).
+async function showManageBundleModal(bundleId) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderManageBundleModalBody(bundleId);
+}
+
+async function renderManageBundleModalBody(bundleId) {
+  const cache = window._catalogProductsCache || { products: [] };
+  const bundle = cache.products.find(p => p.id === bundleId);
+  const rootProducts = window._catalogRootProducts || cache.products.filter(p => p.product_type === 'root');
+  const { data: freshContents } = await sb.from('bundle_compositions').select('*').eq('bundle_id', bundleId);
+  const contents = freshContents || [];
+  const addOptions = rootProducts.filter(rp => !contents.some(bc => bc.root_product_id === rp.id));
+  const productById = {};
+  cache.products.forEach(p => { productById[p.id] = p; });
+
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:480px;">
+      <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Manage Bundle — ${bundle?.display_name || ''}</div>
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">Add, remove, or adjust how many of each root product this bundle contains.</div>
+      <div style="max-height:360px; overflow-y:auto;">
+        ${contents.length ? contents.map(bc => `
+          <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span style="flex:1; font-size:13px;">${productById[bc.root_product_id]?.display_name || 'Unknown product'}</span>
+            <label class="muted" style="font-size:11px;">Qty
+              <input type="number" min="1" value="${bc.qty_per_bundle}" id="bc-qty-${bc.id}" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px; margin-left:4px;" onblur="saveBundleQty('${bc.id}', '${bundleId}')" />
+            </label>
+            <button class="btn btn-ghost" style="padding:3px 9px; font-size:11px; color:var(--bad-text);" onclick="removeBundleComponent('${bc.id}', '${bundleId}')">Remove</button>
+          </div>
+        `).join('') : '<div class="muted" style="font-size:12px; padding:6px 0;">Empty bundle — add a product below.</div>'}
+      </div>
+      <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+        <select id="bc-add-select-${bundleId}" style="flex:1; min-width:140px; padding:6px 8px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'}>
+          ${addOptions.length ? addOptions.map(rp => `<option value="${rp.id}">${rp.display_name}</option>`).join('') : '<option value="">No more products to add</option>'}
+        </select>
+        <input type="number" min="1" value="1" id="bc-add-qty-${bundleId}" style="width:60px; padding:6px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'} />
+        <button class="btn btn-primary" style="padding:5px 12px; font-size:12px;" ${addOptions.length ? '' : 'disabled'} onclick="addBundleComponent('${bundleId}')">+ Add</button>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="btn btn-ghost" id="mb-close-btn">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('mb-close-btn').onclick = () => el.remove();
 }
 
 async function addBundleComponent(bundleId) {
@@ -2795,8 +2863,7 @@ async function addBundleComponent(bundleId) {
   const bundle = cache.products.find(p => p.id === bundleId);
   const product = cache.products.find(p => p.id === rootProductId);
   await logAction('bundle_compositions', bundleId, 'update', `Added ${product?.display_name || 'a product'} (×${qty_per_bundle}) to bundle ${bundle?.display_name || ''}`, null, { bundle_id: bundleId, root_product_id: rootProductId, qty_per_bundle });
-  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
-  window._catalogExpandedProducts.add(bundleId);
+  await renderManageBundleModalBody(bundleId);
   await renderCatalogProducts();
 }
 
@@ -2805,8 +2872,7 @@ async function removeBundleComponent(bundleCompositionId, bundleId) {
   const { error } = await sb.from('bundle_compositions').delete().eq('id', bundleCompositionId);
   if (error) { alert('Remove failed: ' + error.message); return; }
   await logAction('bundle_compositions', bundleId, 'delete', 'Removed a product from a bundle', before, null);
-  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
-  window._catalogExpandedProducts.add(bundleId);
+  await renderManageBundleModalBody(bundleId);
   await renderCatalogProducts();
 }
 
@@ -2819,6 +2885,7 @@ async function saveBundleQty(bundleCompositionId, bundleId) {
   const { error } = await sb.from('bundle_compositions').update({ qty_per_bundle }).eq('id', bundleCompositionId);
   if (error) { alert('Save failed: ' + error.message); return; }
   await logAction('bundle_compositions', bundleId, 'update', `Changed bundle quantity to ${qty_per_bundle}`, before, { qty_per_bundle });
+  await renderCatalogProducts();
 }
 
 async function saveCatalogProductName(productId) {
