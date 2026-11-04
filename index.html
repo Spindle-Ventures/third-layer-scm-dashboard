@@ -2472,8 +2472,51 @@ async function requestRecalc(scopeType, scopeId) {
   await sb.from('recalc_requests').insert({ scope_type: scopeType, scope_id: scopeId, requested_by: currentUserRow?.email || 'dashboard' });
 }
 
+// Alex (2026-11-04): "Within the tab I should see the repository of vendors, products, and
+// components as expandable, but default drop down with products first. For each product I
+// should see child records as components, and child records to those components to see vendor
+// information for the components. I also want a related record list if the product is a part
+// of a bundle. I should be able to build and adjust bundles." -- three top-level accordions
+// (Vendors / Products / Components), Products open by default; each product row expands to its
+// Components, each component expands to its linked vendors; bundle-type products get an inline
+// editable bundle-contents list, and a root product that's part of a bundle shows a jump-to pill.
 async function renderCatalog() {
   const el = document.getElementById('tab-catalog');
+  el.innerHTML = `
+    ${catalogAccordion('vendors', 'Catalog — Vendors', 'Click a pill to view/edit that detail. Lead time changes ask whether to apply to existing recommendations immediately or only going forward.', false)}
+    ${catalogAccordion('products', 'Catalog — Products', 'Click a product to expand its components; click a component to see which vendors supply it. Bundle products show an editable list of what they contain; a root product that belongs to a bundle shows a pill linking back to it.', true)}
+    ${catalogAccordion('components', 'Catalog — Components', "Standalone list for quick admin outside a product's context — the same underlying rows as the ones nested under Products above.", false)}
+  `;
+  await Promise.all([renderCatalogVendors(), renderCatalogProducts(), renderCatalogComponents()]);
+}
+
+function catalogAccordion(id, title, subtitle, openDefault) {
+  window._catalogAccordionOpen = window._catalogAccordionOpen || {};
+  if (!(id in window._catalogAccordionOpen)) window._catalogAccordionOpen[id] = !!openDefault;
+  const open = window._catalogAccordionOpen[id];
+  return `
+    <div class="card" style="padding:0; margin-bottom:14px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; cursor:pointer;" onclick="toggleCatalogAccordion('${id}')">
+        <div style="flex:1; padding-right:10px;">
+          <div class="section-label" style="margin:0;">${title}</div>
+          ${subtitle ? `<div class="muted" style="font-size:12px; margin-top:4px; font-weight:400; text-transform:none; letter-spacing:normal;">${subtitle}</div>` : ''}
+        </div>
+        <span class="muted" style="font-size:13px; white-space:nowrap;">${open ? '▾ Collapse' : '▸ Expand'}</span>
+      </div>
+      <div id="catalog-accordion-body-${id}" style="${open ? 'padding:0 16px 16px 16px;' : 'display:none;'}"></div>
+    </div>
+  `;
+}
+
+function toggleCatalogAccordion(id) {
+  window._catalogAccordionOpen = window._catalogAccordionOpen || {};
+  window._catalogAccordionOpen[id] = !window._catalogAccordionOpen[id];
+  renderCatalog();
+}
+
+async function renderCatalogVendors() {
+  const el = document.getElementById('catalog-accordion-body-vendors');
+  if (!el) return;
   const [{ data: vendors }, { data: allContacts }] = await Promise.all([
     sb.from('vendors').select('*').order('vendor_name'),
     sb.from('vendor_contacts').select('*'),
@@ -2533,41 +2576,157 @@ async function renderCatalog() {
     return [nameCell, typeCell, activeCell, contactCell, leadCell, componentsCell, notesCell];
   });
 
-  el.innerHTML = `
-    <div class="card" style="padding:14px 16px; margin-bottom:14px;">
-      <div class="section-label" style="margin:0 0 4px;">Catalog — Vendors</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
-        Click a pill to view/edit that detail. Lead time changes ask whether to apply to existing
-        recommendations immediately or only going forward.
-      </div>
-      ${kpiTable(['Vendor', 'Type', 'Active', 'Contacts', 'Lead/Cadence', 'Components', 'Notes'], rows, -1)}
-    </div>
-    <div id="tab-catalog-products" style="margin-bottom:14px;"></div>
-    <div id="tab-catalog-components"></div>
-  `;
-
-  await renderCatalogProducts();
-  await renderCatalogComponents();
+  el.innerHTML = kpiTable(['Vendor', 'Type', 'Active', 'Contacts', 'Lead/Cadence', 'Components', 'Notes'], rows, -1);
 }
 
 // Alex (2026-10-30 / completing Phase 1 2026-11-03): "I also think there are more items to do...
-// having a place to manage the metadata for those 3 as items change." Products section, same
-// compact on-file pattern as Vendors above -- safety stock basis and COGS are the two fields
-// that feed po_recommendations.py/demand_engine.py, so those are the only two behind the
-// apply-now/later decision; everything else (display name, active flag) just saves.
+// having a place to manage the metadata for those 3 as items change." Products section -- safety
+// stock basis and COGS are the two fields that feed po_recommendations.py/demand_engine.py, so
+// those are the only two behind the apply-now/later decision; everything else (display name,
+// active flag) just saves. "Service level" dropped per Alex (2026-11-04: "I don't need 'service
+// level'").
 const PRODUCT_RECALC_FIELDS = ['unit_cogs', 'safety_stock_qty'];
 
 async function renderCatalogProducts() {
-  const el = document.getElementById('tab-catalog-products');
+  const el = document.getElementById('catalog-accordion-body-products');
   if (!el) return;
-  const { data: products } = await sb.from('products').select('*').order('sku_code');
-  const canAct = canEdit();
+  const [{ data: products }, { data: components }, { data: componentVendors }, { data: bundleCompositions }] = await Promise.all([
+    sb.from('products').select('*').order('sku_code'),
+    sb.from('components').select('*').order('component_name'),
+    sb.from('component_vendors').select('*, vendors(vendor_name, default_lead_days)'),
+    sb.from('bundle_compositions').select('*'),
+  ]);
+  window._catalogProductsCache = { products: products || [], components: components || [], componentVendors: componentVendors || [], bundleCompositions: bundleCompositions || [] };
+  renderCatalogProductsTable();
+}
 
-  const rows = (products || []).map(p => {
+function toggleCatalogProductExpand(productId) {
+  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
+  if (window._catalogExpandedProducts.has(productId)) window._catalogExpandedProducts.delete(productId);
+  else window._catalogExpandedProducts.add(productId);
+  renderCatalogProductsTable();
+}
+
+function toggleCatalogComponentExpand(componentId) {
+  window._catalogExpandedComponents = window._catalogExpandedComponents || new Set();
+  if (window._catalogExpandedComponents.has(componentId)) window._catalogExpandedComponents.delete(componentId);
+  else window._catalogExpandedComponents.add(componentId);
+  renderCatalogProductsTable();
+}
+
+// From a "In bundle: X" pill on a root product, jump to and expand the bundle's own row.
+function jumpToCatalogProduct(productId) {
+  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
+  window._catalogExpandedProducts.add(productId);
+  window._catalogAccordionOpen = window._catalogAccordionOpen || {};
+  window._catalogAccordionOpen['products'] = true;
+  renderCatalog().then(() => {
+    document.getElementById(`cp-row-${productId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
+function renderCatalogProductsTable() {
+  const { products, components, componentVendors, bundleCompositions } = window._catalogProductsCache || { products: [], components: [], componentVendors: [], bundleCompositions: [] };
+  const el = document.getElementById('catalog-accordion-body-products');
+  if (!el) return;
+  const canAct = canEdit();
+  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
+  window._catalogExpandedComponents = window._catalogExpandedComponents || new Set();
+
+  const productById = {};
+  products.forEach(p => { productById[p.id] = p; });
+  const componentsByProduct = {};
+  components.forEach(c => { (componentsByProduct[c.product_id] = componentsByProduct[c.product_id] || []).push(c); });
+  const vendorsByComponent = {};
+  componentVendors.forEach(cv => { (vendorsByComponent[cv.component_id] = vendorsByComponent[cv.component_id] || []).push(cv); });
+  const bundleContentsByBundle = {};
+  bundleCompositions.forEach(bc => { (bundleContentsByBundle[bc.bundle_id] = bundleContentsByBundle[bc.bundle_id] || []).push(bc); });
+  const bundlesContainingProduct = {};
+  bundleCompositions.forEach(bc => { (bundlesContainingProduct[bc.root_product_id] = bundlesContainingProduct[bc.root_product_id] || []).push(bc); });
+  const rootProducts = products.filter(p => p.product_type === 'root');
+
+  const renderComponentVendorsBlock = (component) => {
+    const links = (vendorsByComponent[component.id] || []).slice().sort((a, b) => (b.is_preferred ? 1 : 0) - (a.is_preferred ? 1 : 0));
+    if (!links.length) return `<div class="muted" style="font-size:12px; padding:4px 0 4px 24px;">No vendors assigned yet.</div>`;
+    return `
+      <div style="padding:2px 0 4px 24px;">
+        ${links.map(l => `
+          <div style="font-size:12px; padding:3px 0; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+            <span style="min-width:140px;">${l.vendors?.vendor_name || '—'}${l.is_preferred ? ' <span class="pill good" style="font-size:10px; padding:1px 6px;">Preferred</span>' : ''}</span>
+            <span class="muted">${l.lead_days ?? l.vendors?.default_lead_days ?? '—'}d lead</span>
+            ${l.moq != null ? `<span class="muted">MOQ ${l.moq}</span>` : ''}
+            ${l.unit_cost != null ? `<span class="muted">${fmtMoney2(l.unit_cost)}/unit</span>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  };
+
+  const renderComponentsBlock = (product) => {
+    const comps = componentsByProduct[product.id] || [];
+    if (!comps.length) return `<div class="muted" style="font-size:12px; padding:6px 0;">No components on file for this product.</div>`;
+    return comps.map(c => {
+      const compExpanded = window._catalogExpandedComponents.has(c.id);
+      const vendorNames = (vendorsByComponent[c.id] || []).map(l => l.vendors?.vendor_name).filter(Boolean);
+      return `
+        <div style="border-bottom:1px solid var(--border); padding:6px 0;">
+          <div style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap;" onclick="toggleCatalogComponentExpand('${c.id}')">
+            <span class="muted" style="width:14px; display:inline-block;">${compExpanded ? '▾' : '▸'}</span>
+            <strong style="flex:1; font-size:13px; min-width:120px;">${c.component_name}</strong>
+            <span class="muted" style="font-size:12px;">${c.qty_per_unit ?? 1} ${c.unit_of_measure || 'each'}</span>
+            <span class="muted" style="font-size:12px; min-width:140px; text-align:right;">${vendorNames.length ? vendorNames.join(', ') : 'No vendors'}</span>
+            ${canAct ? `<button class="btn btn-ghost" style="padding:2px 8px; font-size:11px;" onclick="event.stopPropagation(); showComponentVendorsModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">Manage vendors</button>` : ''}
+          </div>
+          ${compExpanded ? renderComponentVendorsBlock(c) : ''}
+        </div>
+      `;
+    }).join('');
+  };
+
+  const renderBundleBlock = (product) => {
+    const contents = bundleContentsByBundle[product.id] || [];
+    const addOptions = rootProducts.filter(rp => !contents.some(bc => bc.root_product_id === rp.id));
+    return `
+      <div style="margin-top:12px;">
+        <div class="section-label" style="margin:0 0 6px;">Bundle Contents</div>
+        ${contents.length ? contents.map(bc => `
+          <div style="display:flex; align-items:center; gap:10px; padding:4px 0; flex-wrap:wrap;">
+            <span style="flex:1; font-size:13px; min-width:140px;">${productById[bc.root_product_id]?.display_name || 'Unknown product'}</span>
+            ${canAct ? `
+              <label class="muted" style="font-size:11px;">Qty
+                <input type="number" min="1" value="${bc.qty_per_bundle}" id="bc-qty-${bc.id}" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px; margin-left:4px;" onblur="saveBundleQty('${bc.id}', '${product.id}')" />
+              </label>
+              <button class="btn btn-ghost" style="padding:2px 8px; font-size:11px; color:var(--bad-text);" onclick="removeBundleComponent('${bc.id}', '${product.id}')">Remove</button>
+            ` : `<span class="muted" style="font-size:12px;">× ${bc.qty_per_bundle}</span>`}
+          </div>
+        `).join('') : '<div class="muted" style="font-size:12px;">Empty bundle — add a product below.</div>'}
+        ${canAct ? `
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+            <select id="bc-add-select-${product.id}" style="flex:1; min-width:140px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'}>
+              ${addOptions.length ? addOptions.map(rp => `<option value="${rp.id}">${rp.display_name}</option>`).join('') : '<option value="">No more products to add</option>'}
+            </select>
+            <input type="number" min="1" value="1" id="bc-add-qty-${product.id}" style="width:60px; padding:5px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'} />
+            <button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" ${addOptions.length ? '' : 'disabled'} onclick="addBundleComponent('${product.id}')">+ Add</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  };
+
+  const rows = products.map(p => {
+    const expanded = window._catalogExpandedProducts.has(p.id);
+    const isBundle = p.product_type === 'bundle';
     const nameCell = canAct
       ? `<input type="text" id="cp-name-${p.id}" value="${(p.display_name || '').replace(/"/g, '&quot;')}" onblur="saveCatalogProductName('${p.id}')" style="width:150px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" />`
       : p.display_name;
-    const typeCell = p.product_type === 'bundle' ? 'Bundle' : 'Root';
+    // Alex (2026-11-04): "I also want a related record list if the product is a part of a
+    // bundle" -- a small jump-to pill on the root product's own row, rather than requiring the
+    // user to open the bundle to discover membership.
+    const memberOf = bundlesContainingProduct[p.id] || [];
+    const memberOfHtml = memberOf.length
+      ? `<div style="margin-top:4px;">${memberOf.map(bc => `<span class="pill clickable-pill watch" style="font-size:10px; margin-right:4px;" onclick="event.stopPropagation(); jumpToCatalogProduct('${bc.bundle_id}')">In bundle: ${(productById[bc.bundle_id]?.display_name || 'Unknown').replace(/"/g, '&quot;')}</span>`).join('')}</div>`
+      : '';
+    const typeCell = isBundle ? '<span class="pill watch">Bundle</span>' : 'Root';
     const activeCell = canAct
       ? `<input type="checkbox" id="cp-active-${p.id}" ${p.is_active ? 'checked' : ''} onchange="saveCatalogProductActive('${p.id}')" />`
       : (p.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>');
@@ -2576,30 +2735,90 @@ async function renderCatalogProducts() {
     // this pill shows the current computed value and opens the SAME detail popup the Overview
     // tab already uses, rather than inventing a second UI for the same number.
     const ssCell = canAct
-      ? `<span class="pill clickable-pill ${p.safety_stock_qty ? 'good' : 'watch'}" onclick="showSafetyStockDetail('${p.sku_code}')">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : 'Missing'}</span>`
+      ? `<span class="pill clickable-pill ${p.safety_stock_qty ? 'good' : 'watch'}" onclick="event.stopPropagation(); showSafetyStockDetail('${p.sku_code}')">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : 'Missing'}</span>`
       : (p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : '—');
     const cogsCell = canAct
-      ? `<span class="pill clickable-pill ${p.unit_cogs ? 'good' : 'watch'}" onclick="showProductCogsModal('${p.id}')">${p.unit_cogs ? fmtMoney2(p.unit_cogs) : 'Missing'}</span>`
+      ? `<span class="pill clickable-pill ${p.unit_cogs ? 'good' : 'watch'}" onclick="event.stopPropagation(); showProductCogsModal('${p.id}')">${p.unit_cogs ? fmtMoney2(p.unit_cogs) : 'Missing'}</span>`
       : (p.unit_cogs ? fmtMoney2(p.unit_cogs) : '—');
-    const slCell = `${(Number(p.service_level_pct) * 100).toFixed(0)}%`;
     const notesCell = canAct
-      ? `<span class="pill clickable-pill ${p.notes ? 'good' : 'watch'}" onclick="showProductNotesModal('${p.id}', '${(p.display_name || '').replace(/'/g, "\\'")}')">${p.notes ? 'On File' : 'Missing'}</span>`
+      ? `<span class="pill clickable-pill ${p.notes ? 'good' : 'watch'}" onclick="event.stopPropagation(); showProductNotesModal('${p.id}', '${(p.display_name || '').replace(/'/g, "\\'")}')">${p.notes ? 'On File' : 'Missing'}</span>`
       : (p.notes || '—');
-    return [p.sku_code, nameCell, typeCell, activeCell, ssCell, cogsCell, slCell, notesCell];
-  });
+
+    const nestedHtml = `
+      <div class="section-label" style="margin:0 0 6px;">Components</div>
+      ${renderComponentsBlock(p)}
+      ${isBundle ? renderBundleBlock(p) : ''}
+    `;
+
+    return `
+      <tr id="cp-row-${p.id}">
+        <td style="padding:8px 6px; border-bottom:1px solid var(--border); cursor:pointer;" onclick="toggleCatalogProductExpand('${p.id}')"><span class="muted">${expanded ? '▾' : '▸'}</span></td>
+        <td style="padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap; cursor:pointer;" onclick="toggleCatalogProductExpand('${p.id}')">${p.sku_code}</td>
+        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${nameCell}${memberOfHtml}</td>
+        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${typeCell}</td>
+        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${activeCell}</td>
+        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${ssCell}</td>
+        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${cogsCell}</td>
+        <td style="padding:8px 10px; border-bottom:1px solid var(--border);">${notesCell}</td>
+      </tr>
+      ${expanded ? `<tr><td colspan="8" style="padding:4px 10px 16px 34px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);">${nestedHtml}</td></tr>` : ''}
+    `;
+  }).join('');
 
   el.innerHTML = `
-    <div class="card" style="padding:14px 16px;">
-      <div class="section-label" style="margin:0 0 4px;">Catalog — Products</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
-        Safety stock is computed from real sales variance + vendor lead time (same figure shown
-        on Overview) — click it to see the full breakdown, same popup as the rest of the app.
-        Changing COGS or overriding safety stock asks whether to apply to existing recommendations
-        immediately or only going forward.
-      </div>
-      ${kpiTable(['SKU', 'Name', 'Type', 'Active', 'Safety Stock', 'COGS', 'Service Level', 'Notes'], rows, -1)}
+    <div class="muted" style="font-size:12px; margin-bottom:10px;">
+      Safety stock is computed from real sales variance + vendor lead time (same figure shown on
+      Overview) — click it to see the full breakdown. Changing COGS or overriding safety stock
+      asks whether to apply to existing recommendations immediately or only going forward.
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%; font-size:13px; border-collapse:collapse;">
+        <thead><tr>
+          <th style="padding:8px 6px; width:24px;"></th>
+          ${['SKU', 'Name', 'Type', 'Active', 'Safety Stock', 'COGS', 'Notes'].map(h => `<th style="padding:8px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
+        </tr></thead>
+        <tbody>${rows || '<tr><td colspan="8" class="muted" style="padding:10px;">No products found.</td></tr>'}</tbody>
+      </table>
     </div>
   `;
+}
+
+async function addBundleComponent(bundleId) {
+  const select = document.getElementById(`bc-add-select-${bundleId}`);
+  const qtyInput = document.getElementById(`bc-add-qty-${bundleId}`);
+  const rootProductId = select?.value;
+  if (!rootProductId) return;
+  const qty_per_bundle = Number(qtyInput?.value) || 1;
+  const { error } = await sb.from('bundle_compositions').insert({ bundle_id: bundleId, root_product_id: rootProductId, qty_per_bundle });
+  if (error) { alert('Save failed: ' + error.message); return; }
+  const cache = window._catalogProductsCache || { products: [] };
+  const bundle = cache.products.find(p => p.id === bundleId);
+  const product = cache.products.find(p => p.id === rootProductId);
+  await logAction('bundle_compositions', bundleId, 'update', `Added ${product?.display_name || 'a product'} (×${qty_per_bundle}) to bundle ${bundle?.display_name || ''}`, null, { bundle_id: bundleId, root_product_id: rootProductId, qty_per_bundle });
+  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
+  window._catalogExpandedProducts.add(bundleId);
+  await renderCatalogProducts();
+}
+
+async function removeBundleComponent(bundleCompositionId, bundleId) {
+  const { data: before } = await sb.from('bundle_compositions').select('*').eq('id', bundleCompositionId).single();
+  const { error } = await sb.from('bundle_compositions').delete().eq('id', bundleCompositionId);
+  if (error) { alert('Remove failed: ' + error.message); return; }
+  await logAction('bundle_compositions', bundleId, 'delete', 'Removed a product from a bundle', before, null);
+  window._catalogExpandedProducts = window._catalogExpandedProducts || new Set();
+  window._catalogExpandedProducts.add(bundleId);
+  await renderCatalogProducts();
+}
+
+async function saveBundleQty(bundleCompositionId, bundleId) {
+  const input = document.getElementById(`bc-qty-${bundleCompositionId}`);
+  if (!input) return;
+  const qty_per_bundle = Number(input.value) || 1;
+  const { data: before } = await sb.from('bundle_compositions').select('qty_per_bundle').eq('id', bundleCompositionId).single();
+  if (qty_per_bundle === before?.qty_per_bundle) return;
+  const { error } = await sb.from('bundle_compositions').update({ qty_per_bundle }).eq('id', bundleCompositionId);
+  if (error) { alert('Save failed: ' + error.message); return; }
+  await logAction('bundle_compositions', bundleId, 'update', `Changed bundle quantity to ${qty_per_bundle}`, before, { qty_per_bundle });
 }
 
 async function saveCatalogProductName(productId) {
@@ -2692,7 +2911,7 @@ async function showProductCogsModal(productId) {
 
 // ---------- Components section ----------
 async function renderCatalogComponents() {
-  const el = document.getElementById('tab-catalog-components');
+  const el = document.getElementById('catalog-accordion-body-components');
   if (!el) return;
   const [{ data: components }, { data: products }] = await Promise.all([
     sb.from('components').select('*').order('component_name'),
@@ -2720,16 +2939,7 @@ async function renderCatalogComponents() {
     return [nameCell, productCell, uomCell, qtyPerCell, vendorsCell, notesCell];
   });
 
-  el.innerHTML = `
-    <div class="card" style="padding:14px 16px;">
-      <div class="section-label" style="margin:0 0 4px;">Catalog — Components</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
-        "Vendors" opens the same assignment modal as a vendor's own "Manage components" button —
-        edits in either place are the same underlying data.
-      </div>
-      ${kpiTable(['Component', 'Finished Good', 'Unit of Measure', 'Qty per Unit', 'Vendors', 'Notes'], rows, -1)}
-    </div>
-  `;
+  el.innerHTML = kpiTable(['Component', 'Finished Good', 'Unit of Measure', 'Qty per Unit', 'Vendors', 'Notes'], rows, -1);
 }
 
 async function saveCatalogComponentName(componentId) {
