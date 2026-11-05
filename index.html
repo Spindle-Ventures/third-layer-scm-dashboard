@@ -2660,6 +2660,13 @@ function renderCatalogProductsTable() {
   if (!el) return;
   const canAct = canEdit();
 
+  // Alex (2026-11-04, taste-checklist item 9): a single-field edit (rename, UoM) must not
+  // collapse rows the user had open elsewhere in the table -- snapshot which product/component
+  // rows are currently expanded before rebuilding, then restore them below, so this re-render
+  // behaves like the accordion fix (state changes don't touch state the user isn't editing).
+  const openProductIds = Array.from(el.querySelectorAll('[id^="cp-detail-"]')).filter(r => r.style.display !== 'none').map(r => r.id.replace('cp-detail-', ''));
+  const openComponentIds = Array.from(el.querySelectorAll('[id^="cc-vendors-"]')).filter(r => r.style.display !== 'none').map(r => r.id.replace('cc-vendors-', ''));
+
   // Alex (2026-11-04): "Bundles should maybe have their own container instead of being lumped
   // into the products container." -- this table is root products only now; bundle-type products
   // and their contents live entirely in renderCatalogBundles() below. The "In bundle: X" jump
@@ -2794,6 +2801,12 @@ function renderCatalogProductsTable() {
       </table>
     </div>
   `;
+
+  // Restore whichever rows were expanded before this render -- see the taste-checklist note
+  // above the snapshot. Component-vendor rows only exist once their parent product row is open,
+  // so products are restored first.
+  openProductIds.forEach(id => toggleCatalogProductExpand(id));
+  openComponentIds.forEach(id => toggleCatalogComponentExpand(id));
 }
 
 // Alex (2026-11-04): "I need somewhere to add a new product and build a new bundle on this tab."
@@ -2905,6 +2918,9 @@ function renderCatalogBundlesTable() {
   const el = document.getElementById('catalog-accordion-body-bundles');
   if (!el) return;
   const canAct = canEdit();
+  // Same taste-checklist item-9 fix as Products: don't collapse other bundle rows the user had
+  // open just because one of them got an add/remove/qty edit.
+  const openBundleIds = Array.from(el.querySelectorAll('[id^="cb-detail-"]')).filter(r => r.style.display !== 'none').map(r => r.id.replace('cb-detail-', ''));
   const bundles = products.filter(p => p.product_type === 'bundle');
   const rootProducts = products.filter(p => p.product_type === 'root');
   const productById = {};
@@ -2983,6 +2999,7 @@ function renderCatalogBundlesTable() {
       </table>
     </div>
   `;
+  openBundleIds.forEach(id => toggleCatalogBundleExpand(id));
 }
 
 async function showNewBundleModal() {
@@ -3049,11 +3066,9 @@ async function addBundleComponent(bundleId) {
   const bundle = cache.products.find(p => p.id === bundleId);
   const product = cache.products.find(p => p.id === rootProductId);
   await logAction('bundle_compositions', bundleId, 'update', `Added ${product?.display_name || 'a product'} (×${qty_per_bundle}) to bundle ${bundle?.display_name || ''}`, null, { bundle_id: bundleId, root_product_id: rootProductId, qty_per_bundle });
-  window._catalogExpandedBundles = window._catalogExpandedBundles || new Set();
+  // The bundle being edited is already open, so renderCatalogBundlesTable's own open-row
+  // snapshot/restore (taste-checklist item 9) keeps it open -- no separate re-expand needed here.
   await renderCatalogBundles();
-  // Re-expand the bundle we just edited -- a fresh render resets detail rows to collapsed.
-  const row = document.getElementById(`cb-detail-${bundleId}`);
-  if (row) toggleCatalogBundleExpand(bundleId);
 }
 
 async function removeBundleComponent(bundleCompositionId, bundleId) {
@@ -3062,8 +3077,6 @@ async function removeBundleComponent(bundleCompositionId, bundleId) {
   if (error) { alert('Remove failed: ' + error.message); return; }
   await logAction('bundle_compositions', bundleId, 'delete', 'Removed a product from a bundle', before, null);
   await renderCatalogBundles();
-  const row = document.getElementById(`cb-detail-${bundleId}`);
-  if (row) toggleCatalogBundleExpand(bundleId);
 }
 
 async function saveCatalogProductActive(productId) {
