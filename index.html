@@ -1375,6 +1375,10 @@ async function showSafetyStockDetail(sku) {
 
   const canvas = document.getElementById('safety-stock-chart');
   if (canvas) {
+    // Audit (2026-11-05, knowledge-work-data-viz checklist item "axes carry units"): raw bar
+    // values had no unit anywhere on the chart itself (the number alone doesn't say "units").
+    // Tooltip and axis tick now both append " units" so the chart stands on its own without
+    // requiring the reader to cross-reference the text block above it.
     new Chart(canvas, {
       type: 'bar',
       data: {
@@ -1386,8 +1390,14 @@ async function showSafetyStockDetail(sku) {
       },
       options: {
         responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-        plugins: { legend: { display: false } },
-        scales: { x: { ticks: { font: { size: 10 } } }, y: { ticks: { font: { size: 11 } } } },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.x.toLocaleString()} units` } },
+        },
+        scales: {
+          x: { ticks: { font: { size: 10 }, callback: (v) => `${v.toLocaleString()}` }, title: { display: true, text: 'Units', font: { size: 10 } } },
+          y: { ticks: { font: { size: 11 } } },
+        },
       },
     });
   }
@@ -4330,28 +4340,57 @@ function showMixCellDetail(view, channel, productId, month) {
   const isPct = view === 'pct';
   const valueLine = isPct ? `${((cur.revenue_pct || 0) * 100).toFixed(1)}% of ${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue` : fmtMoney2(cur.avg_selling_price || 0);
   const rationale = isPct ? cur.revenue_pct_rationale : cur.asp_rationale;
+
+  if (!isPct) {
+    // Alex (2026-11-05): "I still don't like the average selling price visual of it being more
+    // or less than projected. I don't understand it and it doesn't offer me a ton of value" --
+    // clarified he wants the comparison-sentence-and-chart treatment gone for ASP specifically
+    // and reverted to edit-only, like before that treatment existed. The % of Revenue popup
+    // (chart + "why" sentence, added earlier today) is untouched -- he did not flag that one.
+    // Keeps the plain historical-ASP table (real order data, no comparison math) as before.
+    const history = channel === 'shopify' ? (S.historicalAspByProduct[productId] || []) : [];
+    const historyBlock = history.length ? `
+      <div style="margin:8px 0; padding-top:8px; border-top:1px solid var(--border);">
+        <div class="section-label" style="margin:0 0 4px; font-size:11px;">Actual ASP, Last ${history.length} Months (Shopify)</div>
+        <table style="width:100%; font-size:12px; border-collapse:collapse;">
+          ${history.map(h => `<tr><td style="padding:2px 6px;">${monthLabelShort(h.month)}</td><td style="padding:2px 6px; text-align:right;">${fmtMoney2(h.asp)}</td><td class="muted" style="padding:2px 6px; text-align:right;">${h.units.toLocaleString()} units sold</td></tr>`).join('')}
+        </table>
+        <div class="muted" style="font-size:10px; margin-top:4px;">Computed from real order data (total sales ÷ net units sold).</div>
+      </div>
+    ` : `<div class="muted" style="font-size:11px; margin:6px 0;">No historical actual-ASP data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'}.</div>`;
+    const body = `
+      <div style="font-size:16px; margin-bottom:6px;"><strong>${valueLine}</strong></div>
+      <div class="muted" style="font-size:13px; line-height:1.4; margin-bottom:8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+      ${historyBlock}
+      ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftAsp('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
+    `;
+    showDetail(`${p?.display_name} — ${monthLabelLong(month)} — Avg Selling Price`, body);
+    return;
+  }
+
   // Alex (2026-10-22 / 2026-11-05): "you should have historical information to drive average
   // selling price projections and put context into the pop up box" / "[the % popup] should be
   // data visualization driven as opposed to a bunch of text. How can I know by clicking this why
   // the number is what it is quickly and based on historical data/trends?" -- real trailing-month
-  // history (Shopify only; see historicalAspByProduct/historicalPctByProduct for the "no Amazon
-  // data" limit) renders as a Chart.js bar/line chart (same library already used for the Overview
-  // safety-stock popup -- no new dependency), with the projected month appended as its own bar so
-  // history and projection sit on one visual timeline instead of a separate text table. A plain-
-  // English "why" sentence is computed from the comparison, replacing the old wall of text.
-  const history = channel === 'shopify' ? (isPct ? (S.historicalPctByProduct[productId] || []) : (S.historicalAspByProduct[productId] || [])) : [];
+  // history (Shopify only; see historicalPctByProduct for the "no Amazon data" limit) renders as
+  // a Chart.js bar chart (same library already used for the Overview safety-stock popup -- no
+  // new dependency), with the projected month appended as its own bar so history and projection
+  // sit on one visual timeline instead of a separate text table. A plain-English "why" sentence
+  // is computed from the comparison, replacing the old wall of text. (ASP got this same treatment
+  // earlier today but was reverted per Alex's explicit feedback above -- this comparison-sentence
+  // pattern stays on the % of Revenue popup only, which he did not flag.)
+  const history = channel === 'shopify' ? (S.historicalPctByProduct[productId] || []) : [];
   const chartId = `mix-detail-chart-${Math.random().toString(36).slice(2)}`;
 
   let whyHtml = '';
   if (history.length) {
     const recent = history.slice(-3);
-    const avgRecent = recent.reduce((s, h) => s + (isPct ? h.pct : h.asp), 0) / recent.length;
-    const curVal = isPct ? (cur.revenue_pct || 0) : (cur.avg_selling_price || 0);
+    const avgRecent = recent.reduce((s, h) => s + h.pct, 0) / recent.length;
+    const curVal = cur.revenue_pct || 0;
     const diff = curVal - avgRecent;
     const pctDiff = avgRecent > 0.0001 ? (diff / avgRecent) * 100 : 0;
     const direction = pctDiff > 2 ? 'higher' : pctDiff < -2 ? 'lower' : 'in line with';
-    const metricLabel = isPct ? '% of revenue' : 'avg selling price';
-    const fmtVal = (v) => isPct ? `${(v * 100).toFixed(1)}%` : fmtMoney2(v);
+    const fmtVal = (v) => `${(v * 100).toFixed(1)}%`;
     whyHtml = (Math.abs(pctDiff) > 2)
       ? `<div style="font-size:13px; line-height:1.5; margin-bottom:4px;">This month's projection (<strong>${fmtVal(curVal)}</strong>) is <strong>${Math.abs(Math.round(pctDiff))}% ${direction}</strong> than the trailing 3-month actual average of ${fmtVal(avgRecent)}.</div>`
       : `<div style="font-size:13px; line-height:1.5; margin-bottom:4px;">This month's projection (<strong>${fmtVal(curVal)}</strong>) is ${direction} the trailing 3-month actual average of ${fmtVal(avgRecent)}.</div>`;
@@ -4369,16 +4408,16 @@ function showMixCellDetail(view, channel, productId, month) {
       <summary>Written rationale</summary>
       <div class="muted" style="font-size:13px; line-height:1.4; margin:4px 0 8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
     </details>
-    ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); ${isPct ? 'editDraftMixPct' : 'editDraftAsp'}('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
+    ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftMixPct('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
   `;
-  showDetail(`${p?.display_name} — ${monthLabelLong(month)} — ${isPct ? 'Revenue Share' : 'Avg Selling Price'}`, body);
+  showDetail(`${p?.display_name} — ${monthLabelLong(month)} — Revenue Share`, body);
 
   if (history.length) {
     const canvas = document.getElementById(chartId);
     if (canvas) {
       const projLabel = `${monthLabelShort(month)} (proj.)`;
       const labels = [...history.map(h => monthLabelShort(h.month)), projLabel];
-      const values = [...history.map(h => isPct ? h.pct * 100 : h.asp), isPct ? (cur.revenue_pct || 0) * 100 : (cur.avg_selling_price || 0)];
+      const values = [...history.map(h => h.pct * 100), (cur.revenue_pct || 0) * 100];
       const colors = [...history.map(() => '#8A7257'), '#C9A876'];
       new Chart(canvas, {
         type: 'bar',
@@ -4387,11 +4426,13 @@ function showMixCellDetail(view, channel, productId, month) {
           responsive: true, maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: { callbacks: { label: (ctx) => isPct ? `${ctx.parsed.y.toFixed(1)}%` : fmtMoney2(ctx.parsed.y) } },
+            tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y.toFixed(1)}%` } },
           },
           scales: {
             x: { ticks: { font: { size: 10 } } },
-            y: { ticks: { font: { size: 10 }, callback: (v) => isPct ? `${v}%` : `$${v}` } },
+            // Audit (2026-11-05, knowledge-work-data-viz checklist "bar charts start at zero"):
+            // without beginAtZero, Chart.js auto-scales to the data's min/max.
+            y: { beginAtZero: true, ticks: { font: { size: 10 }, callback: (v) => `${v}%` } },
           },
         },
       });
