@@ -5004,6 +5004,7 @@ function renderRevenueBody() {
       <span class="muted" style="font-size:14px;">Trailing history:</span>
       ${[0, 3, 6].map(n => `<button class="btn ${((S.showHistory || 0) === n) ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px;" onclick="setMixHistoryMonths(${n})">${n === 0 ? 'Off' : n + ' mo'}</button>`).join('')}
       <button class="btn ${S.showMoMDelta ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px; margin-left:8px;" onclick="toggleMixMoMDelta()" title="Show each column's % change vs. the column immediately before it, for every month shown (history and projected alike)">${S.showMoMDelta ? 'Hide' : 'Show'} month-over-month change</button>
+      <button class="btn btn-ghost" style="padding:5px 11px; font-size:13px; margin-left:8px;" onclick="launchTrendChartFromSkuFilter()" title="Select one or more SKUs in the filter above, then click this to open their % of Revenue trend chart">📈 Trend chart</button>
     </div>
   `;
 
@@ -5480,6 +5481,25 @@ function setMixSkuFilter(productIds) {
 // the same chart in place instead of reopening the whole modal each time.
 function showProductTrendChart(productId, channel) {
   window._trendChartProductIds = new Set([productId]);
+  window._trendChartChannel = channel;
+  renderProductTrendChart();
+}
+
+// Alex (2026-11-06): "the trend chart button is gone" -- the launcher got removed along with
+// the broken single-SKU/channel dropdowns last round, but the button itself (not the dropdowns)
+// was supposed to stay, now driven off the SKU multi-select filter instead of its own separate
+// picker. With no SKU filter active, defaults to every product currently shown in the table
+// (same products the multi-select itself would list) rather than erroring with nothing selected.
+function launchTrendChartFromSkuFilter() {
+  const S = window._revState;
+  const selected = S.mixSkuFilter && S.mixSkuFilter.length ? S.mixSkuFilter : null;
+  const ids = selected || S.products.filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id]).map(p => p.product_id);
+  if (!ids.length) return;
+  // Prefer Shopify if the first selected product has Shopify history; otherwise fall back to
+  // Amazon so a SKU sold only on Amazon still opens a usable chart instead of an empty one.
+  const firstId = ids[0];
+  const channel = (S.historicalPctByProduct[firstId] && S.historicalPctByProduct[firstId].length) ? 'shopify' : 'amazon';
+  window._trendChartProductIds = new Set(ids);
   window._trendChartChannel = channel;
   renderProductTrendChart();
 }
