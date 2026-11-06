@@ -34,31 +34,31 @@
   header {
     padding: 18px 40px 0 40px;
   }
-  .brand { font-size: 14px; font-weight: 700; letter-spacing: 0.12em; color: var(--ink); }
-  h1.title { font-size: 27px; font-weight: 600; margin: 2px 0 2px 0; }
-  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 10px; }
+  .brand { font-size: 15px; font-weight: 700; letter-spacing: 0.12em; color: var(--ink); }
+  h1.title { font-size: 32px; font-weight: 600; margin: 2px 0 2px 0; }
+  .subtitle { color: var(--muted); font-size: 16px; margin-bottom: 8px; }
   .top-row { display: flex; justify-content: space-between; align-items: flex-start; }
   .snapshot-pill {
     background: var(--card); border: 1px solid var(--border); border-radius: 999px;
-    padding: 5px 12px; font-size: 13px; color: var(--muted);
+    padding: 6px 14px; font-size: 14px; color: var(--muted);
   }
   nav.tabs {
     display: flex; gap: 24px; border-bottom: 1px solid var(--border);
-    padding: 0 40px; margin-top: 6px;
+    padding: 0 40px; margin-top: 4px;
   }
   nav.tabs button {
-    background: none; border: none; font-family: 'Inter'; font-size: 14px; font-weight: 500;
-    color: var(--muted); padding: 9px 0; cursor: pointer; border-bottom: 2px solid transparent;
+    background: none; border: none; font-family: 'Inter'; font-size: 16px; font-weight: 500;
+    color: var(--muted); padding: 10px 0; cursor: pointer; border-bottom: 2px solid transparent;
   }
   nav.tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
-  main { padding: 20px 48px 48px 48px; max-width: 1680px; margin: 0 auto; }
+  main { padding: 16px 44px 40px 44px; max-width: 1800px; margin: 0 auto; }
   .section-label {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.1em; color: var(--muted);
-    margin: 18px 0 8px 0; text-transform: uppercase;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.1em; color: var(--muted);
+    margin: 14px 0 6px 0; text-transform: uppercase;
   }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 18px 22px;
+    padding: 16px 20px;
   }
   /* Alex (2026-10-27): "needs to be available, accessible, and render well on a mobile device."
      Every table on the dashboard lives inside a .card -- making the card itself horizontally
@@ -67,37 +67,38 @@
      with zero changes to any individual table's markup. */
   .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .kpi-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;
   }
-  .kpi-card { display: flex; flex-direction: column; gap: 4px; }
-  .kpi-label { font-size: 14px; color: var(--muted); font-weight: 500; }
-  .kpi-value { font-size: 26px; font-weight: 700; }
+  .kpi-card { display: flex; flex-direction: column; gap: 3px; }
+  .kpi-label { font-size: 15px; color: var(--muted); font-weight: 500; }
+  .kpi-value { font-size: 30px; font-weight: 700; }
   .pill {
-    display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600;
-    padding: 3px 9px; border-radius: 999px; width: fit-content;
+    display: inline-flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600;
+    padding: 4px 10px; border-radius: 999px; width: fit-content;
   }
   .pill.good { background: var(--good-bg); color: var(--good-text); }
   .pill.bad { background: var(--bad-bg); color: var(--bad-text); }
   .pill.watch { background: var(--watch-bg); color: var(--watch-text); }
-  /* Alex (2026-11-05, two rounds): "increase the font sizes" / "use screen real estate better" /
-     "the spacing on the font is also not optimized ... enhance everywhere ... text is enlarged
-     and spacing is more completely used" -- applied dashboard-wide across two passes: base body
-     text, labels, and column headers each moved up roughly 2 steps total; .card/table cell
-     padding widened to match; main content area widened (1500px->1680px max-width) so wide
-     tables (Product Mix with trailing history on) have more room before needing horizontal
-     scroll. */
-  table { width: 100%; border-collapse: collapse; font-size: 15px; }
-  th { text-align: left; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase;
-       letter-spacing: 0.04em; padding: 11px 14px; border-bottom: 1px solid var(--border); }
-  td { padding: 13px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  /* Alex (2026-11-05, three rounds): "increase the font sizes" / "use screen real estate better"
+     / "the spacing on the font is also not optimized ... enhance everywhere ... text is enlarged
+     and spacing is more completely used" / "fonts and spacing are still bad - fonts/buttons
+     should be bigger leaving much less open space" -- round 3 pushes further: base text, labels,
+     buttons, and column headers moved up again; section/card margins and padding TIGHTENED
+     (rather than widened) so the larger text displaces whitespace instead of adding to it, per
+     his explicit "much less open space" framing; main content area widened again
+     (1680px->1800px). */
+  table { width: 100%; border-collapse: collapse; font-size: 17px; }
+  th { text-align: left; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.04em; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   tr:last-child td { border-bottom: none; }
-  .urgency-badge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; letter-spacing: 0.03em; }
+  .urgency-badge { font-size: 13px; font-weight: 700; padding: 4px 11px; border-radius: 999px; letter-spacing: 0.03em; }
   .urgency-CRITICAL { background: var(--bad-bg); color: var(--bad-text); }
   .urgency-WARNING { background: var(--watch-bg); color: var(--watch-text); }
   .urgency-WATCH { background: #EFEAE2; color: var(--accent-light); }
   .urgency-OK { background: var(--good-bg); color: var(--good-text); }
   .btn {
-    font-family: 'Inter'; font-size: 14px; font-weight: 600; padding: 7px 14px;
+    font-family: 'Inter'; font-size: 15px; font-weight: 600; padding: 9px 16px;
     border-radius: 8px; border: 1px solid var(--border); background: var(--card);
     cursor: pointer; color: var(--ink);
   }
@@ -113,7 +114,7 @@
     width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
     font-family: 'Inter'; font-size: 14px; margin: 14px 0; box-sizing: border-box;
   }
-  .muted { color: var(--muted); font-size: 14px; }
+  .muted { color: var(--muted); font-size: 15px; }
 
   /* Info icon trigger only -- the actual tooltip is a single reusable position:fixed element
      (#global-tooltip, built in JS below) appended to <body>, NOT nested inside this span.
@@ -4382,31 +4383,34 @@ function showMixCellDetail(view, channel, productId, month) {
     // actual ASP" (last real month, Shopify). Full monthly history moved into a <details>
     // dropdown (same native expand/collapse pattern already used elsewhere in this file) instead
     // of always being shown.
+    // Alex (2026-11-06): "The ASP pop up clarity is better - let's simplify even further."
+    // Cut the paragraph-of-text rationale entirely -- the two labeled number blocks (Projected,
+    // Recommended, Most Recent Actual) already say everything that paragraph was saying in
+    // prose, so keeping both was the redundancy. Down to: one plain "Projected ASP" line, the
+    // two real-number blocks, the collapsed history, and Edit.
     const history = channel === 'shopify' ? (S.historicalAspByProduct[productId] || []) : [];
     const last3 = history.length ? history.slice(-3).reduce((s, h) => s + h.asp, 0) / Math.min(3, history.length) : null;
     const lastActual = history.length ? history[history.length - 1] : null;
     const recommendedBlock = (last3 != null || lastActual) ? `
       <div style="display:flex; gap:18px; flex-wrap:wrap; margin:10px 0; padding:10px; background:#F7F4EE; border-radius:8px;">
-        ${last3 != null ? `<div><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em;">Recommended ASP</div><div style="font-size:18px; font-weight:700;">${fmtMoney2(last3)}</div><div class="muted" style="font-size:11px;">trailing 3-mo actual avg</div></div>` : ''}
-        ${lastActual ? `<div><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em;">Most Recent Actual ASP</div><div style="font-size:18px; font-weight:700;">${fmtMoney2(lastActual.asp)}</div><div class="muted" style="font-size:11px;">${monthLabelShort(lastActual.month)}, real order data</div></div>` : ''}
+        ${last3 != null ? `<div><div class="muted" style="font-size:12px;">Recommended (3-mo avg)</div><div style="font-size:19px; font-weight:700;">${fmtMoney2(last3)}</div></div>` : ''}
+        ${lastActual ? `<div><div class="muted" style="font-size:12px;">Actual (${monthLabelShort(lastActual.month)})</div><div style="font-size:19px; font-weight:700;">${fmtMoney2(lastActual.asp)}</div></div>` : ''}
       </div>
-    ` : `<div class="muted" style="font-size:12px; margin:8px 0;">No historical actual-ASP data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'} to recommend from.</div>`;
+    ` : `<div class="muted" style="font-size:13px; margin:8px 0;">No historical actual-ASP data${channel === 'amazon' ? ' for Amazon yet' : ' yet'}.</div>`;
     const historyBlock = history.length ? `
       <details style="margin-top:4px;">
-        <summary>Show monthly history (${history.length} months, Shopify)</summary>
-        <table style="width:100%; font-size:13px; border-collapse:collapse; margin-top:6px;">
-          ${history.map(h => `<tr><td style="padding:2px 6px;">${monthLabelShort(h.month)}</td><td style="padding:2px 6px; text-align:right;">${fmtMoney2(h.asp)}</td><td class="muted" style="padding:2px 6px; text-align:right;">${h.units.toLocaleString()} units sold</td></tr>`).join('')}
+        <summary>Monthly history (${history.length} mo)</summary>
+        <table style="width:100%; font-size:14px; border-collapse:collapse; margin-top:6px;">
+          ${history.map(h => `<tr><td style="padding:3px 6px;">${monthLabelShort(h.month)}</td><td style="padding:3px 6px; text-align:right;">${fmtMoney2(h.asp)}</td><td class="muted" style="padding:3px 6px; text-align:right;">${h.units.toLocaleString()} units</td></tr>`).join('')}
         </table>
-        <div class="muted" style="font-size:11px; margin-top:4px;">Computed from real order data (total sales ÷ net units sold).</div>
       </details>
     ` : '';
     const body = `
-      <div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:2px;">Projected / Assumed ASP for ${monthLabelLong(month)}</div>
-      <div style="font-size:16px; margin-bottom:6px;"><strong>${valueLine}</strong></div>
-      <div class="muted" style="font-size:14px; line-height:1.4; margin-bottom:8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+      <div class="muted" style="font-size:12px;">Projected for ${monthLabelLong(month)}</div>
+      <div style="font-size:19px; margin-bottom:8px;"><strong>${valueLine}</strong></div>
       ${recommendedBlock}
       ${historyBlock}
-      ${editable ? `<button class="btn btn-primary" style="margin-top:10px;" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftAsp('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:12px; margin-top:10px;">Switch to a draft scenario to edit.</div>'}
+      ${editable ? `<button class="btn btn-primary" style="margin-top:10px;" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftAsp('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:13px; margin-top:10px;">Switch to a draft scenario to edit.</div>'}
     `;
     showDetail(`${p?.display_name} — ${monthLabelLong(month)} — Avg Selling Price`, body);
     return;
@@ -4952,11 +4956,23 @@ function renderRevenueBody() {
   // existing forward-looking `months` so one continuous row reads history -> forecast left-to-right.
   const historyMonths = priorMonths(S.showHistory || 0);
   const historyColWidths = historyMonths.map(() => '95px');
+  const allMixProductIds = [...new Set(['shopify', 'amazon'].flatMap(ch => S.products.filter(p => S.liveMix[ch]?.[p.product_id]).map(p => p.product_id)))];
+  const allMixProducts = S.products.filter(p => allMixProductIds.includes(p.product_id)).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
   const mixHistoryControl = `
-    <div style="display:flex; align-items:center; gap:6px;">
-      <span class="muted" style="font-size:13px;">Trailing history:</span>
-      ${[0, 3, 6].map(n => `<button class="btn ${((S.showHistory || 0) === n) ? 'btn-primary' : 'btn-ghost'}" style="padding:4px 9px; font-size:12px;" onclick="setMixHistoryMonths(${n})">${n === 0 ? 'Off' : n + ' mo'}</button>`).join('')}
-      <button class="btn ${S.showMoMDelta ? 'btn-primary' : 'btn-ghost'}" style="padding:4px 9px; font-size:12px; margin-left:8px;" onclick="toggleMixMoMDelta()" title="Show each cell's % change vs. the prior month, based on real historical values">${S.showMoMDelta ? 'Hide' : 'Show'} month-over-month change</button>
+    <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+      <span class="muted" style="font-size:14px;">Trailing history:</span>
+      ${[0, 3, 6].map(n => `<button class="btn ${((S.showHistory || 0) === n) ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px;" onclick="setMixHistoryMonths(${n})">${n === 0 ? 'Off' : n + ' mo'}</button>`).join('')}
+      <button class="btn ${S.showMoMDelta ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px; margin-left:8px;" onclick="toggleMixMoMDelta()" title="Show each column's % change vs. the column immediately before it, for every month shown (history and projected alike)">${S.showMoMDelta ? 'Hide' : 'Show'} month-over-month change</button>
+      <span style="display:flex; align-items:center; gap:6px; margin-left:8px;">
+        <select id="mix-trend-launch-select" style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border);">
+          ${allMixProducts.map(p => `<option value="${p.product_id}">${p.display_name}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost" style="padding:5px 11px; font-size:13px;" onclick="showProductTrendChart(document.getElementById('mix-trend-launch-select').value, document.getElementById('mix-trend-launch-channel').value)" title="Open the % of Revenue trend chart for the selected product">📈 Trend chart</button>
+        <select id="mix-trend-launch-channel" style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border);">
+          <option value="shopify">Shopify</option>
+          <option value="amazon">Amazon</option>
+        </select>
+      </span>
     </div>
   `;
 
@@ -5013,8 +5029,6 @@ function renderRevenueBody() {
   // ANDed together) -- a dedicated checkbox-list picker scoped to the SKUs actually present in
   // the Product Mix table (S.liveMix), so there's never a stale SKU in the list for a product
   // that's been retired/inactive.
-  const allMixProductIds = [...new Set(['shopify', 'amazon'].flatMap(ch => S.products.filter(p => S.liveMix[ch]?.[p.product_id]).map(p => p.product_id)))];
-  const allMixProducts = S.products.filter(p => allMixProductIds.includes(p.product_id)).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
   const selectedSkuIds = S.mixSkuFilter && S.mixSkuFilter.length ? new Set(S.mixSkuFilter) : null;
   const skuFilterBar = `
     <button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="toggleMixSkuFilterMenu(event)">
@@ -5062,68 +5076,74 @@ function renderRevenueBody() {
     // Alex (2026-11-05): trailing-history columns -- Shopify only (no equivalent Amazon
     // ingestion, same limit as the ASP/pct popups already carried). Amazon gets a plain "no
     // history" cell per column instead of silently showing nothing or fabricating a number.
-    const historyCell = (p, m) => {
+    // Alex (2026-11-06): "The month over month change should be simply a green or red with a
+    // percentage change from last month. Right now it's only showing on current month - it
+    // should show for any historical months being presented. I don't get any value out of the
+    // percentage change vs actual." Rebuilt as one combined, left-to-right value series per
+    // product (real trailing-history months first, then the projected/draft months), so every
+    // column -- history AND projected -- gets a delta vs. whatever column sits immediately to
+    // its left on screen. No more "vs actual" special case; it's always just "vs the previous
+    // column shown," period.
+    const seriesValue = (p, m, isHistory, isPctView) => {
+      if (isHistory) {
+        if (channel !== 'shopify') return null;
+        const hist = isPctView ? S.historicalPctByProduct[p.product_id] : S.historicalAspByProduct[p.product_id];
+        const row = (hist || []).find(h => h.month === m);
+        return row ? (isPctView ? row.pct : row.asp) : null;
+      }
+      const mix = S.draftMix[channel][p.product_id]?.[m];
+      if (!mix) return null;
+      return isPctView ? mix.revenue_pct : mix.avg_selling_price;
+    };
+    const momDelta = (p, colIndex, isPctView) => {
+      if (!S.showMoMDelta || colIndex === 0) return '';
+      const allCols = [...historyMonths.map(m => ({ m, isHistory: true })), ...months.map(m => ({ m, isHistory: false }))];
+      const curVal = seriesValue(p, allCols[colIndex].m, allCols[colIndex].isHistory, isPctView);
+      const prevVal = seriesValue(p, allCols[colIndex - 1].m, allCols[colIndex - 1].isHistory, isPctView);
+      if (curVal == null || prevVal == null || Math.abs(prevVal) < 0.0001) return '';
+      const pct = ((curVal - prevVal) / prevVal) * 100;
+      if (Math.abs(pct) < 0.5) return '';
+      const up = pct > 0;
+      const color = up ? 'var(--good-text)' : 'var(--bad-text)';
+      return `<div style="font-size:11px; font-weight:700; color:${color}; margin-top:2px;">${up ? '+' : ''}${pct.toFixed(1)}%</div>`;
+    };
+    const historyCell = (p, m, colIndex) => {
       if (channel !== 'shopify') return '<span class="muted" style="font-size:11px;">No Amazon history</span>';
       if (mixView === 'pct') {
         const row = (S.historicalPctByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:12px;"><strong>${(row.pct * 100).toFixed(1)}%</strong></span>` : '<span class="muted">—</span>';
+        return row ? `<span style="font-size:13px;"><strong>${(row.pct * 100).toFixed(1)}%</strong>${momDelta(p, colIndex, true)}</span>` : '<span class="muted">—</span>';
       }
       if (mixView === 'asp') {
         const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:12px;"><strong>${fmtMoney2(row.asp)}</strong></span>` : '<span class="muted">—</span>';
+        return row ? `<span style="font-size:13px;"><strong>${fmtMoney2(row.asp)}</strong>${momDelta(p, colIndex, false)}</span>` : '<span class="muted">—</span>';
       }
       if (mixView === 'units') {
         const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:12px;"><strong>${row.units.toLocaleString()}</strong></span>` : '<span class="muted">—</span>';
+        return row ? `<span style="font-size:13px;"><strong>${row.units.toLocaleString()}</strong></span>` : '<span class="muted">—</span>';
       }
       return '<span class="muted">—</span>';
     };
     const rows = orderedProds.map(p => [
-      `<span class="pill clickable-pill good" style="font-size:14px; font-weight:700;" onclick="showProductTrendChart('${p.product_id}','${channel}')" title="Click to see the % of Revenue trend line for this product">${p.display_name}</span>`,
-      ...historyMonths.map(m => historyCell(p, m)),
+      `<span class="pill clickable-pill good" style="font-size:15px; font-weight:700;" onclick="showProductTrendChart('${p.product_id}','${channel}')" title="Click to see the % of Revenue trend line for this product">${p.display_name}</span>`,
+      ...historyMonths.map((m, hi) => historyCell(p, m, hi)),
       ...months.map((m, mi) => {
         const mix = S.draftMix[channel][p.product_id]?.[m];
         const chanRev = S.draftChannel[m]?.[channel];
         if (!mix) return '<span class="muted">—</span>';
-        // Alex (2026-11-05): "I also want a button that will show/hide month over month
-        // percentage increases and decreases based on historical values." Opt-in via the
-        // "Show/Hide month-over-month change" toggle above (mixHistoryControl) -- off by
-        // default, since Alex separately asked to REMOVE the always-on ASP delta earlier today.
-        // This is deliberately the same comparison concept, just made opt-in instead of forced,
-        // and based on the dashboard's existing prior-month/actual-history comparison logic.
-        const deltaFor = (curVal, isPctView) => {
-          if (!S.showMoMDelta) return '';
-          const prevM = months[mi - 1];
-          let prevVal = prevM ? (isPctView ? S.draftMix[channel][p.product_id]?.[prevM]?.revenue_pct : S.draftMix[channel][p.product_id]?.[prevM]?.avg_selling_price) : null;
-          let vsActual = false;
-          if (prevVal == null && mi === 0 && channel === 'shopify') {
-            const hist = isPctView ? S.historicalPctByProduct[p.product_id] : S.historicalAspByProduct[p.product_id];
-            if (hist && hist.length) {
-              prevVal = isPctView ? hist[hist.length - 1].pct : hist[hist.length - 1].asp;
-              vsActual = true;
-            }
-          }
-          if (prevVal == null || curVal == null || Math.abs(prevVal) < 0.0001) return '';
-          const diff = curVal - prevVal;
-          const pct = (diff / prevVal) * 100;
-          if (Math.abs(pct) < 0.5) return '';
-          const up = diff > 0;
-          const color = up ? 'var(--good-text)' : 'var(--bad-text)';
-          const title = vsActual ? 'vs. last real actual month (Shopify)' : 'vs. prior month shown';
-          return `<div style="font-size:10px; color:${color}; margin-top:1px;" title="${title}">${up ? '▲' : '▼'} ${up ? '+' : ''}${pct.toFixed(1)}%${vsActual ? ' <span class="muted" style="font-size:9px;">vs actual</span>' : ''}</div>`;
-        };
+        const colIndex = historyMonths.length + mi;
         if (mixView === 'pct') {
-          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('pct','${channel}','${p.product_id}','${m}')"><strong>${(mix.revenue_pct * 100).toFixed(1)}%</strong>${deltaFor(mix.revenue_pct, true)}</button>`;
+          return `<button class="btn btn-ghost" style="padding:4px 7px; font-size:14px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('pct','${channel}','${p.product_id}','${m}')"><strong>${(mix.revenue_pct * 100).toFixed(1)}%</strong>${momDelta(p, colIndex, true)}</button>`;
         }
         if (mixView === 'asp') {
           // Alex (2026-11-05): "The icon and the red or green text under the price is what's not
           // necessary" -- the ALWAYS-ON up/down arrow + colored $/% delta line is gone; this
-          // button only shows one again when the opt-in toggle above is on.
-          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong>${deltaFor(mix.avg_selling_price, false)}</button>`;
+          // button only shows one again when the opt-in toggle above is on, and (2026-11-06)
+          // simplified to plain green/red % with no icon, consistent with the history columns.
+          return `<button class="btn btn-ghost" style="padding:4px 7px; font-size:14px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong>${momDelta(p, colIndex, false)}</button>`;
         }
         if (chanRev == null) return '<span class="muted">—</span>';
         const units = Math.round((chanRev * mix.revenue_pct) / mix.avg_selling_price);
-        return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong></button>`;
+        return `<button class="btn btn-ghost" style="padding:4px 7px; font-size:14px;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong></button>`;
       }),
     ]);
     if (mixView === 'pct') {
