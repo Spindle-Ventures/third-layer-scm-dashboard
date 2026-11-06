@@ -34,13 +34,13 @@
   header {
     padding: 18px 40px 0 40px;
   }
-  .brand { font-size: 13px; font-weight: 700; letter-spacing: 0.12em; color: var(--ink); }
+  .brand { font-size: 14px; font-weight: 700; letter-spacing: 0.12em; color: var(--ink); }
   h1.title { font-size: 27px; font-weight: 600; margin: 2px 0 2px 0; }
   .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 10px; }
   .top-row { display: flex; justify-content: space-between; align-items: flex-start; }
   .snapshot-pill {
     background: var(--card); border: 1px solid var(--border); border-radius: 999px;
-    padding: 5px 12px; font-size: 12px; color: var(--muted);
+    padding: 5px 12px; font-size: 13px; color: var(--muted);
   }
   nav.tabs {
     display: flex; gap: 24px; border-bottom: 1px solid var(--border);
@@ -51,14 +51,14 @@
     color: var(--muted); padding: 9px 0; cursor: pointer; border-bottom: 2px solid transparent;
   }
   nav.tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
-  main { padding: 18px 40px 40px 40px; max-width: 1500px; margin: 0 auto; }
+  main { padding: 20px 48px 48px 48px; max-width: 1680px; margin: 0 auto; }
   .section-label {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--muted);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em; color: var(--muted);
     margin: 18px 0 8px 0; text-transform: uppercase;
   }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 16px 18px;
+    padding: 18px 22px;
   }
   /* Alex (2026-10-27): "needs to be available, accessible, and render well on a mobile device."
      Every table on the dashboard lives inside a .card -- making the card itself horizontally
@@ -70,26 +70,28 @@
     display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;
   }
   .kpi-card { display: flex; flex-direction: column; gap: 4px; }
-  .kpi-label { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .kpi-label { font-size: 14px; color: var(--muted); font-weight: 500; }
   .kpi-value { font-size: 26px; font-weight: 700; }
   .pill {
-    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600;
     padding: 3px 9px; border-radius: 999px; width: fit-content;
   }
   .pill.good { background: var(--good-bg); color: var(--good-text); }
   .pill.bad { background: var(--bad-bg); color: var(--bad-text); }
   .pill.watch { background: var(--watch-bg); color: var(--watch-text); }
-  /* Alex (2026-11-05): "increase the font sizes" / "use screen real estate better" -- applied
-     dashboard-wide, not just the Revenue tab. Bumped base table/body text, label, and KPI sizes
-     up one notch and gave table cells a bit more breathing room; .card padding widened to match.
-     Left the all-caps 11px column-header and pill/badge sizes alone -- those are already at the
-     size meant for a dense label, and bumping them reads as shouting rather than more legible. */
+  /* Alex (2026-11-05, two rounds): "increase the font sizes" / "use screen real estate better" /
+     "the spacing on the font is also not optimized ... enhance everywhere ... text is enlarged
+     and spacing is more completely used" -- applied dashboard-wide across two passes: base body
+     text, labels, and column headers each moved up roughly 2 steps total; .card/table cell
+     padding widened to match; main content area widened (1500px->1680px max-width) so wide
+     tables (Product Mix with trailing history on) have more room before needing horizontal
+     scroll. */
   table { width: 100%; border-collapse: collapse; font-size: 15px; }
-  th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase;
-       letter-spacing: 0.04em; padding: 9px 12px; border-bottom: 1px solid var(--border); }
-  td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { text-align: left; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.04em; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+  td { padding: 13px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   tr:last-child td { border-bottom: none; }
-  .urgency-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; letter-spacing: 0.03em; }
+  .urgency-badge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; letter-spacing: 0.03em; }
   .urgency-CRITICAL { background: var(--bad-bg); color: var(--bad-text); }
   .urgency-WARNING { background: var(--watch-bg); color: var(--watch-text); }
   .urgency-WATCH { background: #EFEAE2; color: var(--accent-light); }
@@ -124,13 +126,13 @@
   .info-icon {
     display: inline-flex; align-items: center; justify-content: center;
     width: 16px; height: 16px; border-radius: 50%; background: var(--border);
-    color: var(--muted); font-size: 11px; font-style: normal; cursor: help; position: relative;
+    color: var(--muted); font-size: 12px; font-style: normal; cursor: help; position: relative;
     flex-shrink: 0;
   }
   #global-tooltip {
     display: none; position: fixed; z-index: 9999;
     width: 320px; max-width: 80vw; background: #2B2622; color: #F4EFE6;
-    padding: 10px 12px; border-radius: 8px; font-size: 11px; line-height: 1.5;
+    padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5;
     box-shadow: 0 6px 18px rgba(0,0,0,0.3); text-align: left; font-weight: 400;
   }
 
@@ -158,12 +160,12 @@
   }
   #manny-chat-header .btn-ghost:hover { background: rgba(244,239,230,0.18) !important; }
   #manny-chat-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-  .manny-chat-bubble { max-width: 85%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.4; white-space: pre-wrap; }
+  .manny-chat-bubble { max-width: 85%; padding: 8px 11px; border-radius: 12px; font-size: 14px; line-height: 1.4; white-space: pre-wrap; }
   .manny-chat-bubble.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
   .manny-chat-bubble.manny { align-self: flex-start; background: #F0EBE1; color: #2B2622; border-bottom-left-radius: 3px; }
   #manny-chat-input-row { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
   #manny-chat-input {
-    flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px;
+    flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 14px;
     font-family: 'Inter'; resize: none;
   }
   @keyframes manny-chat-bounce {
@@ -172,7 +174,7 @@
   }
   .sparkline-wrap { width: 100%; height: 36px; margin-top: 6px; }
   .hidden { display: none !important; }
-  .role-badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 3px 9px; border-radius: 999px; }
+  .role-badge { font-size: 12px; color: var(--muted); border: 1px solid var(--border); padding: 3px 9px; border-radius: 999px; }
   .top-actions { display: flex; align-items: center; gap: 10px; }
   .empty-state { color: var(--muted); font-size: 14px; padding: 30px; text-align: center; }
   .clickable-pill { cursor: pointer; }
@@ -190,7 +192,7 @@
      scrolling") -- native <details>/<summary>, zero extra JS, zero height until expanded. */
   .detail-modal details { margin-top: 10px; }
   .detail-modal details summary {
-    cursor: pointer; font-size: 11px; color: var(--muted); font-weight: 600;
+    cursor: pointer; font-size: 12px; color: var(--muted); font-weight: 600;
     padding: 4px 0; list-style: revert; user-select: none;
   }
   .detail-modal details[open] summary { margin-bottom: 4px; }
@@ -217,7 +219,7 @@
     .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
     .kpi-card { padding: 4px; } /* the whole tile is clickable (.clickable-pill) -- give it room to be an easy, deliberate tap */
     .kpi-value { font-size: 20px; }
-    .kpi-label { font-size: 13px; }
+    .kpi-label { font-size: 14px; }
 
     /* REAL BUG, found from Alex's screenshot (not guessed): #recs-grid is a fixed
        `grid-template-columns: 1fr 1fr` -- CSS Grid tracks don't shrink below a cell's
@@ -321,16 +323,16 @@
 <button id="manny-chat-fab" onclick="toggleMannyChat()" title="Chat with Manny"><img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/Kansas_City_Chiefs_logo.svg" alt="Chat with Manny"></button>
 <div id="manny-chat-panel" class="hidden">
   <div id="manny-chat-header">
-    <div><strong>Manny</strong><div class="muted" style="font-size:10px; color:#C9BFAF;">Ask about anything on this dashboard</div></div>
+    <div><strong>Manny</strong><div class="muted" style="font-size:11px; color:#C9BFAF;">Ask about anything on this dashboard</div></div>
     <div style="display:flex; gap:4px; align-items:center;">
-      <button class="btn btn-ghost" style="padding:2px 8px; font-size:11px; color:#F4EFE6; background:transparent; border-color:rgba(244,239,230,0.4);" onclick="startNewMannyChat()" title="Archive this conversation and start fresh">New chat</button>
+      <button class="btn btn-ghost" style="padding:2px 8px; font-size:12px; color:#F4EFE6; background:transparent; border-color:rgba(244,239,230,0.4);" onclick="startNewMannyChat()" title="Archive this conversation and start fresh">New chat</button>
       <button class="btn btn-ghost" style="padding:2px 8px; font-size:14px; color:#F4EFE6; background:transparent; border-color:rgba(244,239,230,0.4);" onclick="toggleMannyChat()">✕</button>
     </div>
   </div>
   <div id="manny-chat-messages"></div>
   <div id="manny-chat-input-row">
     <textarea id="manny-chat-input" rows="1" placeholder="Type a message…" onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); sendMannyChatMessage();}"></textarea>
-    <button class="btn btn-primary" style="padding:8px 12px; font-size:12px;" onclick="sendMannyChatMessage()">Send</button>
+    <button class="btn btn-primary" style="padding:8px 12px; font-size:13px;" onclick="sendMannyChatMessage()">Send</button>
   </div>
 </div>
 </div>
@@ -392,6 +394,7 @@ async function loadApp(session) {
 
   await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog(), renderCatalog()]);
   initMannyChat();
+  restoreActiveTab();
   applyUrlDeepLink();
 }
 
@@ -438,7 +441,7 @@ async function initMannyChat() {
   const el = document.getElementById('manny-chat-messages');
   el.innerHTML = (history && history.length)
     ? history.map(renderMannyChatBubble).join('')
-    : `<div class="muted" style="font-size:12px; text-align:center; margin-top:20px;">Ask Manny anything about this dashboard — forecasts, inventory, components, how something's calculated. Your message goes straight to #supplychainbuild in Slack.</div>`;
+    : `<div class="muted" style="font-size:13px; text-align:center; margin-top:20px;">Ask Manny anything about this dashboard — forecasts, inventory, components, how something's calculated. Your message goes straight to #supplychainbuild in Slack.</div>`;
   el.scrollTop = el.scrollHeight;
 
   if (mannyChatChannel) sb.removeChannel(mannyChatChannel);
@@ -462,7 +465,7 @@ async function initMannyChat() {
 function renderMannyChatBubble(m) {
   const who = m.sender === 'manny' ? 'Manny' : (m.sender_email ? m.sender_email.split('@')[0] : 'You');
   const text = String(m.message).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<div class="manny-chat-bubble ${m.sender === 'manny' ? 'manny' : 'user'}"><div style="font-size:10px; opacity:0.65; margin-bottom:2px;">${who}</div>${text}</div>`;
+  return `<div class="manny-chat-bubble ${m.sender === 'manny' ? 'manny' : 'user'}"><div style="font-size:11px; opacity:0.65; margin-bottom:2px;">${who}</div>${text}</div>`;
 }
 
 function toggleMannyChat() {
@@ -480,7 +483,7 @@ async function startNewMannyChat() {
   const { error } = await sb.from('dashboard_chat_messages').update({ archived: true }).eq('archived', false);
   if (error) { alert('Failed: ' + error.message); return; }
   const el = document.getElementById('manny-chat-messages');
-  el.innerHTML = `<div class="muted" style="font-size:12px; text-align:center; margin-top:20px;">New conversation started.</div>`;
+  el.innerHTML = `<div class="muted" style="font-size:13px; text-align:center; margin-top:20px;">New conversation started.</div>`;
 }
 
 async function sendMannyChatMessage() {
@@ -498,7 +501,7 @@ async function sendMannyChatMessage() {
   input.focus();
   if (error) {
     const msgEl = document.getElementById('manny-chat-messages');
-    msgEl.insertAdjacentHTML('beforeend', `<div class="muted" style="font-size:11px; text-align:center;">Failed to send: ${error.message}</div>`);
+    msgEl.insertAdjacentHTML('beforeend', `<div class="muted" style="font-size:12px; text-align:center;">Failed to send: ${error.message}</div>`);
   }
   // No optimistic local append here -- the Realtime subscription above renders this exact row
   // (and Manny's eventual reply) the same way, so there's only one code path for the UI, and no
@@ -506,14 +509,39 @@ async function sendMannyChatMessage() {
 }
 
 // ---------- Tabs ----------
+// Alex (2026-11-05): "when I click away from any chrome tab and then click back, the dashboard
+// shouldn't have to reload the screen." Tested directly: a simulated background/foreground cycle
+// fires zero re-renders already (the 2026-10-21 fix -- onAuthStateChange only acts on SIGNED_IN/
+// INITIAL_SESSION -- already stops Supabase's periodic TOKEN_REFRESHED from re-triggering
+// loadApp()). What remains outside this page's control is Chrome's OWN memory-saving tab
+// discard: a background tab left idle long enough (especially with many tabs open) gets fully
+// unloaded by the browser and reloads from scratch on return -- that's a real browser reload, not
+// a JS bug, and no page-level code can prevent it. The practical mitigation is making an
+// unavoidable reload land you back where you were: persist the active tab in sessionStorage (and
+// restore it on boot, right before checkSession()) so a forced reload never resets you to
+// Overview. Revenue's own scenario/view/filter state already survives reload via the component
+// data model it re-derives from the DB (scenario selection isn't yet persisted client-side --
+// that's a separate, larger piece of state than tab selection and not what was reported here).
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    try { sessionStorage.setItem('tl_active_tab', btn.dataset.tab); } catch (e) {}
   });
 });
+function restoreActiveTab() {
+  let saved = null;
+  try { saved = sessionStorage.getItem('tl_active_tab'); } catch (e) {}
+  if (!saved) return;
+  const btn = document.querySelector(`.tab-btn[data-tab="${saved}"]`);
+  if (!btn) return;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+  document.getElementById('tab-' + saved).classList.remove('hidden');
+}
 
 function fmtMoney(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
 function fmtMoney2(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -659,7 +687,7 @@ function showPromptModal(title, message, defaultValue, inputType) {
     el.innerHTML = `
       <div class="detail-modal" style="max-width:480px;">
         <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${title}</div>
-        ${message ? `<div style="font-size:13px; color:var(--muted); margin-bottom:10px; line-height:1.4;">${message}</div>` : ''}
+        ${message ? `<div style="font-size:14px; color:var(--muted); margin-bottom:10px; line-height:1.4;">${message}</div>` : ''}
         ${isTextarea
           ? `<textarea id="prompt-modal-input" rows="3" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:14px; font-family:inherit;">${safeDefault}</textarea>`
           : `<input id="prompt-modal-input" type="${inputType || 'text'}" value="${safeDefault}" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:14px;" />`}
@@ -799,14 +827,14 @@ function kpiTable(headers, rows, wrapIdx, colWidths, noWrapCols) {
   const noWrapSet = new Set(noWrapCols || []);
   const colgroup = colWidths ? `<colgroup>${colWidths.map(w => `<col style="width:${w || 'auto'};">`).join('')}</colgroup>` : '';
   const cellStyle = (ci) => {
-    if (noWrapSet.has(ci)) return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap;`;
-    if (colWidths && colWidths[ci]) return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:normal; word-break:break-word;`;
-    return `padding:8px 10px; border-bottom:1px solid var(--border); white-space:${ci === idx ? 'normal' : 'nowrap'}; ${ci === idx ? 'min-width:380px;' : ''}`;
+    if (noWrapSet.has(ci)) return `padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap;`;
+    if (colWidths && colWidths[ci]) return `padding:10px 12px; border-bottom:1px solid var(--border); white-space:normal; word-break:break-word;`;
+    return `padding:10px 12px; border-bottom:1px solid var(--border); white-space:${ci === idx ? 'normal' : 'nowrap'}; ${ci === idx ? 'min-width:380px;' : ''}`;
   };
   return `
-    <table style="width:100%; font-size:14px; border-collapse:collapse; table-layout:${colWidths ? 'fixed' : 'auto'};">
+    <table style="width:100%; font-size:15px; border-collapse:collapse; table-layout:${colWidths ? 'fixed' : 'auto'};">
       ${colgroup}
-      <thead><tr>${headers.map(h => `<th style="padding:9px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}</tr></thead>
+      <thead><tr>${headers.map(h => `<th style="padding:11px 12px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}</tr></thead>
       <tbody>${rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)'};">${r.map((c, ci) => `<td style="${cellStyle(ci)}">${c}</td>`).join('')}</tr>`).join('')}</tbody>
     </table>
   `;
@@ -831,7 +859,7 @@ function showOverdueKpiDetail() {
     o.qty != null ? o.qty.toLocaleString() : '—',
     `<strong>${fmtDate(o.eta)}</strong>`,
     buildActionDetail(o),
-    `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
+    `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
   ]);
   showDetail('Overdue Orders', kpiTable(
     ['Product', 'Order #', 'Qty', 'ETA', "Why It's Overdue", ''],
@@ -859,8 +887,8 @@ function showContactsKpiDetail() {
         // Alex (2026-10-23): "I don't see the vendor contacts due that shows the message
         // prepped to send to the vendor." -- a dedicated button opening the ready-to-copy
         // outreach text, separate from "Why" (which explains the situation to US).
-        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="showVendorMessagePopup('${o.ledger_id}')">Message</button>`,
-        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
+        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="showVendorMessagePopup('${o.ledger_id}')">Message</button>`,
+        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
       ];
     });
   showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'Order #', 'ETA', 'Next Contact', 'Why', '', ''], rows, 5, null, [3, 6, 7]), 'wide');
@@ -986,9 +1014,9 @@ async function renderOverview() {
     if (p.noForecast) {
       return `
         <div style="display:flex; align-items:center; gap:10px; padding:6px 0;">
-          <div style="width:70px; font-size:12px; font-weight:600;">${label}</div>
-          <div style="flex:1; font-size:12px;" class="muted">No forecast set for ${monthLabel} — MTD actual ${fmtMoney(p.mtd)}</div>
-          <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="editRevenueForecast('${channel}')">+ Set forecast</button>
+          <div style="width:70px; font-size:13px; font-weight:600;">${label}</div>
+          <div style="flex:1; font-size:13px;" class="muted">No forecast set for ${monthLabel} — MTD actual ${fmtMoney(p.mtd)}</div>
+          <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="editRevenueForecast('${channel}')">+ Set forecast</button>
         </div>
       `;
     }
@@ -999,25 +1027,25 @@ async function renderOverview() {
     // of the month, since there's no same-basis "yesterday" to compare against. Made clickable
     // (Alex, 2026-10-22: "more explanatory on the comparison to yesterday") -- the badge itself
     // stays compact, full plain-language explanation lives in showPacingTrendDetail's popup.
-    let trendHtml = '<span class="muted" style="font-size:11px;">—</span>';
+    let trendHtml = '<span class="muted" style="font-size:12px;">—</span>';
     if (p.pctOfPaceYesterday != null) {
       const delta = p.pctOfPace - p.pctOfPaceYesterday;
       const trendColor = delta > 0.5 ? 'var(--good-text)' : (delta < -0.5 ? 'var(--bad-text)' : 'var(--text-muted, #8A7257)');
       const arrow = delta > 0.5 ? '▲' : (delta < -0.5 ? '▼' : '▬');
-      trendHtml = `<button class="btn btn-ghost clickable-pill" style="padding:2px 6px; font-size:11px; font-weight:700; color:${trendColor}; border-color:transparent; background:transparent;" onclick="showPacingTrendDetail('${channel}')">${arrow} ${Math.abs(delta).toFixed(0)} pt${Math.abs(delta) >= 1.5 ? 's' : ''} vs yesterday</button>`;
+      trendHtml = `<button class="btn btn-ghost clickable-pill" style="padding:2px 6px; font-size:12px; font-weight:700; color:${trendColor}; border-color:transparent; background:transparent;" onclick="showPacingTrendDetail('${channel}')">${arrow} ${Math.abs(delta).toFixed(0)} pt${Math.abs(delta) >= 1.5 ? 's' : ''} vs yesterday</button>`;
     }
     return `
       <div style="display:flex; align-items:center; gap:10px; padding:6px 0;">
-        <div style="width:70px; font-size:12px; font-weight:600;">${label}</div>
+        <div style="width:70px; font-size:13px; font-weight:600;">${label}</div>
         <div style="position:relative; flex:1; background:var(--border); border-radius:6px; height:24px; overflow:hidden;">
           <div style="position:absolute; inset:0; width:${fillPct}%; background:${barColor}; height:100%; border-radius:6px;"></div>
-          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:${fillPct < 30 ? 'var(--ink)' : '#fff'}; text-shadow:${fillPct < 30 ? 'none' : '0 1px 3px rgba(0,0,0,0.55)'}; white-space:nowrap; padding:0 6px;">
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:${fillPct < 30 ? 'var(--ink)' : '#fff'}; text-shadow:${fillPct < 30 ? 'none' : '0 1px 3px rgba(0,0,0,0.55)'}; white-space:nowrap; padding:0 6px;">
             ${fmtMoney(p.mtd)} of ${fmtMoney(p.forecastFullMonth)} goal — ${paceLabel}
           </div>
         </div>
-        <div style="width:42px; text-align:right; font-size:13px; font-weight:700; color:${barColor};">${p.pctOfGoal.toFixed(0)}%</div>
+        <div style="width:42px; text-align:right; font-size:14px; font-weight:700; color:${barColor};">${p.pctOfGoal.toFixed(0)}%</div>
         <div style="width:120px; text-align:right;">${trendHtml}</div>
-        <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="editRevenueForecast('${channel}')">✎</button>
+        <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="editRevenueForecast('${channel}')">✎</button>
       </div>
     `;
   };
@@ -1067,32 +1095,32 @@ async function renderOverview() {
     <div class="section-label">Open Orders by Product — ${needsActionCount} need attention</div>
     <div class="card" style="padding: 12px 16px; margin-bottom: 10px;">
       <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
-        <label style="font-size:13px; font-weight:500;">Product:
+        <label style="font-size:14px; font-weight:500;">Product:
           <select id="filter-product" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
             <option value="all">All products</option>
           </select>
         </label>
-        <label style="font-size:13px; font-weight:500;">Order Type:
+        <label style="font-size:14px; font-weight:500;">Order Type:
           <select id="filter-type" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
             <option value="all">All types</option>
             <option value="finished_good">Finished Good</option>
             <option value="componentry">Component</option>
           </select>
         </label>
-        <label style="font-size:13px; font-weight:500;">Status:
+        <label style="font-size:14px; font-weight:500;">Status:
           <select id="filter-order-status" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
             <option value="all">All</option>
             <option value="committed">Committed</option>
             <option value="paused">Paused</option>
           </select>
         </label>
-        <label style="font-size:13px; font-weight:500;">Contact Scheduled For:
+        <label style="font-size:14px; font-weight:500;">Contact Scheduled For:
           <input type="date" id="filter-contact-date" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:4px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';" />
-          <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px; margin-left:4px;" onclick="document.getElementById('filter-contact-date').value=''; applyOpenOrdersFilter();" title="Clear date filter">✕</button>
+          <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px; margin-left:4px;" onclick="document.getElementById('filter-contact-date').value=''; applyOpenOrdersFilter();" title="Clear date filter">✕</button>
         </label>
-        <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
-        <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:12px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
-        ${canEdit() ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="showAddOrderMenu()">+ Add Order</button>` : ''}
+        <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
+        <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
+        ${canEdit() ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="showAddOrderMenu()">+ Add Order</button>` : ''}
       </div>
     </div>
     <div id="open-orders-groups"></div>
@@ -1131,18 +1159,18 @@ async function renderOverview() {
     grid.innerHTML = recs.map(r => `
       <div class="card" id="rec-card-${r.id}" style="padding:8px 10px; ${r.is_test ? 'border:2px dashed var(--watch-text);' : ''}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1px;">
-          <div style="font-size:13px;"><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:11px;">${r.products.sku_code}</span></div>
+          <div style="font-size:14px;"><strong>${r.products.display_name}</strong> <span class="muted" style="font-size:12px;">${r.products.sku_code}</span></div>
           <div style="text-align:right; display:flex; align-items:center; gap:5px;">
-            ${r.is_test ? '<span class="pill watch" style="font-size:9px;" title="Synthetic data for UI testing only -- not a real finding">⚠ TEST</span>' : ''}
-            <span class="urgency-badge urgency-${r.urgency} clickable-pill" title="Click to see what's going on" onclick="showRecommendationDetail('${r.id}')" style="font-size:10px; padding:2px 7px;">${r.urgency}</span>
-            ${canEdit() ? `<button type="button" class="btn btn-primary" style="padding:3px 9px; font-size:11px; line-height:1.3; white-space:nowrap;" title="Decide: Pending, Approved, or Dismissed" onclick="showRecActionsMenu('${r.id}', this)">Decide ▾</button>` : ''}
+            ${r.is_test ? '<span class="pill watch" style="font-size:10px;" title="Synthetic data for UI testing only -- not a real finding">⚠ TEST</span>' : ''}
+            <span class="urgency-badge urgency-${r.urgency} clickable-pill" title="Click to see what's going on" onclick="showRecommendationDetail('${r.id}')" style="font-size:11px; padding:2px 7px;">${r.urgency}</span>
+            ${canEdit() ? `<button type="button" class="btn btn-primary" style="padding:3px 9px; font-size:12px; line-height:1.3; white-space:nowrap;" title="Decide: Pending, Approved, or Dismissed" onclick="showRecActionsMenu('${r.id}', this)">Decide ▾</button>` : ''}
           </div>
         </div>
         <!-- Alex (2026-10-22): "The buttons top right should have a well thought out contextual
              reason presented simply" -- a one-line, plain-language reason for the urgency level,
              right under the badge, so "why is this CRITICAL" is answered at a glance without a
              click-through. Kept as-is per Alex (2026-10-23): "I like the subtext under the status." -->
-        <div class="muted" style="font-size:10px; text-align:right; margin-bottom:4px;">${
+        <div class="muted" style="font-size:11px; text-align:right; margin-bottom:4px;">${
           r.days_until_deadline < 0
             ? `Past deadline by ${Math.abs(r.days_until_deadline)} day${Math.abs(r.days_until_deadline) === 1 ? '' : 's'}`
             : r.days_until_deadline <= 14
@@ -1150,10 +1178,10 @@ async function renderOverview() {
               : `${r.days_until_deadline} days until deadline — time to plan`
         }</div>
         <div style="display:flex; gap:6px; align-items:center; justify-content:space-between; margin-bottom:4px; flex-wrap:nowrap;">
-          <span class="pill" style="font-size:11px; padding:2px 8px; flex-shrink:0;">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
-          <span class="muted" style="font-size:11px; text-align:right;">${buildRecShortReason(r)}</span>
+          <span class="pill" style="font-size:12px; padding:2px 8px; flex-shrink:0;">${PROBLEM_LABELS[r.problem_type] || r.problem_type}</span>
+          <span class="muted" style="font-size:12px; text-align:right;">${buildRecShortReason(r)}</span>
         </div>
-        ${!canEdit() ? `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}" style="font-size:11px;">${r.decision}</span>` : ''}
+        ${!canEdit() ? `<span class="pill ${r.decision === 'approved' ? 'good' : r.decision === 'dismissed' ? 'bad' : 'watch'}" style="font-size:12px;">${r.decision}</span>` : ''}
       </div>
     `).join('');
   }
@@ -1228,11 +1256,11 @@ function applyOpenOrdersFilter() {
     <div class="card" style="padding:0; margin-bottom:10px; overflow-x:auto;">
       <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; white-space:nowrap; flex-wrap:wrap; gap:8px;">
         <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-          <div><strong>${group.name}</strong> <span class="muted" style="font-size:12px;">${sku}</span></div>
-          <span style="font-size:13px;">Current Inventory — Shopify: <strong style="font-size:15px; color:${shopifyColor};">${shopifyQty}</strong>${safetyStock != null ? ` <span class="pill clickable-pill watch" style="font-size:11px;" onclick="showSafetyStockDetail('${sku}')">safety stock ${safetyStock.toLocaleString()}</span>` : ''}</span>
-          <span style="font-size:13px;">Amazon: <strong style="font-size:15px; color:var(--ink);">${amazonQty}</strong></span>
+          <div><strong>${group.name}</strong> <span class="muted" style="font-size:13px;">${sku}</span></div>
+          <span style="font-size:14px;">Current Inventory — Shopify: <strong style="font-size:15px; color:${shopifyColor};">${shopifyQty}</strong>${safetyStock != null ? ` <span class="pill clickable-pill watch" style="font-size:12px;" onclick="showSafetyStockDetail('${sku}')">safety stock ${safetyStock.toLocaleString()}</span>` : ''}</span>
+          <span style="font-size:14px;">Amazon: <strong style="font-size:15px; color:var(--ink);">${amazonQty}</strong></span>
         </div>
-        <span class="muted" style="font-size:12px;">${group.rows.length} open order(s)</span>
+        <span class="muted" style="font-size:13px;">${group.rows.length} open order(s)</span>
       </div>
       ${group.rows.length === 0
         ? `<div class="empty-state" style="padding:14px;">No open orders right now — everything has landed or been cancelled. Use "+ Add Order" above to place a new one.</div>`
@@ -1277,8 +1305,8 @@ function renderBulkContactBar() {
   }
   bar.innerHTML = `
     <strong>${n} order${n === 1 ? '' : 's'} selected</strong>
-    <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="bulkSetContactSchedule()">Set Contact Schedule</button>
-    <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="clearOrderSelection()">Clear Selection</button>
+    <button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="bulkSetContactSchedule()">Set Contact Schedule</button>
+    <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="clearOrderSelection()">Clear Selection</button>
   `;
 }
 function clearOrderSelection() {
@@ -1314,18 +1342,18 @@ async function showSafetyStockDetail(sku) {
   // replaces it, placed above the recommended action instead.
   const metricsHtml = detail ? `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; margin-bottom:10px;">
-      <div><div class="muted" style="font-size:10px;">IN-STOCK TARGET ${infoIcon('How often we want to avoid a stockout, assuming demand keeps behaving like it has historically. 98% means we accept roughly a 2% chance of running out before the next restock arrives.')}</div><div style="font-size:15px; font-weight:700;">${detail.service_level_pct}%</div></div>
-      <div><div class="muted" style="font-size:10px;">LEAD TIME ${infoIcon('How many days it takes to get more of this product\'s components once an order is placed — the longest lead time across its preferred vendors. The longer this is, the more buffer stock is needed to survive a bad forecast.')}</div><div style="font-size:15px; font-weight:700;">${detail.lead_time} days</div></div>
-      <div><div class="muted" style="font-size:10px;">STATISTICAL SAFETY STOCK ${infoIcon('How much buffer is needed to cover demand uncertainty alone, based on the in-stock target, lead time, and how much daily sales actually vary.')}</div><div style="font-size:15px; font-weight:700;">${detail.statistical_qty.toLocaleString()} units</div></div>
-      <div><div class="muted" style="font-size:10px;">MOQ BUFFER ${infoIcon('An extra multiplier on top of the statistical figure, because our manufacturer requires minimum order quantities — we can\'t top up in small increments, so a bad read on timing leaves a bigger real-world gap than demand variance alone would suggest.')}</div><div style="font-size:15px; font-weight:700;">${detail.buffer_multiplier}x</div></div>
+      <div><div class="muted" style="font-size:11px;">IN-STOCK TARGET ${infoIcon('How often we want to avoid a stockout, assuming demand keeps behaving like it has historically. 98% means we accept roughly a 2% chance of running out before the next restock arrives.')}</div><div style="font-size:15px; font-weight:700;">${detail.service_level_pct}%</div></div>
+      <div><div class="muted" style="font-size:11px;">LEAD TIME ${infoIcon('How many days it takes to get more of this product\'s components once an order is placed — the longest lead time across its preferred vendors. The longer this is, the more buffer stock is needed to survive a bad forecast.')}</div><div style="font-size:15px; font-weight:700;">${detail.lead_time} days</div></div>
+      <div><div class="muted" style="font-size:11px;">STATISTICAL SAFETY STOCK ${infoIcon('How much buffer is needed to cover demand uncertainty alone, based on the in-stock target, lead time, and how much daily sales actually vary.')}</div><div style="font-size:15px; font-weight:700;">${detail.statistical_qty.toLocaleString()} units</div></div>
+      <div><div class="muted" style="font-size:11px;">MOQ BUFFER ${infoIcon('An extra multiplier on top of the statistical figure, because our manufacturer requires minimum order quantities — we can\'t top up in small increments, so a bad read on timing leaves a bigger real-world gap than demand variance alone would suggest.')}</div><div style="font-size:15px; font-weight:700;">${detail.buffer_multiplier}x</div></div>
       <div style="grid-column:1 / -1; border-top:1px solid var(--border); margin-top:2px; padding-top:8px;">
-        <div class="muted" style="font-size:10px;">FINAL SAFETY STOCK ${infoIcon('Statistical Safety Stock × MOQ Buffer — the actual number this product\'s inventory is checked against everywhere on the dashboard.')}</div><div style="font-size:19px; font-weight:800; color:var(--accent);">${detail.recommended_qty.toLocaleString()} units</div>
+        <div class="muted" style="font-size:11px;">FINAL SAFETY STOCK ${infoIcon('Statistical Safety Stock × MOQ Buffer — the actual number this product\'s inventory is checked against everywhere on the dashboard.')}</div><div style="font-size:19px; font-weight:800; color:var(--accent);">${detail.recommended_qty.toLocaleString()} units</div>
       </div>
     </div>
   ` : `<div style="margin-bottom:12px;">${basis}</div>`;
 
   const conciseExplanation = detail
-    ? `<div class="muted" style="font-size:12px; margin-bottom:10px; line-height:1.5;">We keep <strong>${detail.recommended_qty.toLocaleString()} units</strong> on hand for ${displayName}: enough to cover a ${detail.lead_time}-day resupply at a ${detail.service_level_pct}% in-stock target, then multiplied ${detail.buffer_multiplier}x because our manufacturer requires minimum order quantities.</div>`
+    ? `<div class="muted" style="font-size:13px; margin-bottom:10px; line-height:1.5;">We keep <strong>${detail.recommended_qty.toLocaleString()} units</strong> on hand for ${displayName}: enough to cover a ${detail.lead_time}-day resupply at a ${detail.service_level_pct}% in-stock target, then multiplied ${detail.buffer_multiplier}x because our manufacturer requires minimum order quantities.</div>`
     : '';
 
   let sellThroughBody = '<div class="muted">Loading sell-through data…</div>';
@@ -1355,12 +1383,12 @@ async function showSafetyStockDetail(sku) {
     const pctChange = ((projectedDailyNext90 - avgDaily) / avgDaily) * 100;
     const direction = pctChange > 2 ? 'faster' : pctChange < -2 ? 'slower' : 'about the same pace as';
     trendContext = (pctChange > 2 || pctChange < -2)
-      ? `<div class="muted" style="font-size:12px; margin-top:2px;">That's ${Math.abs(Math.round(pctChange))}% ${direction} than the last 90 days' actual pace.</div>`
-      : `<div class="muted" style="font-size:12px; margin-top:2px;">That's ${direction} the last 90 days' actual pace.</div>`;
+      ? `<div class="muted" style="font-size:13px; margin-top:2px;">That's ${Math.abs(Math.round(pctChange))}% ${direction} than the last 90 days' actual pace.</div>`
+      : `<div class="muted" style="font-size:13px; margin-top:2px;">That's ${direction} the last 90 days' actual pace.</div>`;
   }
 
   const textHtml = `
-    <div style="line-height:1.7; font-size:13px;">
+    <div style="line-height:1.7; font-size:14px;">
       <div style="margin-bottom:6px;"><strong>Average sell-through (last 90 days):</strong> ${avgDaily.toFixed(1)} units/day — ${Math.round(actualUnits90).toLocaleString()} units total.</div>
       <div style="margin-bottom:6px;"><strong>Projected sell-through (next 90 days):</strong> ${Math.round(next3).toLocaleString()} units.</div>
       <div><strong>Projected sell-through (next 180 days):</strong> ${Math.round(next6).toLocaleString()} units.</div>
@@ -1368,7 +1396,7 @@ async function showSafetyStockDetail(sku) {
     </div>
     <div style="height:110px; margin-top:14px;"><canvas id="safety-stock-chart"></canvas></div>
     ${conciseExplanation ? `<div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">${conciseExplanation}</div>` : ''}
-    <div id="safety-stock-action" style="font-size:13px;"></div>
+    <div id="safety-stock-action" style="font-size:14px;"></div>
   `;
   const el = document.getElementById('safety-stock-sellthrough');
   if (el) el.innerHTML = textHtml;
@@ -1478,15 +1506,15 @@ function showVendorMessagePopup(ledgerId) {
   if (!o) return;
   const message = buildVendorMessageDraft(o);
   const contactLine = o.vendor_contact_email
-    ? `<div class="muted" style="font-size:12px; margin-bottom:8px;">To: ${o.vendor_contact_name ? o.vendor_contact_name + ' — ' : ''}${o.vendor_contact_email}</div>`
-    : `<div class="muted" style="font-size:12px; margin-bottom:8px;">No contact email on file for ${o.vendor_name || 'this vendor'} — add one on the Components tab's vendor list.</div>`;
+    ? `<div class="muted" style="font-size:13px; margin-bottom:8px;">To: ${o.vendor_contact_name ? o.vendor_contact_name + ' — ' : ''}${o.vendor_contact_email}</div>`
+    : `<div class="muted" style="font-size:13px; margin-bottom:8px;">No contact email on file for ${o.vendor_name || 'this vendor'} — add one on the Components tab's vendor list.</div>`;
   const body = `
     ${contactLine}
-    <textarea id="vendor-message-text" readonly style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; line-height:1.5; box-sizing:border-box; resize:vertical;">${message}</textarea>
+    <textarea id="vendor-message-text" readonly style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical;">${message}</textarea>
     <div style="display:flex; gap:8px; margin-top:10px;">
-      <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="copyVendorMessage()">Copy message</button>
-      ${o.vendor_contact_email ? `<a class="btn btn-ghost" style="padding:6px 12px; font-size:12px; text-decoration:none;" href="mailto:${o.vendor_contact_email}?subject=${encodeURIComponent((o.product_name || 'Order') + ' update')}&body=${encodeURIComponent(message)}">Open in email</a>` : ''}
-      <span id="vendor-message-copied" class="muted" style="font-size:12px; align-self:center; display:none;">Copied ✓</span>
+      <button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="copyVendorMessage()">Copy message</button>
+      ${o.vendor_contact_email ? `<a class="btn btn-ghost" style="padding:6px 12px; font-size:13px; text-decoration:none;" href="mailto:${o.vendor_contact_email}?subject=${encodeURIComponent((o.product_name || 'Order') + ' update')}&body=${encodeURIComponent(message)}">Open in email</a>` : ''}
+      <span id="vendor-message-copied" class="muted" style="font-size:13px; align-self:center; display:none;">Copied ✓</span>
     </div>
   `;
   showDetail(`Message for ${o.vendor_name || 'vendor'}`, body);
@@ -1549,7 +1577,7 @@ function renderPoNumberCell(o, canAct) {
   const value = o.internal_ref || o.vendor_po_number || null;
   if (window._revealOrderData) {
     return canAct
-      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" onclick="editPoNumber('${o.ledger_id}')">${value || '+ Add'}</button>`
+      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="editPoNumber('${o.ledger_id}')">${value || '+ Add'}</button>`
       : (value || '—');
   }
   return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showPoNumberDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
@@ -1559,7 +1587,7 @@ function renderTrackingCell(o, canAct) {
   const value = o.tracking_info || null;
   if (window._revealOrderData) {
     return canAct
-      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:12px; white-space:normal; word-break:break-word;" onclick="editTracking('${o.ledger_id}')">${value || '+ Add'}</button>`
+      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px; white-space:normal; word-break:break-word;" onclick="editTracking('${o.ledger_id}')">${value || '+ Add'}</button>`
       : (value || '—');
   }
   return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showTrackingDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
@@ -1680,8 +1708,8 @@ function renderOpenOrderRow(o, editing) {
       <tr id="row-${o.ledger_id}">
         ${selectCell}
         <td>
-          <button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
-          <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="applyOpenOrdersFilter()">Cancel</button>
+          <button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
+          <button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="applyOpenOrdersFilter()">Cancel</button>
         </td>
         <td><span class="pill watch">${orderTypeLabel}</span></td>
         <td>${componentText}</td>
@@ -1693,8 +1721,8 @@ function renderOpenOrderRow(o, editing) {
         <td><input type="text" id="edit-tracking-${o.ledger_id}" value="${o.tracking_info || ''}" style="width:110px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
         <td style="white-space:normal;">
           <div style="display:flex; flex-direction:column; gap:3px;">
-            <label style="font-size:10px; color:var(--muted);">Last: <input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:11px;" /></label>
-            <label style="font-size:10px; color:var(--muted);">Next: <input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || todayIso()}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:11px;" /></label>
+            <label style="font-size:11px; color:var(--muted);">Last: <input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:12px;" /></label>
+            <label style="font-size:11px; color:var(--muted);">Next: <input type="date" id="edit-nextcontact-${o.ledger_id}" value="${o.next_contact || todayIso()}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:12px;" /></label>
           </div>
         </td>
       </tr>
@@ -1749,7 +1777,7 @@ async function showAddOrderForm(type) {
   const vendorOptions = vendors.map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('');
 
   const body = `
-    <div style="display:flex; flex-direction:column; gap:10px; font-size:13px;">
+    <div style="display:flex; flex-direction:column; gap:10px; font-size:14px;">
       <label>Product<br>
         <select id="add-order-product" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" onchange="refreshAddOrderComponents()">${productOptions}</select>
       </label>
@@ -1896,8 +1924,8 @@ function showUndoToast(logId, description) {
   document.getElementById('undo-toast')?.remove();
   const toast = document.createElement('div');
   toast.id = 'undo-toast';
-  toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2b2420; color:#fff; padding:10px 16px; border-radius:8px; font-size:13px; display:flex; align-items:center; gap:12px; z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,0.35); max-width:520px;';
-  toast.innerHTML = `<span>${description}</span><button style="background:#fff; color:#2b2420; padding:4px 10px; font-size:12px; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" onclick="undoAction('${logId}')">Undo</button>`;
+  toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2b2420; color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; display:flex; align-items:center; gap:12px; z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,0.35); max-width:520px;';
+  toast.innerHTML = `<span>${description}</span><button style="background:#fff; color:#2b2420; padding:4px 10px; font-size:13px; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" onclick="undoAction('${logId}')">Undo</button>`;
   document.body.appendChild(toast);
   setTimeout(() => { if (document.getElementById('undo-toast') === toast) toast.remove(); }, 10000);
 }
@@ -1955,13 +1983,13 @@ async function renderLandedOrders() {
   el.innerHTML = `
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 4px;">Landed Orders</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">Every order once it's marked Landed on the Overview tab moves here and drops off Open Orders.</div>
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">Every order once it's marked Landed on the Overview tab moves here and drops off Open Orders.</div>
       <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
-        <select id="landed-filter-product" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" onchange="applyLandedOrdersFilter()">
+        <select id="landed-filter-product" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="applyLandedOrdersFilter()">
           <option value="all">All products</option>
           ${products.map(([sku, name]) => `<option value="${sku}">${name}</option>`).join('')}
         </select>
-        <select id="landed-sort" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" onchange="applyLandedOrdersFilter()">
+        <select id="landed-sort" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="applyLandedOrdersFilter()">
           <option value="date_desc">Newest first</option>
           <option value="date_asc">Oldest first</option>
           <option value="qty_desc">Highest qty</option>
@@ -1989,10 +2017,10 @@ function applyLandedOrdersFilter() {
   });
 
   const rows = filtered.map(r => [
-    canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:13px; line-height:1;" onclick="showLandedOrderActionsMenu('${r.ledger_id}', this)" title="Actions">⋯</button>` : '',
+    canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:14px; line-height:1;" onclick="showLandedOrderActionsMenu('${r.ledger_id}', this)" title="Actions">⋯</button>` : '',
     `<span class="pill ${r.order_type === 'componentry' ? 'watch' : 'good'}">${r.order_type === 'componentry' ? 'Component' : 'Finished Good'}</span>`,
     r.order_type === 'componentry'
-      ? `<strong>${componentShortLabel(r.component_name)}</strong><br><span class="muted" style="font-size:10px;">for ${r.product_name}</span>`
+      ? `<strong>${componentShortLabel(r.component_name)}</strong><br><span class="muted" style="font-size:11px;">for ${r.product_name}</span>`
       : `<strong>${r.product_name}</strong>`,
     (r.qty || 0).toLocaleString(),
     r.vendor_name || '—',
@@ -2144,7 +2172,7 @@ async function renderComponents() {
   const skusWithComponents = new Set((componentQoh || []).map(c => c.product_sku));
   const singleComponentProducts = (products || []).filter(p => p.product_type === 'root' && !skusWithComponents.has(p.sku_code));
   const singleComponentNotice = singleComponentProducts.length
-    ? `<div class="card muted" style="padding:10px 14px; margin-top:10px; font-size:12px;">
+    ? `<div class="card muted" style="padding:10px 14px; margin-top:10px; font-size:13px;">
         ${singleComponentProducts.map(p => p.display_name).join(', ')} ${singleComponentProducts.length === 1 ? 'is' : 'are'} tracked
         directly (no separate raw-component breakdown) — see the Overview tab for current stock
         and open orders.
@@ -2176,26 +2204,26 @@ function renderComponentsTable() {
     const hasShortfallSignal = backendRec && backendRec.net_need > 0;
     return [
       `<strong>${c.component_name}</strong>`,
-      `${c.product_name}<br><span class="muted" style="font-size:10px;">${c.product_sku}</span>`,
+      `${c.product_name}<br><span class="muted" style="font-size:11px;">${c.product_sku}</span>`,
       (c.qty_on_hand || 0).toLocaleString(),
       (c.qty_in_flight || 0).toLocaleString(),
-      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="manageComponentVendors('${c.component_id}')">
+      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px;" onclick="manageComponentVendors('${c.component_id}')">
         ${preferred?.vendors?.vendor_name || '<span class="muted">none set</span>'}${allVendorLinks.length > 1 ? ` <span class="muted">(+${allVendorLinks.length - 1})</span>` : ''}
       </button>`,
-      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="manageComponentVendors('${c.component_id}')">${leadDays}d</button>`,
+      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px;" onclick="manageComponentVendors('${c.component_id}')">${leadDays}d</button>`,
       `${cadenceDays}d`,
       `<button class="btn btn-ghost" style="padding:0;" onclick="showComponentStatusDetail('${c.component_id}')">
         <span class="pill ${statusPill[status]}">${statusLabel[status]}</span>${hasShortfallSignal && status === 'OK' ? ' <span class="pill watch" title="The full PO-recommendation engine flags a real component shortfall — click for detail">⚠</span>' : ''}
       </button>`,
       runOutMonthIndex == null ? '<span class="muted">beyond 6 months</span>' : `~${monthLabelLong(months[runOutMonthIndex])}`,
-      canEdit() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
+      canEdit() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
     ];
   });
 
   el.innerHTML = `
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 2px;">Active Component Levels</div>
-      <div class="muted" style="font-size:11px; margin-bottom:10px;">
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">
         One row per raw component. Status is a simplified estimate: it projects each component's
         on-hand + in-flight quantity against the root product's current revenue forecast (live
         forecast only — not scenario-aware) and compares the runout date to the vendor's lead time
@@ -2203,7 +2231,7 @@ function renderComponentsTable() {
         PO-recommendation engine (Overview tab) separately says. Sorted Order Now / Order Soon / OK.
       </div>
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-        <select id="components-product-filter" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:12px;" onchange="setComponentsProductFilter(this.value)">
+        <select id="components-product-filter" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="setComponentsProductFilter(this.value)">
           <option value="all" ${productFilter === 'all' ? 'selected' : ''}>All products</option>
           ${uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${productFilter === sku ? 'selected' : ''}>${name}</option>`).join('')}
         </select>
@@ -2241,31 +2269,31 @@ function showComponentStatusDetail(componentId) {
     : `No action needed right now — ${runOutMonthIndex == null ? "doesn't project to run out within the 6-month horizon" : `runout (${monthLabelLong(months[runOutMonthIndex])}) is comfortably beyond lead time + cadence`}.`;
 
   const body = `
-    <div style="font-size:13px; line-height:1.5;">
+    <div style="font-size:14px; line-height:1.5;">
       <div style="padding:6px 0; border-bottom:1px solid var(--border); margin-bottom:8px;"><strong>Recommendation:</strong> ${recommendationSentence}</div>
 
-      <div class="section-label" style="margin:0 0 4px; font-size:11px;">Full Recommendation Engine (Overview tab)</div>
+      <div class="section-label" style="margin:0 0 4px; font-size:12px;">Full Recommendation Engine (Overview tab)</div>
       ${backendRec ? `
-        <div class="muted" style="font-size:12px; margin-bottom:4px;">
+        <div class="muted" style="font-size:13px; margin-bottom:4px;">
           Netted against a real active PO-shortfall recommendation
-          (<span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:9px;">${backendRec.urgency}</span>,
+          (<span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:10px;">${backendRec.urgency}</span>,
           due by ${fmtDate(backendRec.last_responsible_date)}) — accounts for the actual forecasted finished-good PO,
           not just smoothed continuous demand.
         </div>
-        <div style="font-size:12px; margin-bottom:8px;">Net need: <strong>${(backendRec.net_need || 0).toLocaleString()}</strong> · MOQ: ${(backendRec.moq || 0).toLocaleString()} · <strong>Order ${(backendRec.order_qty || 0).toLocaleString()} units from ${backendRec.vendor}</strong></div>
-      ` : `<div class="muted" style="font-size:12px; margin-bottom:8px;">No active PO-shortfall recommendation currently references this component.</div>`}
+        <div style="font-size:13px; margin-bottom:8px;">Net need: <strong>${(backendRec.net_need || 0).toLocaleString()}</strong> · MOQ: ${(backendRec.moq || 0).toLocaleString()} · <strong>Order ${(backendRec.order_qty || 0).toLocaleString()} units from ${backendRec.vendor}</strong></div>
+      ` : `<div class="muted" style="font-size:13px; margin-bottom:8px;">No active PO-shortfall recommendation currently references this component.</div>`}
 
       <details>
         <summary>Show this tab's quick estimate</summary>
-        <div class="muted" style="font-size:11px; margin-bottom:6px;">
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">
           Starting stock: ${(c.qty_on_hand || 0).toLocaleString()} on hand + ${(c.qty_in_flight || 0).toLocaleString()} in-flight
           = <strong>${startQty.toLocaleString()}</strong> available, consumed at ${c.qty_per_unit || 1} unit${c.qty_per_unit === 1 ? '' : 's'}/finished unit against the root product's live revenue forecast.
         </div>
-        <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:6px;">
+        <table style="width:100%; font-size:13px; border-collapse:collapse; margin-bottom:6px;">
           <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Consumed</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Running Balance</th></tr></thead>
           <tbody>${monthRows}</tbody>
         </table>
-        <div class="muted" style="font-size:11px;">Vendor lead time: ${leadDays} days. Contact cadence: ${cadenceDays} days.</div>
+        <div class="muted" style="font-size:12px;">Vendor lead time: ${leadDays} days. Contact cadence: ${cadenceDays} days.</div>
       </details>
     </div>
   `;
@@ -2288,25 +2316,25 @@ async function manageComponentVendors(componentId) {
   const unlinkedVendors = (allVendors || []).filter(v => !linkedVendorIds.has(v.id));
 
   const rowsHtml = sortedLinks.map(l => `
-    <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; flex-wrap:wrap;">
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px; flex-wrap:wrap;">
       <input type="radio" name="preferred-vendor" ${l.is_preferred ? 'checked' : ''} ${canEdit() ? '' : 'disabled'} onchange="setPreferredComponentVendor('${componentId}','${l.id}')" title="Set as preferred">
-      <div style="flex:1; min-width:100px;"><strong>${l.vendors?.vendor_name}</strong>${l.is_preferred ? ' <span class="pill good" style="font-size:9px;">preferred</span>' : ''}</div>
-      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px;" onclick="editComponentVendorField('${l.id}','lead_days','Lead Time (days, blank = use vendor default)',${l.lead_days ?? 'null'})">${l.lead_days != null ? l.lead_days + 'd lead' : 'default lead'}</button>` : `<span class="muted">${l.lead_days != null ? l.lead_days + 'd lead' : 'default lead'}</span>`}
-      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px;" onclick="editComponentVendorField('${l.id}','contact_cadence_days','Contact Cadence (days, blank = use vendor default)',${l.contact_cadence_days ?? 'null'})">${l.contact_cadence_days != null ? l.contact_cadence_days + 'd cadence' : 'default cadence'}</button>` : ''}
-      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px;" onclick="editComponentVendorField('${l.id}','moq','MOQ (blank = none)',${l.moq ?? 'null'})">${l.moq != null ? 'MOQ ' + l.moq : 'no MOQ'}</button>` : ''}
-      ${canDelete() && sortedLinks.length > 1 ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--bad-text);" onclick="removeComponentVendor('${l.id}','${componentId}')">Remove</button>` : ''}
+      <div style="flex:1; min-width:100px;"><strong>${l.vendors?.vendor_name}</strong>${l.is_preferred ? ' <span class="pill good" style="font-size:10px;">preferred</span>' : ''}</div>
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:12px;" onclick="editComponentVendorField('${l.id}','lead_days','Lead Time (days, blank = use vendor default)',${l.lead_days ?? 'null'})">${l.lead_days != null ? l.lead_days + 'd lead' : 'default lead'}</button>` : `<span class="muted">${l.lead_days != null ? l.lead_days + 'd lead' : 'default lead'}</span>`}
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:12px;" onclick="editComponentVendorField('${l.id}','contact_cadence_days','Contact Cadence (days, blank = use vendor default)',${l.contact_cadence_days ?? 'null'})">${l.contact_cadence_days != null ? l.contact_cadence_days + 'd cadence' : 'default cadence'}</button>` : ''}
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:12px;" onclick="editComponentVendorField('${l.id}','moq','MOQ (blank = none)',${l.moq ?? 'null'})">${l.moq != null ? 'MOQ ' + l.moq : 'no MOQ'}</button>` : ''}
+      ${canDelete() && sortedLinks.length > 1 ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:12px; color:var(--bad-text);" onclick="removeComponentVendor('${l.id}','${componentId}')">Remove</button>` : ''}
     </div>
   `).join('');
 
   const addSection = canEdit()
     ? (unlinkedVendors.length ? `
       <div style="margin-top:12px; display:flex; gap:6px; align-items:center;">
-        <select id="add-component-vendor-select" style="flex:1; padding:6px; border-radius:6px; border:1px solid var(--border); font-size:12px;">
+        <select id="add-component-vendor-select" style="flex:1; padding:6px; border-radius:6px; border:1px solid var(--border); font-size:13px;">
           ${unlinkedVendors.map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('')}
         </select>
-        <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="addComponentVendor('${componentId}')">+ Add Vendor</button>
+        <button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="addComponentVendor('${componentId}')">+ Add Vendor</button>
       </div>
-    ` : '<div class="muted" style="font-size:11px; margin-top:8px;">All active vendors are already linked to this component.</div>')
+    ` : '<div class="muted" style="font-size:12px; margin-top:8px;">All active vendors are already linked to this component.</div>')
     : '';
 
   showDetail(`${componentName} — Vendors`, `${rowsHtml || '<div class="muted">No vendors linked yet.</div>'}${addSection}`);
@@ -2411,7 +2439,7 @@ async function initiateLivePoFromOutlook(productId, recommendedQty, recommendedM
   if (recommendedQty || recommendedMonth) {
     const note = document.createElement('div');
     note.className = 'muted';
-    note.style.cssText = 'font-size:11px; margin-bottom:-4px;';
+    note.style.cssText = 'font-size:12px; margin-bottom:-4px;';
     note.textContent = 'Pre-filled from the Inventory Outlook recommendation — review and adjust before saving.';
     const container = document.getElementById('add-order-product')?.closest('label')?.parentElement;
     if (container) container.insertBefore(note, container.firstChild);
@@ -2426,12 +2454,12 @@ async function renderActivityLog() {
     `<span class="pill ${l.action === 'delete' ? 'bad' : (l.undone ? 'watch' : '')}">${l.action}</span>`,
     l.description,
     l.performed_by || '—',
-    l.undone ? `<span class="muted">Undone ${fmtDateTime(l.undone_at)} by ${l.undone_by || '—'}</span>` : (canEdit() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="undoAction('${l.id}')">${l.action === 'delete' ? 'Restore' : 'Undo'}</button>` : ''),
+    l.undone ? `<span class="muted">Undone ${fmtDateTime(l.undone_at)} by ${l.undone_by || '—'}</span>` : (canEdit() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="undoAction('${l.id}')">${l.action === 'delete' ? 'Restore' : 'Undo'}</button>` : ''),
   ]);
   el.innerHTML = `
     <div class="card" style="padding:14px 16px;">
       <div class="section-label" style="margin:0 0 4px;">Activity Log</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">Every edit, cancel, pause/resume, delay, split, and delete made from this dashboard, newest first. Deleted rows can be restored here even after the undo banner has disappeared.</div>
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">Every edit, cancel, pause/resume, delay, split, and delete made from this dashboard, newest first. Deleted rows can be restored here even after the undo banner has disappeared.</div>
       ${kpiTable(['When', 'Action', 'What happened', 'By', ''], rows, 2)}
     </div>
   `;
@@ -2465,7 +2493,7 @@ function showRecalcDecisionModal(changedFieldLabels) {
         <div style="font-size:14px; line-height:1.5; margin-bottom:12px;">
           You changed <strong>${changedFieldLabels.join(', ')}</strong>, which feeds into existing recommendations and order deadlines.
         </div>
-        <div style="font-size:13px; line-height:1.5; margin-bottom:16px; color:var(--muted);">
+        <div style="font-size:14px; line-height:1.5; margin-bottom:16px; color:var(--muted);">
           <strong>Apply now</strong> re-runs the recommendation engine immediately (takes about 15 seconds) so today's recommendations reflect the new value right away.<br>
           <strong>Going forward only</strong> saves the change but leaves today's recommendations as-is — the daily scheduled run (noon UTC) will pick it up naturally tomorrow.
         </div>
@@ -2507,10 +2535,10 @@ async function requestRecalc(scopeType, scopeId) {
 // buttons live in their respective accordion headers.
 async function renderCatalog() {
   const el = document.getElementById('tab-catalog');
-  const newProductBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:12px;" onclick="event.stopPropagation(); showNewProductModal()">+ New Product</button>` : '';
-  const newBundleBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:12px;" onclick="event.stopPropagation(); showNewBundleModal()">+ New Bundle</button>` : '';
-  const newVendorBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:12px;" onclick="event.stopPropagation(); showNewVendorModal()">+ New Vendor</button>` : '';
-  const newComponentBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:12px;" onclick="event.stopPropagation(); showNewComponentModal()">+ New Component</button>` : '';
+  const newProductBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:13px;" onclick="event.stopPropagation(); showNewProductModal()">+ New Product</button>` : '';
+  const newBundleBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:13px;" onclick="event.stopPropagation(); showNewBundleModal()">+ New Bundle</button>` : '';
+  const newVendorBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:13px;" onclick="event.stopPropagation(); showNewVendorModal()">+ New Vendor</button>` : '';
+  const newComponentBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:13px;" onclick="event.stopPropagation(); showNewComponentModal()">+ New Component</button>` : '';
   el.innerHTML = `
     ${catalogAccordion('products', 'Catalog — Products', 'Click a product name to rename it; click the row to expand SKU, live stock, and components.', true, newProductBtn)}
     ${catalogAccordion('bundles', 'Catalog — Bundles', 'Click a bundle to expand and edit which root products it contains.', false, newBundleBtn)}
@@ -2529,10 +2557,10 @@ function catalogAccordion(id, title, subtitle, openDefault, headerActionHtml) {
       <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; gap:10px;">
         <div style="flex:1; padding-right:10px; cursor:pointer;" onclick="toggleCatalogAccordion('${id}')">
           <div class="section-label" style="margin:0;">${title}</div>
-          ${subtitle ? `<div class="muted" style="font-size:12px; margin-top:3px; font-weight:400; text-transform:none; letter-spacing:normal;">${subtitle}</div>` : ''}
+          ${subtitle ? `<div class="muted" style="font-size:13px; margin-top:3px; font-weight:400; text-transform:none; letter-spacing:normal;">${subtitle}</div>` : ''}
         </div>
         ${headerActionHtml || ''}
-        <span class="muted" id="catalog-accordion-caret-${id}" style="font-size:13px; white-space:nowrap; cursor:pointer;" onclick="toggleCatalogAccordion('${id}')">${open ? '▾ Collapse' : '▸ Expand'}</span>
+        <span class="muted" id="catalog-accordion-caret-${id}" style="font-size:14px; white-space:nowrap; cursor:pointer;" onclick="toggleCatalogAccordion('${id}')">${open ? '▾ Collapse' : '▸ Expand'}</span>
       </div>
       <div id="catalog-accordion-body-${id}" style="${open ? 'padding:0 16px 14px 16px;' : 'display:none; padding:0 16px 14px 16px;'}"></div>
     </div>
@@ -2603,8 +2631,8 @@ function renderCatalogVendorsTable() {
     const suppliedComponents = componentsByVendor[v.id] || [];
 
     const nameHtml = canAct
-      ? `<span class="pill clickable-pill good" style="font-size:13px;" onclick="event.stopPropagation(); editVendorNameInline('${v.id}')">${v.vendor_name}</span>`
-      : `<span style="font-size:13px;">${v.vendor_name}</span>`;
+      ? `<span class="pill clickable-pill good" style="font-size:14px;" onclick="event.stopPropagation(); editVendorNameInline('${v.id}')">${v.vendor_name}</span>`
+      : `<span style="font-size:14px;">${v.vendor_name}</span>`;
     const typeCell = isComponentSupplier ? 'Component Supplier' : 'Finished-Good Mfr';
     const activeCell = canAct
       ? `<input type="checkbox" id="cat-vendor-active-${v.id}" ${v.is_active ? 'checked' : ''} onchange="saveCatalogVendor('${v.id}')" onclick="event.stopPropagation();" />`
@@ -2615,7 +2643,7 @@ function renderCatalogVendorsTable() {
     // lead/cadence, contacts, components managed, notes) only appears once expanded, matching
     // Products' "SKU/stock strip on expand" pattern.
     const typeSelectHtml = canAct
-      ? `<select id="cat-vendor-type-${v.id}" onchange="saveCatalogVendor('${v.id}')" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;">
+      ? `<select id="cat-vendor-type-${v.id}" onchange="saveCatalogVendor('${v.id}')" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:13px;">
           <option value="component_supplier" ${isComponentSupplier ? 'selected' : ''}>Component Supplier</option>
           <option value="finished_good_manufacturer" ${!isComponentSupplier ? 'selected' : ''}>Finished-Good Mfr</option>
         </select>`
@@ -2630,18 +2658,18 @@ function renderCatalogVendorsTable() {
       ? `<span class="pill clickable-pill ${v.notes ? 'good' : 'watch'}" onclick="showVendorNotesModal('${v.id}', '${vendorNameSafe}')">${notesPillLabel}</span>`
       : (v.notes || '—');
     const componentsManageHtml = isComponentSupplier
-      ? (canAct ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:11px;" onclick="showManageComponentsModal('${v.id}', '${vendorNameSafe}')">Manage Components</button>` : suppliedComponents.map(cv => cv.components?.component_name).filter(Boolean).join(', ') || '—')
+      ? (canAct ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:12px;" onclick="showManageComponentsModal('${v.id}', '${vendorNameSafe}')">Manage Components</button>` : suppliedComponents.map(cv => cv.components?.component_name).filter(Boolean).join(', ') || '—')
       : '<span class="muted">Not a component supplier</span>';
 
     const nestedHtml = `
       <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:baseline; padding:6px 0 10px; border-bottom:1px solid var(--border); margin-bottom:8px;">
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Type</span><br>${typeSelectHtml}</div>
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Lead / Cadence</span><br>${leadHtml}</div>
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Contacts</span><br>${contactHtml}</div>
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Notes</span><br>${notesHtml}</div>
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Type</span><br>${typeSelectHtml}</div>
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Lead / Cadence</span><br>${leadHtml}</div>
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Contacts</span><br>${contactHtml}</div>
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Notes</span><br>${notesHtml}</div>
       </div>
       <div class="section-label" style="margin:0 0 6px;">Components Supplied</div>
-      <div style="font-size:13px;">${componentsManageHtml}</div>
+      <div style="font-size:14px;">${componentsManageHtml}</div>
     `;
 
     return `
@@ -2657,11 +2685,11 @@ function renderCatalogVendorsTable() {
   }).join('');
 
   el.innerHTML = `
-    <div class="muted" style="font-size:11px; margin-bottom:6px;">
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">
       Click a name to rename it; click a row to expand lead time, contacts, components, and notes.
     </div>
     <div style="overflow-x:auto;">
-      <table style="width:100%; font-size:13px; border-collapse:collapse;">
+      <table style="width:100%; font-size:14px; border-collapse:collapse;">
         <thead><tr>
           <th style="padding:6px 6px; width:18px;"></th>
           ${['Name', 'Type', 'Active', 'Components'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
@@ -2682,22 +2710,22 @@ async function showNewVendorModal() {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:420px;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">New Vendor</div>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Vendor Name</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Vendor Name</label>
       <input type="text" id="nv-name-input" placeholder="e.g. Pacific Packaging Co." style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Type</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Type</label>
       <select id="nv-type-input" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;">
         <option value="component_supplier">Component Supplier</option>
         <option value="finished_good_manufacturer">Finished-Good Manufacturer</option>
       </select>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Preferred Contact Channel</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Preferred Contact Channel</label>
       <select id="nv-channel-input" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;">
         <option value="email">Email</option>
         <option value="slack">Slack</option>
       </select>
-      <label style="font-size:12px; display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+      <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:14px;">
         <input type="checkbox" id="nv-active-input" checked /> Active
       </label>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">Add lead time, contacts, and components supplied after creating it, from its own row.</div>
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">Add lead time, contacts, and components supplied after creating it, from its own row.</div>
       <div style="display:flex; gap:8px;">
         <button class="btn btn-primary" id="nv-save-btn">Create</button>
         <button class="btn btn-ghost" id="nv-cancel-btn">Cancel</button>
@@ -2810,12 +2838,12 @@ function renderCatalogProductsTable() {
 
   const renderComponentVendorsBlock = (component) => {
     const links = (vendorsByComponent[component.id] || []).slice().sort((a, b) => (b.is_preferred ? 1 : 0) - (a.is_preferred ? 1 : 0));
-    if (!links.length) return `<div class="muted" style="font-size:12px; padding:3px 0 6px 22px;">No vendors assigned yet.</div>`;
+    if (!links.length) return `<div class="muted" style="font-size:13px; padding:3px 0 6px 22px;">No vendors assigned yet.</div>`;
     return `
       <div style="padding:2px 0 6px 22px;">
         ${links.map(l => `
-          <div style="font-size:12px; padding:2px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-            <span style="min-width:130px;">${l.vendors?.vendor_name || '—'}${l.is_preferred ? ' <span class="pill good" style="font-size:10px; padding:1px 6px;">Preferred</span>' : ''}</span>
+          <div style="font-size:13px; padding:2px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <span style="min-width:130px;">${l.vendors?.vendor_name || '—'}${l.is_preferred ? ' <span class="pill good" style="font-size:11px; padding:1px 6px;">Preferred</span>' : ''}</span>
             <span class="muted">${l.lead_days ?? l.vendors?.default_lead_days ?? '—'}d lead</span>
             ${l.moq != null ? `<span class="muted">MOQ ${l.moq}</span>` : ''}
             ${l.unit_cost != null ? `<span class="muted">${fmtMoney2(l.unit_cost)}/unit</span>` : ''}
@@ -2832,23 +2860,23 @@ function renderCatalogProductsTable() {
   // notes/COGS/safety stock elsewhere in this tab.
   const renderComponentsBlock = (product) => {
     const comps = componentsByProduct[product.id] || [];
-    if (!comps.length) return `<div class="muted" style="font-size:12px; padding:4px 0;">No components on file for this product.</div>`;
+    if (!comps.length) return `<div class="muted" style="font-size:13px; padding:4px 0;">No components on file for this product.</div>`;
     return comps.map(c => {
       const vendorNames = (vendorsByComponent[c.id] || []).map(l => l.vendors?.vendor_name).filter(Boolean);
       const nameHtml = canAct
-        ? `<span class="pill clickable-pill good" style="font-size:12px;" onclick="event.stopPropagation(); editComponentNameInline('${c.id}')">${c.component_name}</span>`
-        : `<strong style="font-size:13px;">${c.component_name}</strong>`;
+        ? `<span class="pill clickable-pill good" style="font-size:13px;" onclick="event.stopPropagation(); editComponentNameInline('${c.id}')">${c.component_name}</span>`
+        : `<strong style="font-size:14px;">${c.component_name}</strong>`;
       const uomHtml = canAct
-        ? `<span class="pill clickable-pill ${c.unit_of_measure ? 'good' : 'watch'}" style="font-size:11px;" onclick="event.stopPropagation(); editComponentUomInline('${c.id}')">${c.qty_per_unit ?? 1} ${c.unit_of_measure || 'each'}</span>`
-        : `<span class="muted" style="font-size:12px;">${c.qty_per_unit ?? 1} ${c.unit_of_measure || 'each'}</span>`;
+        ? `<span class="pill clickable-pill ${c.unit_of_measure ? 'good' : 'watch'}" style="font-size:12px;" onclick="event.stopPropagation(); editComponentUomInline('${c.id}')">${c.qty_per_unit ?? 1} ${c.unit_of_measure || 'each'}</span>`
+        : `<span class="muted" style="font-size:13px;">${c.qty_per_unit ?? 1} ${c.unit_of_measure || 'each'}</span>`;
       return `
         <div style="border-bottom:1px solid var(--border); padding:5px 0;">
           <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex-wrap:wrap;" onclick="toggleCatalogComponentExpand('${c.id}')">
             <span class="muted" id="cc-caret-${c.id}" style="width:12px; display:inline-block;">▸</span>
             <span style="flex:1; min-width:110px;" onclick="event.stopPropagation();">${nameHtml}</span>
             <span onclick="event.stopPropagation();">${uomHtml}</span>
-            <span class="muted" style="font-size:12px; min-width:120px; text-align:right;">${vendorNames.length ? vendorNames.join(', ') : 'No vendors'}</span>
-            ${canAct ? `<button class="btn btn-ghost" style="padding:2px 7px; font-size:11px;" onclick="event.stopPropagation(); showComponentVendorsModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">Manage vendors</button>` : ''}
+            <span class="muted" style="font-size:13px; min-width:120px; text-align:right;">${vendorNames.length ? vendorNames.join(', ') : 'No vendors'}</span>
+            ${canAct ? `<button class="btn btn-ghost" style="padding:2px 7px; font-size:12px;" onclick="event.stopPropagation(); showComponentVendorsModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">Manage vendors</button>` : ''}
           </div>
           <div id="cc-vendors-${c.id}" style="display:none;">${renderComponentVendorsBlock(c)}</div>
         </div>
@@ -2858,8 +2886,8 @@ function renderCatalogProductsTable() {
 
   const rows = rootProducts.map(p => {
     const nameHtml = canAct
-      ? `<span class="pill clickable-pill good" style="font-size:13px;" onclick="event.stopPropagation(); editProductNameInline('${p.id}')">${p.display_name}</span>`
-      : `<span style="font-size:13px;">${p.display_name}</span>`;
+      ? `<span class="pill clickable-pill good" style="font-size:14px;" onclick="event.stopPropagation(); editProductNameInline('${p.id}')">${p.display_name}</span>`
+      : `<span style="font-size:14px;">${p.display_name}</span>`;
     const activeCell = canAct
       ? `<input type="checkbox" id="cp-active-${p.id}" ${p.is_active ? 'checked' : ''} onchange="saveCatalogProductActive('${p.id}')" onclick="event.stopPropagation();" />`
       : (p.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>');
@@ -2882,10 +2910,10 @@ function renderCatalogProductsTable() {
     const memberOf = bundlesContainingProduct[p.id] || [];
     const statStripHtml = `
       <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:baseline; padding:6px 0 10px; border-bottom:1px solid var(--border); margin-bottom:8px;">
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">SKU</span><br><strong style="font-size:13px;">${p.sku_code}</strong></div>
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Live Stock</span><br><strong style="font-size:13px;">${liveQty != null ? liveQty.toLocaleString() + ' units' : '—'}</strong></div>
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Safety Stock</span><br><strong style="font-size:13px;">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : '—'}</strong></div>
-        ${memberOf.length ? `<div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">In Bundle${memberOf.length > 1 ? 's' : ''}</span><br>${memberOf.map(bc => `<span class="pill clickable-pill watch" style="font-size:10px; margin-right:3px;" onclick="jumpToCatalogBundle('${bc.bundle_id}')">${(productById[bc.bundle_id]?.display_name || 'Unknown').replace(/"/g, '&quot;')}</span>`).join('')}</div>` : ''}
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">SKU</span><br><strong style="font-size:14px;">${p.sku_code}</strong></div>
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Live Stock</span><br><strong style="font-size:14px;">${liveQty != null ? liveQty.toLocaleString() + ' units' : '—'}</strong></div>
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Safety Stock</span><br><strong style="font-size:14px;">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : '—'}</strong></div>
+        ${memberOf.length ? `<div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">In Bundle${memberOf.length > 1 ? 's' : ''}</span><br>${memberOf.map(bc => `<span class="pill clickable-pill watch" style="font-size:11px; margin-right:3px;" onclick="jumpToCatalogBundle('${bc.bundle_id}')">${(productById[bc.bundle_id]?.display_name || 'Unknown').replace(/"/g, '&quot;')}</span>`).join('')}</div>` : ''}
       </div>
     `;
 
@@ -2909,11 +2937,11 @@ function renderCatalogProductsTable() {
   }).join('');
 
   el.innerHTML = `
-    <div class="muted" style="font-size:11px; margin-bottom:6px;">
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">
       Click a name to rename it; click a row to expand SKU, live stock, and components.
     </div>
     <div style="overflow-x:auto;">
-      <table style="width:100%; font-size:13px; border-collapse:collapse;">
+      <table style="width:100%; font-size:14px; border-collapse:collapse;">
         <thead><tr>
           <th style="padding:6px 6px; width:18px;"></th>
           ${['Name', 'Active', 'Safety Stock', 'COGS', 'Notes'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
@@ -2943,11 +2971,11 @@ async function showNewProductModal() {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:420px;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">New Product</div>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">SKU Code</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">SKU Code</label>
       <input type="text" id="np-sku-input" placeholder="e.g. TL010" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Display Name</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Display Name</label>
       <input type="text" id="np-name-input" placeholder="e.g. Night Oil 100ml" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
-      <label style="font-size:12px; display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+      <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:14px;">
         <input type="checkbox" id="np-active-input" checked /> Active
       </label>
       <div style="display:flex; gap:8px;">
@@ -3057,20 +3085,20 @@ function renderCatalogBundlesTable() {
       <div style="padding:2px 0 4px;">
         ${contents.length ? contents.map(bc => `
           <div style="display:flex; align-items:center; gap:10px; padding:5px 0; border-bottom:1px solid var(--border);">
-            <span style="flex:1; font-size:13px;">${productById[bc.root_product_id]?.display_name || 'Unknown product'}</span>
+            <span style="flex:1; font-size:14px;">${productById[bc.root_product_id]?.display_name || 'Unknown product'}</span>
             ${canAct ? `
-              <span class="pill clickable-pill good" style="font-size:11px;" onclick="editBundleQtyInline('${bc.id}', '${bundle.id}')">× ${bc.qty_per_bundle}</span>
-              <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px; color:var(--bad-text);" onclick="removeBundleComponent('${bc.id}', '${bundle.id}')">Remove</button>
-            ` : `<span class="muted" style="font-size:12px;">× ${bc.qty_per_bundle}</span>`}
+              <span class="pill clickable-pill good" style="font-size:12px;" onclick="editBundleQtyInline('${bc.id}', '${bundle.id}')">× ${bc.qty_per_bundle}</span>
+              <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px; color:var(--bad-text);" onclick="removeBundleComponent('${bc.id}', '${bundle.id}')">Remove</button>
+            ` : `<span class="muted" style="font-size:13px;">× ${bc.qty_per_bundle}</span>`}
           </div>
-        `).join('') : '<div class="muted" style="font-size:12px; padding:4px 0;">Empty bundle — add a product below.</div>'}
+        `).join('') : '<div class="muted" style="font-size:13px; padding:4px 0;">Empty bundle — add a product below.</div>'}
         ${canAct ? `
           <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-            <select id="bc-add-select-${bundle.id}" style="flex:1; min-width:140px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'}>
+            <select id="bc-add-select-${bundle.id}" style="flex:1; min-width:140px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" ${addOptions.length ? '' : 'disabled'}>
               ${addOptions.length ? addOptions.map(rp => `<option value="${rp.id}">${rp.display_name}</option>`).join('') : '<option value="">No more products to add</option>'}
             </select>
-            <input type="number" min="1" value="1" id="bc-add-qty-${bundle.id}" style="width:56px; padding:5px 6px; border-radius:6px; border:1px solid var(--border); font-size:12px;" ${addOptions.length ? '' : 'disabled'} />
-            <button class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" ${addOptions.length ? '' : 'disabled'} onclick="addBundleComponent('${bundle.id}')">+ Add</button>
+            <input type="number" min="1" value="1" id="bc-add-qty-${bundle.id}" style="width:56px; padding:5px 6px; border-radius:6px; border:1px solid var(--border); font-size:13px;" ${addOptions.length ? '' : 'disabled'} />
+            <button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" ${addOptions.length ? '' : 'disabled'} onclick="addBundleComponent('${bundle.id}')">+ Add</button>
           </div>
         ` : ''}
       </div>
@@ -3079,8 +3107,8 @@ function renderCatalogBundlesTable() {
 
   const rows = bundles.map(b => {
     const nameHtml = canAct
-      ? `<span class="pill clickable-pill good" style="font-size:13px;" onclick="event.stopPropagation(); editProductNameInline('${b.id}')">${b.display_name}</span>`
-      : `<span style="font-size:13px;">${b.display_name}</span>`;
+      ? `<span class="pill clickable-pill good" style="font-size:14px;" onclick="event.stopPropagation(); editProductNameInline('${b.id}')">${b.display_name}</span>`
+      : `<span style="font-size:14px;">${b.display_name}</span>`;
     const activeCell = canAct
       ? `<input type="checkbox" id="cb-active-${b.id}" ${b.is_active ? 'checked' : ''} onchange="saveCatalogProductActive('${b.id}')" onclick="event.stopPropagation();" />`
       : (b.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>');
@@ -3107,11 +3135,11 @@ function renderCatalogBundlesTable() {
   }).join('');
 
   el.innerHTML = `
-    <div class="muted" style="font-size:11px; margin-bottom:6px;">
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">
       Click a bundle to expand and edit which root products it contains.
     </div>
     <div style="overflow-x:auto;">
-      <table style="width:100%; font-size:13px; border-collapse:collapse;">
+      <table style="width:100%; font-size:14px; border-collapse:collapse;">
         <thead><tr>
           <th style="padding:6px 6px; width:18px;"></th>
           ${['Name', 'Active', 'Contains', 'Notes'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
@@ -3132,14 +3160,14 @@ async function showNewBundleModal() {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:420px;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">New Bundle</div>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">SKU Code</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">SKU Code</label>
       <input type="text" id="nb-sku-input" placeholder="e.g. TL-BUNDLE-01" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Display Name</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Display Name</label>
       <input type="text" id="nb-name-input" placeholder="e.g. Starter Bundle" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
-      <label style="font-size:12px; display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+      <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:14px;">
         <input type="checkbox" id="nb-active-input" checked /> Active
       </label>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">Add the products it contains after creating it, from its row in the Bundles list.</div>
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">Add the products it contains after creating it, from its row in the Bundles list.</div>
       <div style="display:flex; gap:8px;">
         <button class="btn btn-primary" id="nb-save-btn">Create</button>
         <button class="btn btn-ghost" id="nb-cancel-btn">Cancel</button>
@@ -3218,7 +3246,7 @@ function showProductNotesModal(productId, productName) {
     el.innerHTML = `
       <div class="detail-modal" style="max-width:480px;">
         <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Notes — ${productName}</div>
-        <textarea id="pn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; resize:vertical;">${data?.notes || ''}</textarea>
+        <textarea id="pn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; resize:vertical;">${data?.notes || ''}</textarea>
         <div style="display:flex; gap:8px; margin-top:12px;">
           <button class="btn btn-primary" id="pn-save-btn">Save</button>
           <button class="btn btn-ghost" id="pn-cancel-btn">Cancel</button>
@@ -3248,9 +3276,9 @@ async function showProductCogsModal(productId) {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:380px;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">COGS — ${p.display_name}</div>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Unit COGS ($)</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Unit COGS ($)</label>
       <input type="number" step="0.01" id="pc-cogs-input" value="${p.unit_cogs ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">
         Feeds "cash locked up" / "cash at risk" figures on recommendations and the Revenue tab.
       </div>
       <div style="display:flex; gap:8px;">
@@ -3318,11 +3346,11 @@ function renderCatalogComponentsTable() {
   const rows = components.map(c => {
     const componentNameSafe = (c.component_name || '').replace(/'/g, "\\'");
     const nameHtml = canAct
-      ? `<span class="pill clickable-pill good" style="font-size:13px;" onclick="event.stopPropagation(); editComponentNameInline('${c.id}')">${c.component_name}</span>`
-      : `<span style="font-size:13px;">${c.component_name}</span>`;
+      ? `<span class="pill clickable-pill good" style="font-size:14px;" onclick="event.stopPropagation(); editComponentNameInline('${c.id}')">${c.component_name}</span>`
+      : `<span style="font-size:14px;">${c.component_name}</span>`;
     const productCell = productById[c.product_id] || '<span class="muted">—</span>';
     const uomCell = canAct
-      ? `<span class="pill clickable-pill ${c.unit_of_measure ? 'good' : 'watch'}" style="font-size:12px;" onclick="event.stopPropagation(); editComponentUomInline('${c.id}')">${c.unit_of_measure || 'Missing'}</span>`
+      ? `<span class="pill clickable-pill ${c.unit_of_measure ? 'good' : 'watch'}" style="font-size:13px;" onclick="event.stopPropagation(); editComponentUomInline('${c.id}')">${c.unit_of_measure || 'Missing'}</span>`
       : (c.unit_of_measure || '—');
     const qtyPerCell = c.qty_per_unit ?? '—';
     const vendors = vendorsByComponent[c.id] || [];
@@ -3333,12 +3361,12 @@ function renderCatalogComponentsTable() {
       ? vendors.map(cv => `<span class="pill ${cv.is_preferred ? 'good' : ''}" style="margin:0 4px 4px 0;">${cv.vendors?.vendor_name || '—'}${cv.is_preferred ? ' ★' : ''}${cv.lead_days ? ` · ${cv.lead_days}d` : ''}</span>`).join('')
       : '<span class="muted">No vendors linked yet.</span>';
     const manageVendorsHtml = canAct
-      ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:11px;" onclick="showComponentVendorsModal('${c.id}', '${componentNameSafe}')">Manage Vendors</button>`
+      ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:12px;" onclick="showComponentVendorsModal('${c.id}', '${componentNameSafe}')">Manage Vendors</button>`
       : '';
 
     const nestedHtml = `
       <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:baseline; padding:6px 0 10px; border-bottom:1px solid var(--border); margin-bottom:8px;">
-        <div><span class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Notes</span><br>${notesHtml}</div>
+        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Notes</span><br>${notesHtml}</div>
       </div>
       <div class="section-label" style="margin:0 0 6px;">Vendors</div>
       <div style="margin-bottom:8px;">${vendorsListHtml}</div>
@@ -3358,11 +3386,11 @@ function renderCatalogComponentsTable() {
   }).join('');
 
   el.innerHTML = `
-    <div class="muted" style="font-size:11px; margin-bottom:6px;">
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">
       Click a name or unit of measure to edit it; click a row to expand notes and vendors.
     </div>
     <div style="overflow-x:auto;">
-      <table style="width:100%; font-size:13px; border-collapse:collapse;">
+      <table style="width:100%; font-size:14px; border-collapse:collapse;">
         <thead><tr>
           <th style="padding:6px 6px; width:18px;"></th>
           ${['Component', 'Finished Good', 'Unit of Measure', 'Qty per Unit'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
@@ -3384,17 +3412,17 @@ async function showNewComponentModal() {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:420px;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">New Component</div>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Component Name</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Component Name</label>
       <input type="text" id="nc-name-input" placeholder="e.g. Amber glass bottle, 2oz" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Finished Good (product this belongs to)</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Finished Good (product this belongs to)</label>
       <select id="nc-product-input" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;">
         ${(products || []).map(p => `<option value="${p.id}">${p.display_name}</option>`).join('')}
       </select>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Unit of Measure</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Unit of Measure</label>
       <input type="text" id="nc-uom-input" placeholder="e.g. each, mL, g" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Qty per Unit</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Qty per Unit</label>
       <input type="number" id="nc-qty-input" value="1" step="any" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">Add vendors supplying it after creating it, from its own row.</div>
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">Add vendors supplying it after creating it, from its own row.</div>
       <div style="display:flex; gap:8px;">
         <button class="btn btn-primary" id="nc-save-btn">Create</button>
         <button class="btn btn-ghost" id="nc-cancel-btn">Cancel</button>
@@ -3427,7 +3455,7 @@ function showComponentNotesModal(componentId, componentName) {
     el.innerHTML = `
       <div class="detail-modal" style="max-width:480px;">
         <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Notes — ${componentName}</div>
-        <textarea id="ccn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; resize:vertical;">${data?.notes || ''}</textarea>
+        <textarea id="ccn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; resize:vertical;">${data?.notes || ''}</textarea>
         <div style="display:flex; gap:8px; margin-top:12px;">
           <button class="btn btn-primary" id="ccn-save-btn">Save</button>
           <button class="btn btn-ghost" id="ccn-cancel-btn">Cancel</button>
@@ -3469,7 +3497,7 @@ async function showComponentVendorsModal(componentId, componentName) {
       <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
         <input type="checkbox" id="cv-check-${v.id}" ${link ? 'checked' : ''} onchange="document.getElementById('cv-lead-${v.id}').disabled = !this.checked;" />
         <div style="flex:1;">${v.vendor_name}</div>
-        <label style="font-size:12px; color:var(--muted);">Lead days:
+        <label style="font-size:13px; color:var(--muted);">Lead days:
           <input type="number" id="cv-lead-${v.id}" value="${link?.lead_days ?? ''}" ${link ? '' : 'disabled'}
             style="width:60px; padding:3px 6px; border-radius:6px; border:1px solid var(--border); margin-left:4px;"
             placeholder="vendor default" />
@@ -3480,7 +3508,7 @@ async function showComponentVendorsModal(componentId, componentName) {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:480px;">
       <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Vendors — ${componentName}</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">
         Check every vendor that supplies this component. Same data as each vendor's own "Manage
         components" button.
       </div>
@@ -3540,7 +3568,7 @@ async function showManageComponentsModal(vendorId, vendorName) {
       <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
         <input type="checkbox" id="mc-check-${c.id}" ${link ? 'checked' : ''} onchange="document.getElementById('mc-lead-${c.id}').disabled = !this.checked;" />
         <div style="flex:1;">${c.component_name}</div>
-        <label style="font-size:12px; color:var(--muted);">Lead days:
+        <label style="font-size:13px; color:var(--muted);">Lead days:
           <input type="number" id="mc-lead-${c.id}" value="${link?.lead_days ?? ''}" ${link ? '' : 'disabled'}
             style="width:60px; padding:3px 6px; border-radius:6px; border:1px solid var(--border); margin-left:4px;"
             placeholder="vendor default" />
@@ -3551,7 +3579,7 @@ async function showManageComponentsModal(vendorId, vendorName) {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:520px;">
       <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Components — ${vendorName}</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">
         Check every component this vendor supplies. Lead days is optional — leave blank to use
         the vendor's default lead time (${vendor?.default_lead_days ?? '—'} days) for that component.
       </div>
@@ -3603,7 +3631,7 @@ function showVendorNotesModal(vendorId, vendorName) {
     el.innerHTML = `
       <div class="detail-modal" style="max-width:480px;">
         <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Notes — ${vendorName}</div>
-        <textarea id="vn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:13px; resize:vertical;">${data?.notes || ''}</textarea>
+        <textarea id="vn-notes-input" rows="8" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; resize:vertical;">${data?.notes || ''}</textarea>
         <div style="display:flex; gap:8px; margin-top:12px;">
           <button class="btn btn-primary" id="vn-save-btn">Save</button>
           <button class="btn btn-ghost" id="vn-cancel-btn">Cancel</button>
@@ -3634,9 +3662,9 @@ async function showVendorLeadTimeModal(vendorId) {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:420px;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Lead Time &amp; Cadence — ${v.vendor_name}</div>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Default lead time (days)</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Default lead time (days)</label>
       <input type="number" id="vl-leaddays-input" value="${v.default_lead_days ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Default contact cadence (days)</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Default contact cadence (days)</label>
       <input type="number" id="vl-cadence-input" value="${v.default_cadence_days ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
       <div style="display:flex; gap:8px;">
         <button class="btn btn-primary" id="vl-save-btn">Save</button>
@@ -3686,7 +3714,7 @@ async function showVendorContactsModal(vendorId, vendorName) {
     <div class="card" id="vc-row-${c.id}" style="padding:10px 12px; margin-bottom:8px;">
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
         <input type="text" id="vc-name-${c.id}" value="${(c.name || '').replace(/"/g, '&quot;')}" placeholder="Name" style="flex:1; min-width:120px; padding:6px 8px; border-radius:6px; border:1px solid var(--border);" />
-        <label style="font-size:12px; display:flex; align-items:center; gap:4px; white-space:nowrap;">
+        <label style="font-size:13px; display:flex; align-items:center; gap:4px; white-space:nowrap;">
           <input type="checkbox" id="vc-primary-${c.id}" ${c.is_primary_poc ? 'checked' : ''} /> Primary POC
         </label>
       </div>
@@ -3699,20 +3727,20 @@ async function showVendorContactsModal(vendorId, vendorName) {
         <select id="vc-channel-${c.id}" style="padding:6px 8px; border-radius:6px; border:1px solid var(--border);">
           ${['email', 'slack', 'phone'].map(ch => `<option value="${ch}" ${c.preferred_contact_channel === ch ? 'selected' : ''}>${ch}</option>`).join('')}
         </select>
-        <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px; color:var(--bad-text);" onclick="document.getElementById('vc-row-${c.id}').remove()" title="Remove this contact">Remove</button>
+        <button class="btn btn-ghost" style="padding:4px 8px; font-size:12px; color:var(--bad-text);" onclick="document.getElementById('vc-row-${c.id}').remove()" title="Remove this contact">Remove</button>
       </div>
     </div>`;
 
   el.innerHTML = `
     <div class="detail-modal" style="max-width:560px;">
       <div style="font-weight:700; margin-bottom:4px; font-family:'Playfair Display'; font-size:17px;">Contacts — ${vendorName}</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">
         Add every contact point at this vendor. More than one can be "Primary POC" if updates
         should reach multiple people. For Slack, you need the person's member ID (not just their
         name) — find it on their Slack profile.
       </div>
       <div id="vc-contacts-list" style="max-height:360px; overflow-y:auto;">${(contacts || []).map(contactRowHtml).join('')}</div>
-      <button class="btn btn-ghost" id="vc-add-btn" style="margin-top:4px; font-size:12px;">+ Add another contact</button>
+      <button class="btn btn-ghost" id="vc-add-btn" style="margin-top:4px; font-size:13px;">+ Add another contact</button>
       <div style="display:flex; gap:8px; margin-top:14px;">
         <button class="btn btn-primary" id="vc-save-btn">Save</button>
         <button class="btn btn-ghost" id="vc-cancel-btn">Cancel</button>
@@ -4342,27 +4370,43 @@ function showMixCellDetail(view, channel, productId, month) {
   const rationale = isPct ? cur.revenue_pct_rationale : cur.asp_rationale;
 
   if (!isPct) {
-    // Alex (2026-11-05): "I still don't like the average selling price visual of it being more
-    // or less than projected. I don't understand it and it doesn't offer me a ton of value" --
-    // clarified he wants the comparison-sentence-and-chart treatment gone for ASP specifically
-    // and reverted to edit-only, like before that treatment existed. The % of Revenue popup
-    // (chart + "why" sentence, added earlier today) is untouched -- he did not flag that one.
-    // Keeps the plain historical-ASP table (real order data, no comparison math) as before.
+    // Alex (2026-11-05, two rounds): first "I still don't like the average selling price visual
+    // ... I don't understand it" (dropped the comparison chart/sentence -- done). Then "I also
+    // like the average selling price pop up, but is the first text the calculated average? Make
+    // it more clear and return a recommended average selling price and the actual selling price
+    // with an expandable and contractable drop down." Answer to his question: no -- that number
+    // was always the PROJECTED/ASSUMED ASP for this month (the draft scenario's input value),
+    // never a calculated average of anything -- which is exactly the confusion. Now explicitly
+    // labeled as such, with two new real numbers surfaced plainly: "Recommended ASP" (trailing
+    // 3-month actual average, same horizon generate_month_end_scenario.py uses) and "Most recent
+    // actual ASP" (last real month, Shopify). Full monthly history moved into a <details>
+    // dropdown (same native expand/collapse pattern already used elsewhere in this file) instead
+    // of always being shown.
     const history = channel === 'shopify' ? (S.historicalAspByProduct[productId] || []) : [];
+    const last3 = history.length ? history.slice(-3).reduce((s, h) => s + h.asp, 0) / Math.min(3, history.length) : null;
+    const lastActual = history.length ? history[history.length - 1] : null;
+    const recommendedBlock = (last3 != null || lastActual) ? `
+      <div style="display:flex; gap:18px; flex-wrap:wrap; margin:10px 0; padding:10px; background:#F7F4EE; border-radius:8px;">
+        ${last3 != null ? `<div><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em;">Recommended ASP</div><div style="font-size:18px; font-weight:700;">${fmtMoney2(last3)}</div><div class="muted" style="font-size:11px;">trailing 3-mo actual avg</div></div>` : ''}
+        ${lastActual ? `<div><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em;">Most Recent Actual ASP</div><div style="font-size:18px; font-weight:700;">${fmtMoney2(lastActual.asp)}</div><div class="muted" style="font-size:11px;">${monthLabelShort(lastActual.month)}, real order data</div></div>` : ''}
+      </div>
+    ` : `<div class="muted" style="font-size:12px; margin:8px 0;">No historical actual-ASP data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'} to recommend from.</div>`;
     const historyBlock = history.length ? `
-      <div style="margin:8px 0; padding-top:8px; border-top:1px solid var(--border);">
-        <div class="section-label" style="margin:0 0 4px; font-size:11px;">Actual ASP, Last ${history.length} Months (Shopify)</div>
-        <table style="width:100%; font-size:12px; border-collapse:collapse;">
+      <details style="margin-top:4px;">
+        <summary>Show monthly history (${history.length} months, Shopify)</summary>
+        <table style="width:100%; font-size:13px; border-collapse:collapse; margin-top:6px;">
           ${history.map(h => `<tr><td style="padding:2px 6px;">${monthLabelShort(h.month)}</td><td style="padding:2px 6px; text-align:right;">${fmtMoney2(h.asp)}</td><td class="muted" style="padding:2px 6px; text-align:right;">${h.units.toLocaleString()} units sold</td></tr>`).join('')}
         </table>
-        <div class="muted" style="font-size:10px; margin-top:4px;">Computed from real order data (total sales ÷ net units sold).</div>
-      </div>
-    ` : `<div class="muted" style="font-size:11px; margin:6px 0;">No historical actual-ASP data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'}.</div>`;
+        <div class="muted" style="font-size:11px; margin-top:4px;">Computed from real order data (total sales ÷ net units sold).</div>
+      </details>
+    ` : '';
     const body = `
+      <div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:2px;">Projected / Assumed ASP for ${monthLabelLong(month)}</div>
       <div style="font-size:16px; margin-bottom:6px;"><strong>${valueLine}</strong></div>
-      <div class="muted" style="font-size:13px; line-height:1.4; margin-bottom:8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+      <div class="muted" style="font-size:14px; line-height:1.4; margin-bottom:8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+      ${recommendedBlock}
       ${historyBlock}
-      ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftAsp('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
+      ${editable ? `<button class="btn btn-primary" style="margin-top:10px;" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftAsp('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:12px; margin-top:10px;">Switch to a draft scenario to edit.</div>'}
     `;
     showDetail(`${p?.display_name} — ${monthLabelLong(month)} — Avg Selling Price`, body);
     return;
@@ -4392,10 +4436,10 @@ function showMixCellDetail(view, channel, productId, month) {
     const direction = pctDiff > 2 ? 'higher' : pctDiff < -2 ? 'lower' : 'in line with';
     const fmtVal = (v) => `${(v * 100).toFixed(1)}%`;
     whyHtml = (Math.abs(pctDiff) > 2)
-      ? `<div style="font-size:13px; line-height:1.5; margin-bottom:4px;">This month's projection (<strong>${fmtVal(curVal)}</strong>) is <strong>${Math.abs(Math.round(pctDiff))}% ${direction}</strong> than the trailing 3-month actual average of ${fmtVal(avgRecent)}.</div>`
-      : `<div style="font-size:13px; line-height:1.5; margin-bottom:4px;">This month's projection (<strong>${fmtVal(curVal)}</strong>) is ${direction} the trailing 3-month actual average of ${fmtVal(avgRecent)}.</div>`;
+      ? `<div style="font-size:14px; line-height:1.5; margin-bottom:4px;">This month's projection (<strong>${fmtVal(curVal)}</strong>) is <strong>${Math.abs(Math.round(pctDiff))}% ${direction}</strong> than the trailing 3-month actual average of ${fmtVal(avgRecent)}.</div>`
+      : `<div style="font-size:14px; line-height:1.5; margin-bottom:4px;">This month's projection (<strong>${fmtVal(curVal)}</strong>) is ${direction} the trailing 3-month actual average of ${fmtVal(avgRecent)}.</div>`;
   } else {
-    whyHtml = `<div class="muted" style="font-size:12px; margin-bottom:4px;">No historical actual data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'} to compare against.</div>`;
+    whyHtml = `<div class="muted" style="font-size:13px; margin-bottom:4px;">No historical actual data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'} to compare against.</div>`;
   }
 
   const chartBlock = history.length ? `<div style="height:170px; margin:10px 0;"><canvas id="${chartId}"></canvas></div>` : '';
@@ -4406,9 +4450,9 @@ function showMixCellDetail(view, channel, productId, month) {
     ${chartBlock}
     <details ${rationale ? '' : 'open'} style="margin-top:2px;">
       <summary>Written rationale</summary>
-      <div class="muted" style="font-size:13px; line-height:1.4; margin:4px 0 8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+      <div class="muted" style="font-size:14px; line-height:1.4; margin:4px 0 8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
     </details>
-    ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftMixPct('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:11px;">Switch to a draft scenario to edit.</div>'}
+    ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftMixPct('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:12px;">Switch to a draft scenario to edit.</div>'}
   `;
   showDetail(`${p?.display_name} — ${monthLabelLong(month)} — Revenue Share`, body);
 
@@ -4523,10 +4567,10 @@ function showThroughputDetail(productId, month) {
   const fullMonthUnits = isCurrentMonth ? soldSoFarUnits + totalUnits : null;
 
   const body = `
-    <div style="font-size:13px; line-height:1.5;">
+    <div style="font-size:14px; line-height:1.5;">
       ${isCurrentMonth ? `
         <div style="margin-bottom:10px; padding:10px; background:#F7F4EE; border-radius:8px;">
-          <div style="font-weight:600; margin-bottom:6px; font-size:12px;">This month, in plain terms:</div>
+          <div style="font-weight:600; margin-bottom:6px; font-size:13px;">This month, in plain terms:</div>
           <div style="display:flex; justify-content:space-between; padding:2px 0;"><span class="muted">Full month's target</span><strong>${Math.round(fullMonthUnits).toLocaleString()} units</strong></div>
           <div style="display:flex; justify-content:space-between; padding:2px 0;"><span class="muted">— Already sold so far this month</span><strong>${Math.round(soldSoFarUnits).toLocaleString()} units</strong></div>
           <div style="display:flex; justify-content:space-between; padding:2px 0; border-top:1px solid var(--border); margin-top:2px; padding-top:4px;"><span class="muted">= Still planned to sell (rest of month)</span><strong>${Math.round(totalUnits).toLocaleString()} units</strong></div>
@@ -4534,15 +4578,15 @@ function showThroughputDetail(productId, month) {
         </div>
       ` : ''}
       <div style="padding:6px 0; display:flex; justify-content:space-between; font-size:15px;"><span><strong>Projected end-of-month</strong></span><strong style="color:${endingInv < (p.safety_stock_qty || 0) ? 'var(--bad-text)' : 'var(--good-text)'};">${Math.round(endingInv).toLocaleString()}</strong></div>
-      <div class="muted" style="font-size:11px;">Starting (${isCurrentMonth ? 'today, live' : 'prior month EOM'}): ${Math.round(startingInv).toLocaleString()} · Safety stock: ${(p.safety_stock_qty || 0).toLocaleString()}</div>
+      <div class="muted" style="font-size:12px;">Starting (${isCurrentMonth ? 'today, live' : 'prior month EOM'}): ${Math.round(startingInv).toLocaleString()} · Safety stock: ${(p.safety_stock_qty || 0).toLocaleString()}</div>
 
       ${draftReceiptsHere.length ? `
         <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
-          <div class="section-label" style="margin:0 0 4px; font-size:11px;">Draft POs landing this month (${currentScenario()?.name || ''})</div>
+          <div class="section-label" style="margin:0 0 4px; font-size:12px;">Draft POs landing this month (${currentScenario()?.name || ''})</div>
           ${draftReceiptsHere.map(po => `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:13px;">
               <span>${po.qty.toLocaleString()} units${po.notes ? ` — <span class="muted">${po.notes}</span>` : ''}</span>
-              ${isEditable() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--bad-text);" onclick="deleteDraftPo('${po.id}')">Remove</button>` : ''}
+              ${isEditable() ? `<button class="btn btn-ghost" style="padding:2px 6px; font-size:12px; color:var(--bad-text);" onclick="deleteDraftPo('${po.id}')">Remove</button>` : ''}
             </div>
           `).join('')}
         </div>
@@ -4553,7 +4597,7 @@ function showThroughputDetail(productId, month) {
         ${channelRows.map(r => `
           <div style="padding:5px 0; border-bottom:1px solid var(--border);">
             <div style="display:flex; justify-content:space-between;"><strong>${r.channel}</strong><span class="pill ${r.basis.tag === 'actual' ? 'good' : (r.basis.tag === 'MTD actual' ? 'watch' : '')}" title="${r.basis.detail}">${r.basis.tag}</span></div>
-            <div class="muted" style="font-size:11px; margin-top:2px;">
+            <div class="muted" style="font-size:12px; margin-top:2px;">
               ${isCurrentMonth
                 ? `${fmtMoney(r.chanRev)} full-month forecast − ${fmtMoney(S.monthlyActual[month]?.[r.channel === 'Shopify' ? 'shopify' : 'amazon'] || 0)} already actual = ${fmtMoney(r.remainingChanRev)} remaining × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units still to come</strong>`
                 : `${fmtMoney(r.chanRev)} channel revenue × ${(r.pct * 100).toFixed(1)}% mix share ÷ ${fmtMoney2(r.asp)} ASP = <strong>${Math.round(r.units).toLocaleString()} units</strong> (${fmtMoney(r.chanRev * r.pct)})`
@@ -4561,29 +4605,29 @@ function showThroughputDetail(productId, month) {
             </div>
           </div>
         `).join('')}
-        <div style="padding:5px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; font-size:12px;">
+        <div style="padding:5px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; font-size:13px;">
           <span>${isCurrentMonth ? 'Remaining demand (rest of month)' : 'Total implied demand'}</span><strong>${Math.round(totalUnits).toLocaleString()} units (${fmtMoney(totalRemainingRevenue)})</strong>
         </div>
-        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>Starting inventory (${isCurrentMonth ? 'today, live' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
-        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>+ Incoming receipts${isCurrentMonth ? ' (rest of month)' : ' this month'}${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
-        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
-        ${manualAdj ? `<div style="padding:5px 0; display:flex; justify-content:space-between; font-size:12px;"><span>${manualAdj > 0 ? '−' : '+'} Manual throughput adjustment${manualAdjRow?.reason ? ` <span class="muted">(${manualAdjRow.reason})</span>` : ''}</span><strong>${Math.abs(manualAdj).toLocaleString()}</strong></div>` : ''}
-        <div style="padding:6px 0 0; display:flex; justify-content:space-between; font-size:13px;"><span><strong>= Projected end-of-month</strong></span><strong>${Math.round(endingInv).toLocaleString()}</strong></div>
+        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:13px;"><span>Starting inventory (${isCurrentMonth ? 'today, live' : 'prior month EOM'})</span><strong>${Math.round(startingInv).toLocaleString()}</strong></div>
+        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:13px;"><span>+ Incoming receipts${isCurrentMonth ? ' (rest of month)' : ' this month'}${draftReceiptsQty ? ' <span class="pill watch" style="margin-left:4px;">incl. draft PO</span>' : ''}</span><strong>${receipts.toLocaleString()}${realReceipts && draftReceiptsQty ? ` <span class="muted" style="font-weight:400;">(${realReceipts.toLocaleString()} confirmed + ${draftReceiptsQty.toLocaleString()} draft)</span>` : ''}</strong></div>
+        <div style="padding:5px 0; display:flex; justify-content:space-between; font-size:13px;"><span>− Units sold (above)</span><strong>${Math.round(totalUnits).toLocaleString()}</strong></div>
+        ${manualAdj ? `<div style="padding:5px 0; display:flex; justify-content:space-between; font-size:13px;"><span>${manualAdj > 0 ? '−' : '+'} Manual throughput adjustment${manualAdjRow?.reason ? ` <span class="muted">(${manualAdjRow.reason})</span>` : ''}</span><strong>${Math.abs(manualAdj).toLocaleString()}</strong></div>` : ''}
+        <div style="padding:6px 0 0; display:flex; justify-content:space-between; font-size:14px;"><span><strong>= Projected end-of-month</strong></span><strong>${Math.round(endingInv).toLocaleString()}</strong></div>
       </details>
 
       ${canEdit() ? `
         <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
-          <div class="muted" style="font-size:11px; margin-bottom:4px;">
+          <div class="muted" style="font-size:12px; margin-bottom:4px;">
             ${manualAdj ? `Manual adjustment on file: <strong>${manualAdj > 0 ? 'Deduction' : 'Addition'} of ${Math.abs(manualAdj).toLocaleString()} units</strong>${manualAdjRow?.reason ? ` — ${manualAdjRow.reason}` : ''}` : 'No manual throughput adjustment for this product/month.'}
           </div>
-          <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="editManualThroughputAdjustment('${productId}', '${month}')">${manualAdj ? 'Edit' : '+ Add'} Manual Throughput Adjustment</button>
-          ${manualAdj ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px; color:var(--bad-text);" onclick="deleteManualThroughputAdjustment('${productId}', '${month}')">Remove</button>` : ''}
+          <button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="editManualThroughputAdjustment('${productId}', '${month}')">${manualAdj ? 'Edit' : '+ Add'} Manual Throughput Adjustment</button>
+          ${manualAdj ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:13px; color:var(--bad-text);" onclick="deleteManualThroughputAdjustment('${productId}', '${month}')">Remove</button>` : ''}
         </div>
       ` : ''}
 
       ${isEditable() ? `
         <div style="margin-top:10px;">
-          <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${month}')">+ Draft a PO landing in ${monthLabelShort(month)}</button>
+          <button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="document.getElementById('detail-modal-backdrop').remove(); openDraftPoModal('${productId}', '${month}')">+ Draft a PO landing in ${monthLabelShort(month)}</button>
         </div>
       ` : ''}
     </div>
@@ -4625,18 +4669,18 @@ async function editManualThroughputAdjustment(productId, month) {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:460px;">
       <div style="font-weight:700; margin-bottom:6px; font-family:'Playfair Display'; font-size:17px;">${p?.display_name} — Manual Throughput Adjustment</div>
-      <div class="muted" style="font-size:12px; margin-bottom:12px; line-height:1.4;">
+      <div class="muted" style="font-size:13px; margin-bottom:12px; line-height:1.4;">
         For ${monthLabelLong(month)}. This does NOT change revenue targets or any other product --
         it only moves this product's projected end-of-month inventory for this month.
       </div>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Direction</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Direction</label>
       <select id="mta-direction-input" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;">
         <option value="deduction" ${existingDirection === 'deduction' ? 'selected' : ''}>Deduction — reduces projected inventory (e.g. a promo moving extra units)</option>
         <option value="addition" ${existingDirection === 'addition' ? 'selected' : ''}>Addition — increases projected inventory (e.g. a known planned pause in sales)</option>
       </select>
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Units</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Units</label>
       <input id="mta-magnitude-input" type="number" min="0" value="${existingMagnitude}" placeholder="e.g. 500" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
-      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Reason</label>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Reason</label>
       <textarea id="mta-reason-input" rows="2" placeholder='e.g. "November holiday boxes — bundled promo"' style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:14px; font-family:inherit;">${(existing?.reason || '').replace(/</g, '&lt;')}</textarea>
       <div style="display:flex; gap:8px;">
         <button class="btn btn-primary" id="mta-save-btn">Save</button>
@@ -4711,23 +4755,23 @@ function showOutlookStatusDetail(productId) {
   }).join('');
 
   const body = `
-    <div style="font-size:13px; line-height:1.5;">
-      <div style="margin-bottom:6px;"><span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}" style="font-size:12px;">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span></div>
-      <div class="muted" style="font-size:12px; margin-bottom:8px;">${narrative} Safety stock: ${safety.toLocaleString()} units.</div>
-      <div class="section-label" style="margin:10px 0 4px; font-size:11px;">Recommendation</div>
+    <div style="font-size:14px; line-height:1.5;">
+      <div style="margin-bottom:6px;"><span class="pill ${outlookStatus.status === 'HEALTHY' ? 'good' : 'bad'}" style="font-size:13px;">${outlookStatus.status === 'HEALTHY' ? 'Healthy' : 'Issue'}</span></div>
+      <div class="muted" style="font-size:13px; margin-bottom:8px;">${narrative} Safety stock: ${safety.toLocaleString()} units.</div>
+      <div class="section-label" style="margin:10px 0 4px; font-size:12px;">Recommendation</div>
       ${backendRec ? `
-        <div class="muted" style="font-size:12px; margin-bottom:4px;">
+        <div class="muted" style="font-size:13px; margin-bottom:4px;">
           The full PO-recommendation engine (Overview tab) ${backendRecIsActive ? 'already has an active' : 'found a'}
-          <span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:9px;">${backendRec.urgency}</span>
+          <span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:10px;">${backendRec.urgency}</span>
           recommendation — shortfall of ${(backendRec.shortfall_qty || 0).toLocaleString()} units by
           ${fmtDate(backendRec.shortfall_month)}${backendRecIsActive ? '.' : `, but it was <strong>dismissed</strong> — a human already reviewed this and decided no action is needed. Shown here for context only; the button below uses this tab's own quick estimate instead.`}
         </div>
-        ${backendRecIsActive ? `<div style="font-size:12px; margin-bottom:8px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>` : ''}
+        ${backendRecIsActive ? `<div style="font-size:13px; margin-bottom:8px;">Place by <strong>${fmtDate(backendRec.last_responsible_date)}</strong> · Suggested order: <strong>${(backendRec.recommended_order_qty || 0).toLocaleString()} units</strong></div>` : ''}
       ` : outlookStatus.status === 'ISSUE' ? `
-        <div class="muted" style="font-size:12px; margin-bottom:8px;">No recommendation from the Overview tab's engine yet — the ${recommendedQty.toLocaleString()}-unit suggestion below is this tab's own quick estimate (enough to bring ${monthLabelShort(months[outlookStatus.firstIssueIndex])}'s projection back up to safety stock).</div>
+        <div class="muted" style="font-size:13px; margin-bottom:8px;">No recommendation from the Overview tab's engine yet — the ${recommendedQty.toLocaleString()}-unit suggestion below is this tab's own quick estimate (enough to bring ${monthLabelShort(months[outlookStatus.firstIssueIndex])}'s projection back up to safety stock).</div>
       ` : ''}
       ${canEdit() && outlookStatus.status === 'ISSUE' ? `
-        <button class="btn btn-primary" style="padding:6px 12px; font-size:12px; margin-bottom:4px;" onclick="document.getElementById('detail-modal-backdrop').remove(); ${
+        <button class="btn btn-primary" style="padding:6px 12px; font-size:13px; margin-bottom:4px;" onclick="document.getElementById('detail-modal-backdrop').remove(); ${
           isLiveView
             ? `initiateLivePoFromOutlook('${productId}', ${recommendedQty || 'null'}, '${recommendedMonth}', null)`
             : `openDraftPoModal('${productId}', '${recommendedMonth}')`
@@ -4735,7 +4779,7 @@ function showOutlookStatusDetail(productId) {
       ` : ''}
       <details>
         <summary>Show the 6-month projection</summary>
-        <table style="width:100%; font-size:12px; border-collapse:collapse;">
+        <table style="width:100%; font-size:13px; border-collapse:collapse;">
           <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month (EOM)</th><th style="text-align:right; padding:3px 8px; border-bottom:1px solid var(--border);">Projected</th></tr></thead>
           <tbody>${seriesRows}</tbody>
         </table>
@@ -4758,14 +4802,14 @@ function showPacingTrendDetail(channel) {
   const narrative = `As of today (day ${p.daysElapsed} of ${p.daysInMonth}), ${label} is pacing at <strong>${p.pctOfPace.toFixed(0)}%</strong> of where it should be to hit the ${monthLabel} goal of ${fmtMoney(p.forecastFullMonth)}. Yesterday (day ${p.daysElapsed - 1}), that same figure was <strong>${p.pctOfPaceYesterday.toFixed(0)}%</strong>. So pace has <strong>${direction}</strong> by ${Math.abs(delta).toFixed(1)} point${Math.abs(delta) >= 1.5 ? 's' : ''} in the last 24 hours.`;
   const methodNote = `"Pace" compares actual MTD revenue to what you'd expect if the month's revenue landed perfectly evenly across every day (full-month goal ÷ days in month × days elapsed). 100% means exactly on track; above 100% means ahead; below means behind. The day-over-day number is the same calculation run one day apart, so it isolates whether the LAST day specifically helped or hurt your pace — not just whether you're ahead or behind overall.`;
   const body = `
-    <div style="font-size:13px; line-height:1.6; margin-bottom:10px;">${narrative}</div>
-    <table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:10px;">
+    <div style="font-size:14px; line-height:1.6; margin-bottom:10px;">${narrative}</div>
+    <table style="width:100%; font-size:13px; border-collapse:collapse; margin-bottom:10px;">
       <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">MTD revenue (today)</td><td style="padding:3px 8px; text-align:right; font-weight:700;">${fmtMoney(p.mtd)}</td></tr>
       <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">MTD revenue (yesterday)</td><td style="padding:3px 8px; text-align:right; font-weight:700;">${fmtMoney(p.mtdYesterday)}</td></tr>
       <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">Expected pace (today)</td><td style="padding:3px 8px; text-align:right;">${fmtMoney(p.expectedPace)}</td></tr>
       <tr><td style="padding:3px 8px; color:var(--text-muted,#8A7257);">Expected pace (yesterday)</td><td style="padding:3px 8px; text-align:right;">${fmtMoney(p.expectedPaceYesterday)}</td></tr>
     </table>
-    <details><summary>How "pace" is calculated</summary><div class="muted" style="font-size:12px; margin-top:6px; line-height:1.5;">${methodNote}</div></details>
+    <details><summary>How "pace" is calculated</summary><div class="muted" style="font-size:13px; margin-top:6px; line-height:1.5;">${methodNote}</div></details>
   `;
   showDetail(`${label} — Pacing Trend`, body);
 }
@@ -4796,15 +4840,15 @@ function openDraftPoModal(productId, defaultMonth) {
   el.innerHTML = `
     <div class="detail-modal" style="max-width:480px;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">Draft PO — ${p.display_name}</div>
-      <div class="muted" style="font-size:12px; margin-bottom:12px;">Added to scenario "${currentScenario()?.name}". Only affects real inventory once this scenario is committed to live.</div>
-      <label class="muted" style="font-size:11px;">Quantity</label>
+      <div class="muted" style="font-size:13px; margin-bottom:12px;">Added to scenario "${currentScenario()?.name}". Only affects real inventory once this scenario is committed to live.</div>
+      <label class="muted" style="font-size:12px;">Quantity</label>
       <input id="draft-po-qty" type="number" min="1" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;" />
-      <label class="muted" style="font-size:11px;">Landing month</label>
+      <label class="muted" style="font-size:12px;">Landing month</label>
       <select id="draft-po-month" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;">${monthOptions}</select>
-      <label class="muted" style="font-size:11px;">Vendor</label>
+      <label class="muted" style="font-size:12px;">Vendor</label>
       <select id="draft-po-vendor" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;">${vendorOptions}</select>
-      <div id="draft-po-place-date" class="muted" style="font-size:11px; margin:-6px 0 10px;"></div>
-      <label class="muted" style="font-size:11px;">Notes (optional)</label>
+      <div id="draft-po-place-date" class="muted" style="font-size:12px; margin:-6px 0 10px;"></div>
+      <label class="muted" style="font-size:12px;">Notes (optional)</label>
       <input id="draft-po-notes" type="text" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin:4px 0 10px;" />
       <div id="draft-po-feasibility" style="margin-bottom:10px;"></div>
       <div style="display:flex; gap:8px;">
@@ -4823,13 +4867,13 @@ function openDraftPoModal(productId, defaultMonth) {
     const checks = checkComponentFeasibility(p.sku_code, qty);
     const shortages = checks.filter(c => c.short > 0);
     if (!checks.length) {
-      feasEl.innerHTML = `<div class="muted" style="font-size:11px;">No componentry tracked against this product's SKU.</div>`;
+      feasEl.innerHTML = `<div class="muted" style="font-size:12px;">No componentry tracked against this product's SKU.</div>`;
     } else if (shortages.length === 0) {
-      feasEl.innerHTML = `<div class="pill good" style="font-size:11px;">✓ Enough componentry on hand/in-flight for ${qty.toLocaleString()} units</div>`;
+      feasEl.innerHTML = `<div class="pill good" style="font-size:12px;">✓ Enough componentry on hand/in-flight for ${qty.toLocaleString()} units</div>`;
     } else {
       feasEl.innerHTML = `
-        <div class="pill bad" style="font-size:11px; margin-bottom:6px;">⚠ Short on componentry for ${qty.toLocaleString()} units — you can still save this draft, but you'll also need component PO(s)</div>
-        ${shortages.map(c => `<div class="muted" style="font-size:11px;">${c.component_name}: need ${c.required.toLocaleString()}, have ${c.available.toLocaleString()} on hand/in-flight — short ${c.short.toLocaleString()}</div>`).join('')}
+        <div class="pill bad" style="font-size:12px; margin-bottom:6px;">⚠ Short on componentry for ${qty.toLocaleString()} units — you can still save this draft, but you'll also need component PO(s)</div>
+        ${shortages.map(c => `<div class="muted" style="font-size:12px;">${c.component_name}: need ${c.required.toLocaleString()}, have ${c.available.toLocaleString()} on hand/in-flight — short ${c.short.toLocaleString()}</div>`).join('')}
       `;
     }
   };
@@ -4899,7 +4943,7 @@ function renderRevenueBody() {
   // Shared column widths so Top-Line Revenue, Product Mix, and Inventory Outlook tables' month
   // columns line up vertically down the page (Alex, 2026-10-22) -- all three use kpiTable with
   // this exact same width array for the label/product column + each month column.
-  const monthColWidths = ['150px', '105px', '105px', '105px', '105px', '105px', '105px'];
+  const monthColWidths = ['170px', '118px', '118px', '118px', '118px', '118px', '118px'];
 
   // Alex (2026-11-05): "pull in columns for last x number of months up to 6 months to look at
   // trends myself." Scoped to the Product Mix table only (where the per-product history already
@@ -4910,8 +4954,9 @@ function renderRevenueBody() {
   const historyColWidths = historyMonths.map(() => '95px');
   const mixHistoryControl = `
     <div style="display:flex; align-items:center; gap:6px;">
-      <span class="muted" style="font-size:12px;">Trailing history:</span>
-      ${[0, 3, 6].map(n => `<button class="btn ${((S.showHistory || 0) === n) ? 'btn-primary' : 'btn-ghost'}" style="padding:4px 9px; font-size:11px;" onclick="setMixHistoryMonths(${n})">${n === 0 ? 'Off' : n + ' mo'}</button>`).join('')}
+      <span class="muted" style="font-size:13px;">Trailing history:</span>
+      ${[0, 3, 6].map(n => `<button class="btn ${((S.showHistory || 0) === n) ? 'btn-primary' : 'btn-ghost'}" style="padding:4px 9px; font-size:12px;" onclick="setMixHistoryMonths(${n})">${n === 0 ? 'Off' : n + ' mo'}</button>`).join('')}
+      <button class="btn ${S.showMoMDelta ? 'btn-primary' : 'btn-ghost'}" style="padding:4px 9px; font-size:12px; margin-left:8px;" onclick="toggleMixMoMDelta()" title="Show each cell's % change vs. the prior month, based on real historical values">${S.showMoMDelta ? 'Hide' : 'Show'} month-over-month change</button>
     </div>
   `;
 
@@ -4919,10 +4964,10 @@ function renderRevenueBody() {
   const channelCell = (channel, m) => {
     const basis = channelMonthBasis(m, channel);
     return `
-      <button class="btn ${chanEditable ? 'btn-ghost' : ''}" style="width:100%; padding:8px 4px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${chanEditable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
+      <button class="btn ${chanEditable ? 'btn-ghost' : ''}" style="width:100%; padding:8px 4px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.3; ${chanEditable ? '' : 'cursor:default; background:transparent; border-color:transparent;'}"
         onclick="${chanEditable ? `editDraftChannelMonth('${channel}','${m}')` : ''}" title="${monthLabelLong(m)} — ${basis.detail}">
         <span>${S.draftChannel[m]?.[channel] != null ? fmtMoney(S.draftChannel[m][channel]) : '<span class="muted">—</span>'}</span>
-        <span class="muted" style="font-size:9px;">${basis.tag}</span>
+        <span class="muted" style="font-size:10px;">${basis.tag}</span>
       </button>
     `;
   };
@@ -4941,7 +4986,7 @@ function renderRevenueBody() {
     { key: 'asp', label: 'Avg Selling Price' },
     { key: 'units', label: 'Units (Throughput)' },
     { key: 'outlook', label: 'Inventory Outlook' },
-  ].map(v => `<button class="btn ${mixView === v.key ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 10px; font-size:12px;" onclick="setRevenueMixView('${v.key}')">${v.label}</button>`).join(' ');
+  ].map(v => `<button class="btn ${mixView === v.key ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 10px; font-size:13px;" onclick="setRevenueMixView('${v.key}')">${v.label}</button>`).join(' ');
 
   if (!S.mixSort) S.mixSort = { shopify: { key: 'revenue', dir: 'desc' }, amazon: { key: 'revenue', dir: 'desc' } };
   const mixFilterText = (S.mixFilterText || '').trim().toLowerCase();
@@ -4963,22 +5008,38 @@ function renderRevenueBody() {
   };
   const mixSortOptions = mixSortOptionsByView[mixView] || mixSortOptionsByView.units;
 
+  // Alex (2026-11-05): "I also want to be able to filter by multi select skus so I can look at
+  // only patches and 14oz for example." Separate from the existing free-text filter (kept as-is,
+  // ANDed together) -- a dedicated checkbox-list picker scoped to the SKUs actually present in
+  // the Product Mix table (S.liveMix), so there's never a stale SKU in the list for a product
+  // that's been retired/inactive.
+  const allMixProductIds = [...new Set(['shopify', 'amazon'].flatMap(ch => S.products.filter(p => S.liveMix[ch]?.[p.product_id]).map(p => p.product_id)))];
+  const allMixProducts = S.products.filter(p => allMixProductIds.includes(p.product_id)).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
+  const selectedSkuIds = S.mixSkuFilter && S.mixSkuFilter.length ? new Set(S.mixSkuFilter) : null;
+  const skuFilterBar = `
+    <button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="toggleMixSkuFilterMenu(event)">
+      SKUs${selectedSkuIds ? ` <span class="pill good" style="margin-left:4px;">${selectedSkuIds.size}</span>` : ''} ▾
+    </button>
+    ${selectedSkuIds ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:12px;" onclick="setMixSkuFilter([])">Clear</button>` : ''}
+  `;
+
   const mixFilterBar = `
     <input id="mix-filter-input" type="text" placeholder="Filter products by name or SKU…" value="${(S.mixFilterText || '').replace(/"/g, '&quot;')}"
-      style="padding:5px 8px; font-size:12px; border-radius:6px; border:1px solid var(--border); min-width:200px;"
+      style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border); min-width:200px;"
       oninput="setMixFilterText(this.value)">
-    ${mixFilterText ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:11px;" onclick="setMixFilterText('')">Clear</button>` : ''}
+    ${mixFilterText ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:12px;" onclick="setMixFilterText('')">Clear</button>` : ''}
+    ${skuFilterBar}
   `;
 
   const mixSortControls = (channel) => {
     const sort = S.mixSort[channel];
     return `
       <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <span class="muted" style="font-size:11px;">Sort by:</span>
-        <select style="padding:3px 6px; font-size:11px; border-radius:6px; border:1px solid var(--border);" onchange="setMixSortKey('${channel}', this.value)">
+        <span class="muted" style="font-size:12px;">Sort by:</span>
+        <select style="padding:3px 6px; font-size:12px; border-radius:6px; border:1px solid var(--border);" onchange="setMixSortKey('${channel}', this.value)">
           ${mixSortOptions.map(o => `<option value="${o.key}" ${sort.key === o.key ? 'selected' : ''}>${o.label}</option>`).join('')}
         </select>
-        <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="toggleMixSortDir('${channel}')">${sort.dir === 'desc' ? '↓ High → Low' : '↑ Low → High'}</button>
+        <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="toggleMixSortDir('${channel}')">${sort.dir === 'desc' ? '↓ High → Low' : '↑ Low → High'}</button>
       </div>
     `;
   };
@@ -4987,6 +5048,7 @@ function renderRevenueBody() {
     const sort = S.mixSort[channel];
     let prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id]);
     if (mixFilterText) prods = prods.filter(p => p.display_name.toLowerCase().includes(mixFilterText) || (p.sku_code || '').toLowerCase().includes(mixFilterText));
+    if (selectedSkuIds) prods = prods.filter(p => selectedSkuIds.has(p.product_id));
     const withMetrics = prods.map(p => ({ p, metrics: productMixMetrics(channel, p) }));
     // sort.key may be left over from a different view (e.g. 'pct' while now viewing ASP) if the
     // user switched views via setRevenueMixView's "don't clobber a deliberate choice" rule after
@@ -4996,46 +5058,72 @@ function renderRevenueBody() {
       withMetrics.map(x => ({ item: x.p, metrics: x.metrics })),
       { key: effectiveSortKey, dir: sort.dir, nameOf: (item) => item.display_name, fallbackRank: (item) => productSortRank(item.display_name) }
     );
-    if (!orderedProds.length) return mixSortControls(channel) + `<div class="empty-state" style="padding:10px; font-size:12px;">No products match this filter.</div>`;
+    if (!orderedProds.length) return mixSortControls(channel) + `<div class="empty-state" style="padding:10px; font-size:13px;">No products match this filter.</div>`;
     // Alex (2026-11-05): trailing-history columns -- Shopify only (no equivalent Amazon
     // ingestion, same limit as the ASP/pct popups already carried). Amazon gets a plain "no
     // history" cell per column instead of silently showing nothing or fabricating a number.
     const historyCell = (p, m) => {
-      if (channel !== 'shopify') return '<span class="muted" style="font-size:10px;">No Amazon history</span>';
+      if (channel !== 'shopify') return '<span class="muted" style="font-size:11px;">No Amazon history</span>';
       if (mixView === 'pct') {
         const row = (S.historicalPctByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:11px;"><strong>${(row.pct * 100).toFixed(1)}%</strong></span>` : '<span class="muted">—</span>';
+        return row ? `<span style="font-size:12px;"><strong>${(row.pct * 100).toFixed(1)}%</strong></span>` : '<span class="muted">—</span>';
       }
       if (mixView === 'asp') {
         const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:11px;"><strong>${fmtMoney2(row.asp)}</strong></span>` : '<span class="muted">—</span>';
+        return row ? `<span style="font-size:12px;"><strong>${fmtMoney2(row.asp)}</strong></span>` : '<span class="muted">—</span>';
       }
       if (mixView === 'units') {
         const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:11px;"><strong>${row.units.toLocaleString()}</strong></span>` : '<span class="muted">—</span>';
+        return row ? `<span style="font-size:12px;"><strong>${row.units.toLocaleString()}</strong></span>` : '<span class="muted">—</span>';
       }
       return '<span class="muted">—</span>';
     };
     const rows = orderedProds.map(p => [
-      `<strong>${p.display_name}</strong>`,
+      `<span class="pill clickable-pill good" style="font-size:14px; font-weight:700;" onclick="showProductTrendChart('${p.product_id}','${channel}')" title="Click to see the % of Revenue trend line for this product">${p.display_name}</span>`,
       ...historyMonths.map(m => historyCell(p, m)),
       ...months.map((m, mi) => {
         const mix = S.draftMix[channel][p.product_id]?.[m];
         const chanRev = S.draftChannel[m]?.[channel];
         if (!mix) return '<span class="muted">—</span>';
+        // Alex (2026-11-05): "I also want a button that will show/hide month over month
+        // percentage increases and decreases based on historical values." Opt-in via the
+        // "Show/Hide month-over-month change" toggle above (mixHistoryControl) -- off by
+        // default, since Alex separately asked to REMOVE the always-on ASP delta earlier today.
+        // This is deliberately the same comparison concept, just made opt-in instead of forced,
+        // and based on the dashboard's existing prior-month/actual-history comparison logic.
+        const deltaFor = (curVal, isPctView) => {
+          if (!S.showMoMDelta) return '';
+          const prevM = months[mi - 1];
+          let prevVal = prevM ? (isPctView ? S.draftMix[channel][p.product_id]?.[prevM]?.revenue_pct : S.draftMix[channel][p.product_id]?.[prevM]?.avg_selling_price) : null;
+          let vsActual = false;
+          if (prevVal == null && mi === 0 && channel === 'shopify') {
+            const hist = isPctView ? S.historicalPctByProduct[p.product_id] : S.historicalAspByProduct[p.product_id];
+            if (hist && hist.length) {
+              prevVal = isPctView ? hist[hist.length - 1].pct : hist[hist.length - 1].asp;
+              vsActual = true;
+            }
+          }
+          if (prevVal == null || curVal == null || Math.abs(prevVal) < 0.0001) return '';
+          const diff = curVal - prevVal;
+          const pct = (diff / prevVal) * 100;
+          if (Math.abs(pct) < 0.5) return '';
+          const up = diff > 0;
+          const color = up ? 'var(--good-text)' : 'var(--bad-text)';
+          const title = vsActual ? 'vs. last real actual month (Shopify)' : 'vs. prior month shown';
+          return `<div style="font-size:10px; color:${color}; margin-top:1px;" title="${title}">${up ? '▲' : '▼'} ${up ? '+' : ''}${pct.toFixed(1)}%${vsActual ? ' <span class="muted" style="font-size:9px;">vs actual</span>' : ''}</div>`;
+        };
         if (mixView === 'pct') {
-          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showMixCellDetail('pct','${channel}','${p.product_id}','${m}')"><strong>${(mix.revenue_pct * 100).toFixed(1)}%</strong></button>`;
+          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('pct','${channel}','${p.product_id}','${m}')"><strong>${(mix.revenue_pct * 100).toFixed(1)}%</strong>${deltaFor(mix.revenue_pct, true)}</button>`;
         }
         if (mixView === 'asp') {
           // Alex (2026-11-05): "The icon and the red or green text under the price is what's not
-          // necessary" -- the up/down arrow + colored $/% delta line under the ASP value is
-          // removed entirely, same call as the popup-level comparison he already asked to drop.
-          // Cell now shows just the plain ASP value, click still opens the (now edit-only) popup.
-          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong></button>`;
+          // necessary" -- the ALWAYS-ON up/down arrow + colored $/% delta line is gone; this
+          // button only shows one again when the opt-in toggle above is on.
+          return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center;" onclick="showMixCellDetail('asp','${channel}','${p.product_id}','${m}')"><strong>${fmtMoney2(mix.avg_selling_price)}</strong>${deltaFor(mix.avg_selling_price, false)}</button>`;
         }
         if (chanRev == null) return '<span class="muted">—</span>';
         const units = Math.round((chanRev * mix.revenue_pct) / mix.avg_selling_price);
-        return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:11px;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong></button>`;
+        return `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong></button>`;
       }),
     ]);
     if (mixView === 'pct') {
@@ -5051,8 +5139,8 @@ function renderRevenueBody() {
       const shippingPct = (S.shippingShareByChannel?.[channel] || 0) * 100;
       const expectedTotal = 100 - shippingPct;
       rows.push([
-        `<em>Product Total</em>${shippingPct > 0.5 ? `<br><span class="muted" style="font-size:10px;">+ ~${shippingPct.toFixed(1)}% shipping/other (trailing actual, not in any product's %)</span>` : ''}`,
-        ...historyTotals.map(t => t == null ? '<span class="muted" style="font-size:10px;">—</span>' : `<span class="pill" style="font-size:10px;">${t.toFixed(1)}%</span>`),
+        `<em>Product Total</em>${shippingPct > 0.5 ? `<br><span class="muted" style="font-size:11px;">+ ~${shippingPct.toFixed(1)}% shipping/other (trailing actual, not in any product's %)</span>` : ''}`,
+        ...historyTotals.map(t => t == null ? '<span class="muted" style="font-size:11px;">—</span>' : `<span class="pill" style="font-size:11px;">${t.toFixed(1)}%</span>`),
         ...totals.map(t => {
           const diffFromExpected = Math.abs(t - expectedTotal);
           const ok = diffFromExpected < 2.5;
@@ -5078,6 +5166,7 @@ function renderRevenueBody() {
     .filter(p => p.product_type === 'root')
     .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id]);
   if (mixFilterText) outlookProducts = outlookProducts.filter(p => p.display_name.toLowerCase().includes(mixFilterText) || (p.sku_code || '').toLowerCase().includes(mixFilterText));
+  if (selectedSkuIds) outlookProducts = outlookProducts.filter(p => selectedSkuIds.has(p.product_id));
   outlookProducts = outlookProducts
     .slice()
     .sort((a, b) => {
@@ -5095,8 +5184,8 @@ function renderRevenueBody() {
   const outlookRows = outlookProducts.map(p => {
     const series = projections[p.sku_code] || [];
     const urgency = S.activeRecByProduct[p.product_id];
-    const nameCell = `<strong>${p.display_name}</strong>${urgency ? ` <span class="urgency-badge urgency-${urgency}" style="margin-left:4px; font-size:9px; padding:1px 5px;">${urgency}</span>` : ''}`;
-    const todayCell = `<div style="text-align:center; font-size:11px;"><strong>${Math.round(p.qty_on_hand || 0).toLocaleString()}</strong><br><span class="muted" style="font-size:9px;">live, today</span></div>`;
+    const nameCell = `<strong>${p.display_name}</strong>${urgency ? ` <span class="urgency-badge urgency-${urgency}" style="margin-left:4px; font-size:10px; padding:1px 5px;">${urgency}</span>` : ''}`;
+    const todayCell = `<div style="text-align:center; font-size:12px;"><strong>${Math.round(p.qty_on_hand || 0).toLocaleString()}</strong><br><span class="muted" style="font-size:10px;">live, today</span></div>`;
     const cells = months.map((m, i) => {
       const eom = series[i];
       const hasDraft = (S.draftPOs || []).some(po => po.product_id === p.product_id && po.eta_month.slice(0, 7) === m);
@@ -5104,10 +5193,10 @@ function renderRevenueBody() {
       const safety = p.safety_stock_qty || 0;
       const bg = eom < 0 ? 'var(--bad-bg)' : (eom < safety ? '#EFEAE2' : 'transparent');
       const color = eom < 0 ? 'var(--bad-text)' : (eom < safety ? 'var(--accent-light)' : 'inherit');
-      return `<button class="btn btn-ghost" style="padding:4px 6px; font-size:11px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
+      return `<button class="btn btn-ghost" style="padding:4px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
         <span><strong>${Math.round(eom).toLocaleString()}</strong></span>
-        ${i === 0 ? '<span style="font-size:9px;">in progress</span>' : ''}
-        ${hasDraft ? '<span style="font-size:9px;">+draft</span>' : ''}
+        ${i === 0 ? '<span style="font-size:10px;">in progress</span>' : ''}
+        ${hasDraft ? '<span style="font-size:10px;">+draft</span>' : ''}
       </button>`;
     });
     // Alex (2026-10-22): "to the right of EOM Mar 27 let's have a Status where it'll show healthy
@@ -5131,15 +5220,15 @@ function renderRevenueBody() {
     // it still models a hypothetical via openDraftPoModal as before.
     const isLiveView = S.selectedScenarioId === 'live';
     const actionCell = !canEdit()
-      ? '<span class="muted" style="font-size:10px;">—</span>'
+      ? '<span class="muted" style="font-size:11px;">—</span>'
       : isLiveView
-      ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="initiateLivePoFromOutlook('${p.product_id}', null, '${months[0]}', null)">+ Initiate PO</button>`
-      : (isEditable() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="openDraftPoModal('${p.product_id}', '${months[0]}')">+ Draft PO</button>` : '<span class="muted" style="font-size:10px;">—</span>');
+      ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="initiateLivePoFromOutlook('${p.product_id}', null, '${months[0]}', null)">+ Initiate PO</button>`
+      : (isEditable() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="openDraftPoModal('${p.product_id}', '${months[0]}')">+ Draft PO</button>` : '<span class="muted" style="font-size:11px;">—</span>');
     return [nameCell, todayCell, ...cells, statusCell, actionCell];
   });
   const outlookTable = outlookRows.length
     ? kpiTable(['Product', 'Today', ...months.map(m => `EOM ${monthLabelShort(m)}`), 'Status', ''], outlookRows, null, [monthColWidths[0], '80px', ...monthColWidths.slice(1), '80px', '110px'], [1, 2, 3, 4, 5, 6, 7, 8, 9])
-    : `<div class="empty-state" style="padding:10px; font-size:12px;">No products match this filter.</div>`;
+    : `<div class="empty-state" style="padding:10px; font-size:13px;">No products match this filter.</div>`;
 
   // ---------- Committed POs record (Alex, 2026-10-22: "I'd like to see a record of it") ----------
   // Every real purchase_orders row ever materialized by committing a Revenue tab scenario,
@@ -5151,7 +5240,7 @@ function renderRevenueBody() {
       : null;
     return [
       po.revenue_scenarios?.name || '<span class="muted">—</span>',
-      `<strong>${po.products?.display_name || '—'}</strong><br><span class="muted" style="font-size:10px;">${po.internal_ref}</span>`,
+      `<strong>${po.products?.display_name || '—'}</strong><br><span class="muted" style="font-size:11px;">${po.internal_ref}</span>`,
       (po.qty_ordered || 0).toLocaleString(),
       po.vendors?.vendor_name || '—',
       `<span class="pill ${po.status === 'landed' ? 'good' : 'watch'}">${po.status}</span>`,
@@ -5166,18 +5255,18 @@ function renderRevenueBody() {
   el.innerHTML = `
     <div class="card" style="padding:12px 16px; margin-bottom:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <div class="section-label" style="margin:0;">Scenario:</div>
-      <select id="scenario-select" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="selectRevenueScenario(this.value)">
+      <select id="scenario-select" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="selectRevenueScenario(this.value)">
         ${scenarioOptions}
       </select>
-      ${sc ? `<span class="pill ${sc.status === 'draft' ? 'watch' : 'good'}">${sc.status}</span>` : `<span class="muted" style="font-size:12px;">read-only — create a scenario to model changes</span>`}
-      ${canEdit() ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="createRevenueScenario()">+ New Scenario</button>` : ''}
-      ${sc && sc.status === 'draft' ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="commitRevenueScenario()">Commit to Live</button>` : ''}
-      ${sc && sc.status === 'draft' ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px; color:var(--bad-text);" onclick="deleteRevenueScenario('${sc.id}')">Delete Draft</button>` : ''}
+      ${sc ? `<span class="pill ${sc.status === 'draft' ? 'watch' : 'good'}">${sc.status}</span>` : `<span class="muted" style="font-size:13px;">read-only — create a scenario to model changes</span>`}
+      ${canEdit() ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="createRevenueScenario()">+ New Scenario</button>` : ''}
+      ${sc && sc.status === 'draft' ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="commitRevenueScenario()">Commit to Live</button>` : ''}
+      ${sc && sc.status === 'draft' ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:13px; color:var(--bad-text);" onclick="deleteRevenueScenario('${sc.id}')">Delete Draft</button>` : ''}
     </div>
 
     <div class="card" style="padding:14px 16px; margin-bottom:12px;">
       <div class="section-label" style="margin:0 0 2px;">Top-Line Revenue by Channel</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">${chanEditable ? 'Click a month to edit.' : 'You do not have permission to edit.'} Tag under each value shows whether it's real actuals, blended MTD, or a manual assumption — assumptions sharpen into actuals as each month closes.</div>
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">${chanEditable ? 'Click a month to edit.' : 'You do not have permission to edit.'} Tag under each value shows whether it's real actuals, blended MTD, or a manual assumption — assumptions sharpen into actuals as each month closes.</div>
       ${channelTable}
     </div>
 
@@ -5189,9 +5278,9 @@ function renderRevenueBody() {
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${viewTabs}${mixFilterBar}</div>
       ${mixView !== 'outlook' ? `<div style="margin-bottom:10px;">${mixHistoryControl}</div>` : ''}
       ${mixView === 'outlook' ? outlookTable : `
-        <div style="font-weight:600; font-size:12px; margin:8px 0 4px;">Shopify</div>
+        <div style="font-weight:600; font-size:13px; margin:8px 0 4px;">Shopify</div>
         ${mixTable('shopify')}
-        <div style="font-weight:600; font-size:12px; margin:12px 0 4px;">Amazon</div>
+        <div style="font-weight:600; font-size:13px; margin:12px 0 4px;">Amazon</div>
         ${mixTable('amazon')}
       `}
     </div>
@@ -5199,7 +5288,7 @@ function renderRevenueBody() {
     ${committedPoTable ? `
     <div class="card" style="padding:14px 16px; margin-top:12px;">
       <div class="section-label" style="margin:0 0 2px;">Purchase Orders Committed From This Tab</div>
-      <div class="muted" style="font-size:11px; margin-bottom:8px;">
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">
         Every real PO materialized by committing a Revenue tab scenario, across all scenarios —
         a permanent record, independent of which scenario is selected above. "Was due by" is the
         last-responsible placement date given the vendor's lead time; a date in the past means it
@@ -5250,6 +5339,195 @@ function setMixFilterText(text) {
     const pos = input.value.length;
     input.setSelectionRange(pos, pos);
   }
+}
+
+// Alex (2026-11-05): "I also want to be able to filter by multi select skus so I can look at
+// only patches and 14oz for example." A checkbox-list popover anchored to the "SKUs" button,
+// listing every SKU currently present in the Product Mix table (both channels). Reuses the
+// anchored-menu visual language but as a one-off since showAnchoredMenu's fixed 190px width is
+// too narrow for a checkbox + full product name list.
+function toggleMixSkuFilterMenu(evt) {
+  const existing = document.getElementById('sku-filter-menu');
+  if (existing) { existing.remove(); document.getElementById('sku-filter-menu-backdrop')?.remove(); return; }
+  const S = window._revState;
+  const btn = evt.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  const allMixProductIds = [...new Set(['shopify', 'amazon'].flatMap(ch => S.products.filter(p => S.liveMix[ch]?.[p.product_id]).map(p => p.product_id)))];
+  const allMixProducts = S.products.filter(p => allMixProductIds.includes(p.product_id)).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
+  const selected = new Set(S.mixSkuFilter || []);
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'sku-filter-menu-backdrop';
+  backdrop.style.cssText = 'position:fixed; inset:0; z-index:2500; background:transparent;';
+  backdrop.onclick = () => { backdrop.remove(); menu.remove(); };
+
+  const menu = document.createElement('div');
+  menu.id = 'sku-filter-menu';
+  menu.className = 'card';
+  const menuWidth = 300;
+  const left = Math.min(rect.left + window.scrollX, document.documentElement.scrollWidth - menuWidth - 12);
+  menu.style.cssText = `position:absolute; top:${rect.bottom + window.scrollY + 4}px; left:${left}px; width:${menuWidth}px; z-index:2501; padding:10px; box-shadow:0 8px 24px rgba(0,0,0,0.22); max-height:360px; overflow-y:auto;`;
+  menu.innerHTML = `
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">Show only these products (both channels):</div>
+    ${allMixProducts.map(p => `
+      <label style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:14px; cursor:pointer;">
+        <input type="checkbox" data-sku-filter-id="${p.product_id}" ${selected.has(p.product_id) ? 'checked' : ''} />
+        <span>${p.display_name}</span>
+      </label>
+    `).join('')}
+    <div style="display:flex; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+      <button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" id="sku-filter-apply">Apply</button>
+      <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" id="sku-filter-clear">Clear</button>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  document.body.appendChild(menu);
+  menu.onclick = (e) => e.stopPropagation();
+  document.getElementById('sku-filter-apply').onclick = () => {
+    const checked = Array.from(menu.querySelectorAll('input[data-sku-filter-id]:checked')).map(el => el.dataset.skuFilterId);
+    backdrop.remove(); menu.remove();
+    setMixSkuFilter(checked);
+  };
+  document.getElementById('sku-filter-clear').onclick = () => {
+    backdrop.remove(); menu.remove();
+    setMixSkuFilter([]);
+  };
+}
+
+function setMixSkuFilter(productIds) {
+  const S = window._revState;
+  S.mixSkuFilter = productIds;
+  renderRevenueBody();
+}
+
+// Alex (2026-11-05): "I also would like to be able to click the product name and see the trend
+// line of the % of revenue and be able to bring in multiple products into that visualization."
+// Opens a modal with a Chart.js line chart: real trailing Shopify history (historicalPctByProduct
+// -- same "no Amazon equivalent" limit as everywhere else) plus the forward-looking projected
+// months from the currently selected scenario, one line per product currently added to the
+// chart. State lives in window._trendChartProductIds (a Set) so "+ Add product" can re-render
+// the same chart in place instead of reopening the whole modal each time.
+function showProductTrendChart(productId, channel) {
+  window._trendChartProductIds = new Set([productId]);
+  window._trendChartChannel = channel;
+  renderProductTrendChart();
+}
+
+function addProductToTrendChart(productId) {
+  if (!productId) return;
+  window._trendChartProductIds = window._trendChartProductIds || new Set();
+  window._trendChartProductIds.add(productId);
+  renderProductTrendChart();
+}
+
+function removeProductFromTrendChart(productId) {
+  window._trendChartProductIds?.delete(productId);
+  if (window._trendChartProductIds && window._trendChartProductIds.size === 0) {
+    document.getElementById('detail-modal-backdrop')?.remove();
+    return;
+  }
+  renderProductTrendChart();
+}
+
+function renderProductTrendChart() {
+  const S = window._revState;
+  const channel = window._trendChartChannel || 'shopify';
+  const ids = Array.from(window._trendChartProductIds || []);
+  if (!ids.length) return;
+  const colors = ['#5C4A36', '#8A7257', '#C9A876', '#3F6B35', '#A33B2E', '#96631A'];
+  const chartId = 'product-trend-chart';
+
+  const allMixProducts = S.products.filter(p => S.liveMix[channel]?.[p.product_id]);
+  const pickerOptions = allMixProducts.filter(p => !ids.includes(p.product_id))
+    .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
+
+  const legendRows = ids.map((pid, i) => {
+    const p = S.products.find(pr => pr.product_id === pid);
+    return `
+      <div style="display:flex; align-items:center; gap:6px; margin:2px 0;">
+        <span style="width:10px; height:10px; border-radius:50%; background:${colors[i % colors.length]}; display:inline-block;"></span>
+        <span style="font-size:13px;">${p?.display_name || pid}</span>
+        ${ids.length > 1 ? `<button class="btn btn-ghost" style="padding:1px 6px; font-size:10px; margin-left:4px;" onclick="removeProductFromTrendChart('${pid}')">✕</button>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  const body = `
+    <div style="margin-bottom:8px;">${legendRows}</div>
+    ${pickerOptions.length ? `
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+        <select id="trend-chart-add-select" style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border); flex:1;">
+          ${pickerOptions.map(p => `<option value="${p.product_id}">${p.display_name}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="addProductToTrendChart(document.getElementById('trend-chart-add-select').value)">+ Add product</button>
+      </div>
+    ` : ''}
+    <div style="height:280px;"><canvas id="${chartId}"></canvas></div>
+    <div class="muted" style="font-size:11px; margin-top:8px;">
+      Solid line = real actual history (Shopify). Dashed = projected (current scenario). ${channel === 'amazon' ? 'Amazon has no historical ingestion yet -- only the projected segment will show.' : ''}
+    </div>
+  `;
+  showDetail(`% of Revenue — Trend (${channel === 'shopify' ? 'Shopify' : 'Amazon'})`, body, 'wide');
+
+  const canvas = document.getElementById(chartId);
+  if (!canvas) return;
+  if (window._trendChartInstance) { window._trendChartInstance.destroy(); window._trendChartInstance = null; }
+
+  // Build one shared month axis: real history months (if any) followed by the forward
+  // projection months from the current scenario, so every product's line sits on the same
+  // timeline even if their individual history lengths differ.
+  const historyMonthSet = new Set();
+  ids.forEach(pid => (S.historicalPctByProduct[pid] || []).forEach(h => historyMonthSet.add(h.month)));
+  const historyMonthsSorted = Array.from(historyMonthSet).sort();
+  const labels = [...historyMonthsSorted.map(m => monthLabelShort(m)), ...S.months.map(m => monthLabelShort(m) + ' (proj.)')];
+
+  const datasets = ids.map((pid, i) => {
+    const p = S.products.find(pr => pr.product_id === pid);
+    const hist = S.historicalPctByProduct[pid] || [];
+    const histByMonth = Object.fromEntries(hist.map(h => [h.month, h.pct * 100]));
+    const historyData = historyMonthsSorted.map(m => histByMonth[m] ?? null);
+    const projData = S.months.map(m => {
+      const mix = S.draftMix[channel]?.[pid]?.[m];
+      return mix ? mix.revenue_pct * 100 : null;
+    });
+    return {
+      label: p?.display_name || pid,
+      data: [...historyData, ...projData],
+      borderColor: colors[i % colors.length],
+      backgroundColor: colors[i % colors.length],
+      segment: {
+        borderDash: (ctx) => ctx.p1DataIndex >= historyMonthsSorted.length - 1 ? [5, 4] : undefined,
+      },
+      spanGaps: true,
+      tension: 0.15,
+      pointRadius: 3,
+    };
+  });
+
+  window._trendChartInstance = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : ctx.parsed.y.toFixed(1) + '%'}` } },
+      },
+      scales: {
+        x: { ticks: { font: { size: 10 } } },
+        y: { beginAtZero: true, ticks: { font: { size: 10 }, callback: (v) => `${v}%` } },
+      },
+    },
+  });
+}
+
+// Alex (2026-11-05): "I also want a button that will show/hide month over month percentage
+// increases and decreases based on historical values." Opt-in toggle (off by default) --
+// consumed inside mixTable's per-cell `deltaFor` helper.
+function toggleMixMoMDelta() {
+  const S = window._revState;
+  S.showMoMDelta = !S.showMoMDelta;
+  renderRevenueBody();
 }
 
 // Alex (2026-11-05): "the ability to pull in columns for last x number of months up to 6 months
@@ -5332,7 +5610,7 @@ async function renderPOs() {
   }
   body.innerHTML = pos.map(po => `
     <tr>
-      <td><strong>${po.internal_ref}</strong>${po.vendor_po_number ? `<br><span class="muted" style="font-size:12px;">vendor#: ${po.vendor_po_number}</span>` : ''}</td>
+      <td><strong>${po.internal_ref}</strong>${po.vendor_po_number ? `<br><span class="muted" style="font-size:13px;">vendor#: ${po.vendor_po_number}</span>` : ''}</td>
       <td>${po.vendors ? po.vendors.vendor_name : '—'}</td>
       <td><span class="pill watch">${po.status}</span></td>
       <td>${po.qty_ordered ?? '—'}</td>
@@ -5373,7 +5651,7 @@ async function renderVendors() {
           ${(vendors || []).map(v => `
             <tr>
               <td><strong>${v.vendor_name}</strong></td>
-              <td>${v.contact_name || '—'}<br><span class="muted" style="font-size:12px;">${v.contact_email || 'no email on file'}</span></td>
+              <td>${v.contact_name || '—'}<br><span class="muted" style="font-size:13px;">${v.contact_email || 'no email on file'}</span></td>
               <td>${v.default_lead_days} days</td>
               <td>every ${v.default_cadence_days} days</td>
               <td><span class="pill watch">${v.preferred_contact_channel}</span></td>
