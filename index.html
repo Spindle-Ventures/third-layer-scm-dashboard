@@ -4574,7 +4574,7 @@ function showThroughputDetail(productId, month) {
       ${canEdit() ? `
         <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
           <div class="muted" style="font-size:11px; margin-bottom:4px;">
-            ${manualAdj ? `Manual adjustment on file: <strong>${manualAdj > 0 ? '+' : ''}${manualAdj.toLocaleString()} units</strong>${manualAdjRow?.reason ? ` — ${manualAdjRow.reason}` : ''}` : 'No manual throughput adjustment for this product/month.'}
+            ${manualAdj ? `Manual adjustment on file: <strong>${manualAdj > 0 ? 'Deduction' : 'Addition'} of ${Math.abs(manualAdj).toLocaleString()} units</strong>${manualAdjRow?.reason ? ` — ${manualAdjRow.reason}` : ''}` : 'No manual throughput adjustment for this product/month.'}
           </div>
           <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="editManualThroughputAdjustment('${productId}', '${month}')">${manualAdj ? 'Edit' : '+ Add'} Manual Throughput Adjustment</button>
           ${manualAdj ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px; color:var(--bad-text);" onclick="deleteManualThroughputAdjustment('${productId}', '${month}')">Remove</button>` : ''}
@@ -4596,29 +4596,71 @@ function showThroughputDetail(productId, month) {
 // which will raise all of the inventory throughput as they related to the revenue mix per
 // product." A standalone units-only override, live (not scenario-scoped) -- same reasoning as the
 // live PO initiation path being separate from scenario-attached draft POs.
+//
+// Alex (2026-11-05): "the manual adjustments feature needs to allow me to designate if it's a
+// deduction or an addition. Currently the math makes it an addition to the inventory when I need
+// it to be a deduction." Root cause: the stored column (additional_units) is extra DEMAND units,
+// so a positive value already reduces projected inventory (more sold = less left) -- but the old
+// prompt just asked for one signed number with a "positive = more will move / negative = fewer"
+// hint, which inverts the sign a typical user expects ("negative = subtract from inventory" is
+// the natural reading, but here negative additional_units actually ADDS inventory back by
+// lowering demand). Replaced the single signed-number prompt with an explicit direction choice
+// (Addition vs. Deduction) plus an always-positive magnitude, so the user never has to reason
+// about the underlying sign convention -- `additional_units` is still what's stored/consumed by
+// demand_engine.py and revenue-logic.js unchanged, just computed from (direction, magnitude) here
+// instead of typed directly.
 async function editManualThroughputAdjustment(productId, month) {
   if (!canEdit()) return;
   const S = window._revState;
   const p = S.products.find(pr => pr.product_id === productId);
   const existing = (S.manualThroughputAdjustmentsRaw || []).find(a => a.product_id === productId && a.month.slice(0, 7) === month);
-  const input = await showPromptModal(
-    `${p?.display_name} — Manual Throughput Adjustment`,
-    `Extra units for ${monthLabelLong(month)} (positive = more units will move, e.g. a promo; negative = fewer). This does NOT change revenue targets or any other product.`,
-    existing?.additional_units ?? '', 'number'
-  );
-  if (input === null) return;
-  const val = Number(input);
-  if (isNaN(val) || val === 0) { alert('Enter a non-zero number of units (positive or negative). Use "Remove" to clear an existing adjustment.'); return; }
-  const reason = await showPromptModal('Reason', 'e.g. "November holiday boxes — bundled promo"', existing?.reason || '', 'textarea');
-  if (reason === null) return;
-  const payload = { product_id: productId, month: month + '-01', additional_units: Math.round(val), reason: reason || null };
-  const { data: after, error } = await sb.from('manual_throughput_adjustments').upsert(payload, { onConflict: 'product_id,month' }).select().single();
-  if (error) { alert('Failed: ' + error.message); return; }
-  await logAction('manual_throughput_adjustments', after.id, existing ? 'update' : 'create',
-    `${existing ? 'Edited' : 'Added'} manual throughput adjustment for ${p?.display_name}, ${monthLabelShort(month)}: ${existing ? `${existing.additional_units} → ` : ''}${val > 0 ? '+' : ''}${val} units${reason ? ` (${reason})` : ''}`,
-    existing || null, after);
+
   document.getElementById('detail-modal-backdrop')?.remove();
-  await renderRevenue();
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  const existingDirection = existing && existing.additional_units < 0 ? 'addition' : 'deduction';
+  const existingMagnitude = existing ? Math.abs(existing.additional_units) : '';
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:460px;">
+      <div style="font-weight:700; margin-bottom:6px; font-family:'Playfair Display'; font-size:17px;">${p?.display_name} — Manual Throughput Adjustment</div>
+      <div class="muted" style="font-size:12px; margin-bottom:12px; line-height:1.4;">
+        For ${monthLabelLong(month)}. This does NOT change revenue targets or any other product --
+        it only moves this product's projected end-of-month inventory for this month.
+      </div>
+      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Direction</label>
+      <select id="mta-direction-input" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;">
+        <option value="deduction" ${existingDirection === 'deduction' ? 'selected' : ''}>Deduction — reduces projected inventory (e.g. a promo moving extra units)</option>
+        <option value="addition" ${existingDirection === 'addition' ? 'selected' : ''}>Addition — increases projected inventory (e.g. a known planned pause in sales)</option>
+      </select>
+      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Units</label>
+      <input id="mta-magnitude-input" type="number" min="0" value="${existingMagnitude}" placeholder="e.g. 500" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
+      <label style="display:block; font-size:12px; font-weight:600; margin-bottom:4px;">Reason</label>
+      <textarea id="mta-reason-input" rows="2" placeholder='e.g. "November holiday boxes — bundled promo"' style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:14px; font-family:inherit;">${(existing?.reason || '').replace(/</g, '&lt;')}</textarea>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" id="mta-save-btn">Save</button>
+        <button class="btn btn-ghost" id="mta-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('mta-cancel-btn').onclick = () => el.remove();
+  document.getElementById('mta-save-btn').onclick = async () => {
+    const direction = document.getElementById('mta-direction-input').value;
+    const magnitude = Number(document.getElementById('mta-magnitude-input').value);
+    const reason = document.getElementById('mta-reason-input').value.trim();
+    if (isNaN(magnitude) || magnitude <= 0) { alert('Enter a positive number of units. Use "Remove" to clear an existing adjustment.'); return; }
+    const val = direction === 'addition' ? -Math.round(magnitude) : Math.round(magnitude);
+    const payload = { product_id: productId, month: month + '-01', additional_units: val, reason: reason || null };
+    const { data: after, error } = await sb.from('manual_throughput_adjustments').upsert(payload, { onConflict: 'product_id,month' }).select().single();
+    if (error) { alert('Failed: ' + error.message); return; }
+    await logAction('manual_throughput_adjustments', after.id, existing ? 'update' : 'create',
+      `${existing ? 'Edited' : 'Added'} manual throughput adjustment for ${p?.display_name}, ${monthLabelShort(month)}: ${existing ? `${existing.additional_units} → ` : ''}${direction === 'addition' ? '+' : '-'}${magnitude} units (${direction})${reason ? ` — ${reason}` : ''}`,
+      existing || null, after);
+    el.remove();
+    await renderRevenue();
+  };
 }
 async function deleteManualThroughputAdjustment(productId, month) {
   if (!canEdit()) return;
