@@ -4999,23 +4999,11 @@ function renderRevenueBody() {
   // existing forward-looking `months` so one continuous row reads history -> forecast left-to-right.
   const historyMonths = priorMonths(S.showHistory || 0);
   const historyColWidths = historyMonths.map(() => '95px');
-  const allMixProductIds = [...new Set(['shopify', 'amazon'].flatMap(ch => S.products.filter(p => S.liveMix[ch]?.[p.product_id]).map(p => p.product_id)))];
-  const allMixProducts = S.products.filter(p => allMixProductIds.includes(p.product_id)).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
   const mixHistoryControl = `
     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
       <span class="muted" style="font-size:14px;">Trailing history:</span>
       ${[0, 3, 6].map(n => `<button class="btn ${((S.showHistory || 0) === n) ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px;" onclick="setMixHistoryMonths(${n})">${n === 0 ? 'Off' : n + ' mo'}</button>`).join('')}
       <button class="btn ${S.showMoMDelta ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px; margin-left:8px;" onclick="toggleMixMoMDelta()" title="Show each column's % change vs. the column immediately before it, for every month shown (history and projected alike)">${S.showMoMDelta ? 'Hide' : 'Show'} month-over-month change</button>
-      <span style="display:flex; align-items:center; gap:6px; margin-left:8px;">
-        <select id="mix-trend-launch-select" style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border);">
-          ${allMixProducts.map(p => `<option value="${p.product_id}">${p.display_name}</option>`).join('')}
-        </select>
-        <button class="btn btn-ghost" style="padding:5px 11px; font-size:13px;" onclick="showProductTrendChart(document.getElementById('mix-trend-launch-select').value, document.getElementById('mix-trend-launch-channel').value)" title="Open the % of Revenue trend chart for the selected product">📈 Trend chart</button>
-        <select id="mix-trend-launch-channel" style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border);">
-          <option value="shopify">Shopify</option>
-          <option value="amazon">Amazon</option>
-        </select>
-      </span>
     </div>
   `;
 
@@ -5080,13 +5068,10 @@ function renderRevenueBody() {
     ${selectedSkuIds ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:12px;" onclick="setMixSkuFilter([])">Clear</button>` : ''}
   `;
 
-  const mixFilterBar = `
-    <input id="mix-filter-input" type="text" placeholder="Filter products by name or SKU…" value="${(S.mixFilterText || '').replace(/"/g, '&quot;')}"
-      style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border); min-width:200px;"
-      oninput="setMixFilterText(this.value)">
-    ${mixFilterText ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:12px;" onclick="setMixFilterText('')">Clear</button>` : ''}
-    ${skuFilterBar}
-  `;
+  // Alex (2026-11-06): "we can remove ... the filter by products open text now that we have the
+  // multiselect picklist." Free-text filter input removed; the SKU multi-select picker (below)
+  // is now the only product filter on this table.
+  const mixFilterBar = skuFilterBar;
 
   const mixSortControls = (channel) => {
     const sort = S.mixSort[channel];
@@ -5549,9 +5534,10 @@ function renderProductTrendChart() {
       </div>
     ` : ''}
     <div style="height:280px;"><canvas id="${chartId}"></canvas></div>
-    <div class="muted" style="font-size:11px; margin-top:8px;">
-      Solid line = real actual history (Shopify). Dashed = projected (current scenario). ${channel === 'amazon' ? 'Amazon has no historical ingestion yet -- only the projected segment will show.' : ''}
+    <div class="muted" style="font-size:12px; margin-top:8px;">
+      Solid = real actual history (Shopify). Dashed = projected (current scenario). ${channel === 'amazon' ? 'Amazon has no historical ingestion yet -- only the projected segment will show.' : ''}
     </div>
+    <div id="trend-chart-overlap-note"></div>
   `;
   showDetail(`% of Revenue — Trend (${channel === 'shopify' ? 'Shopify' : 'Amazon'})`, body, 'wide');
 
@@ -5559,36 +5545,70 @@ function renderProductTrendChart() {
   if (!canvas) return;
   if (window._trendChartInstance) { window._trendChartInstance.destroy(); window._trendChartInstance = null; }
 
-  // Build one shared month axis: real history months (if any) followed by the forward
-  // projection months from the current scenario, so every product's line sits on the same
-  // timeline even if their individual history lengths differ.
+  // Alex (2026-11-06): "I'd like to have only one Nov 26 on the x axis but have the two data
+  // points be layered and the difference shown. That dip visually inclines people to believe
+  // there's a massive dip but it's just another november datapoint." Root cause: the x-axis was
+  // built as historyMonths THEN S.months concatenated, so a month present in both (the current
+  // month, since it has both a real actual row AND a live scenario projection) appeared as two
+  // separate adjacent columns with two different values -- reading as a sharp drop/spike between
+  // them. Fixed: one deduped, sorted month axis; each product gets an "actual" dataset (solid,
+  // real history only) and a separate "projected" dataset (dashed, scenario only) -- for any
+  // month present in both, BOTH datasets place a point on that SAME column, so the two numbers
+  // sit layered on one x position instead of reading as a trend line between two different
+  // months. The gap between those two stacked points is the real signal, and gets spelled out in
+  // the note below the chart.
   const historyMonthSet = new Set();
   ids.forEach(pid => (S.historicalPctByProduct[pid] || []).forEach(h => historyMonthSet.add(h.month)));
-  const historyMonthsSorted = Array.from(historyMonthSet).sort();
-  const labels = [...historyMonthsSorted.map(m => monthLabelShort(m)), ...S.months.map(m => monthLabelShort(m) + ' (proj.)')];
+  const projectedMonthSet = new Set(S.months);
+  const allMonths = Array.from(new Set([...historyMonthSet, ...projectedMonthSet])).sort();
+  const labels = allMonths.map(m => {
+    const isHist = historyMonthSet.has(m);
+    const isProj = projectedMonthSet.has(m);
+    if (isHist && isProj) return `${monthLabelShort(m)} (actual + proj.)`;
+    return isProj ? `${monthLabelShort(m)} (proj.)` : monthLabelShort(m);
+  });
 
-  const datasets = ids.map((pid, i) => {
+  const overlapMonths = allMonths.filter(m => historyMonthSet.has(m) && projectedMonthSet.has(m));
+  const datasets = [];
+  const overlapNotes = [];
+  ids.forEach((pid, i) => {
     const p = S.products.find(pr => pr.product_id === pid);
+    const color = colors[i % colors.length];
     const hist = S.historicalPctByProduct[pid] || [];
     const histByMonth = Object.fromEntries(hist.map(h => [h.month, h.pct * 100]));
-    const historyData = historyMonthsSorted.map(m => histByMonth[m] ?? null);
-    const projData = S.months.map(m => {
+    const actualData = allMonths.map(m => histByMonth[m] ?? null);
+    const projData = allMonths.map(m => {
+      if (!projectedMonthSet.has(m)) return null;
       const mix = S.draftMix[channel]?.[pid]?.[m];
       return mix ? mix.revenue_pct * 100 : null;
     });
-    return {
-      label: p?.display_name || pid,
-      data: [...historyData, ...projData],
-      borderColor: colors[i % colors.length],
-      backgroundColor: colors[i % colors.length],
-      segment: {
-        borderDash: (ctx) => ctx.p1DataIndex >= historyMonthsSorted.length - 1 ? [5, 4] : undefined,
-      },
-      spanGaps: true,
-      tension: 0.15,
-      pointRadius: 3,
-    };
+    datasets.push({
+      label: `${p?.display_name || pid} — actual`, data: actualData,
+      borderColor: color, backgroundColor: color, spanGaps: false, tension: 0.15, pointRadius: 4,
+    });
+    datasets.push({
+      label: `${p?.display_name || pid} — projected`, data: projData,
+      borderColor: color, backgroundColor: color, borderDash: [5, 4], spanGaps: false, tension: 0.15, pointRadius: 4,
+    });
+    overlapMonths.forEach(m => {
+      const actualVal = histByMonth[m];
+      const mix = S.draftMix[channel]?.[pid]?.[m];
+      const projVal = mix ? mix.revenue_pct * 100 : null;
+      if (actualVal == null || projVal == null) return;
+      const diff = projVal - actualVal;
+      const currentKey = new Date().toISOString().slice(0, 7);
+      const isCurrentMonth = m === currentKey;
+      const mtdCaveat = isCurrentMonth
+        ? ` — this is a MONTH-TO-DATE actual (the month isn't over), not a full-month figure, so it's naturally lower than the full-month projection; it's not a real dip.`
+        : '';
+      overlapNotes.push(`<strong>${p?.display_name || pid}</strong>, ${monthLabelShort(m)}: actual-so-far <strong>${actualVal.toFixed(1)}%</strong> vs. full-month projected <strong>${projVal.toFixed(1)}%</strong> (${diff >= 0 ? '+' : ''}${diff.toFixed(1)} pts)${mtdCaveat}`);
+    });
   });
+
+  const noteEl = document.getElementById('trend-chart-overlap-note');
+  if (noteEl && overlapNotes.length) {
+    noteEl.innerHTML = `<div style="margin-top:8px; padding:8px 10px; background:#F7F4EE; border-radius:8px; font-size:13px; line-height:1.6;">${overlapNotes.join('<br>')}</div>`;
+  }
 
   window._trendChartInstance = new Chart(canvas, {
     type: 'line',
