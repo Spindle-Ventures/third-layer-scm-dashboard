@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <style>
   :root {
     --bg: #F2EFE9;
@@ -351,6 +352,14 @@
 const SUPABASE_URL = "https://rvbferpfrgkayxuujpna.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ2YmZlcnBmcmdrYXl4dXVqcG5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1MDc2NjUsImV4cCI6MjEwODA4MzY2NX0._UNtJphO40WvJfoDqQ612Vi1Wx78D2S6FVl2-VMt76w";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Alex (2026-11-06): "When I click on percentage of revenue I don't think we need to wait to
+// hover over to bring in the values maybe on top of the bars." Registered globally but OFF by
+// default (datalabels.display: false in Chart.defaults) so every existing chart is untouched
+// unless it explicitly turns labels on per-dataset -- avoids silently cluttering charts Alex
+// didn't flag.
+if (window.ChartDataLabels) Chart.register(window.ChartDataLabels);
+Chart.defaults.set('plugins.datalabels', { display: false });
 
 let currentUserRow = null;
 
@@ -3963,6 +3972,16 @@ async function decideRecommendation(id, decision) {
 // ---------- Revenue (scenario modeling) ----------
 function monthKey(d) { return d.toISOString().slice(0, 7); }
 function monthLabelShort(key) { return new Date(key + '-02').toLocaleString('en-US', { month: 'short', year: '2-digit' }); }
+// Alex (2026-11-06): "I also need to see more clearly 'actuals' vs 'projected' when talking
+// about the current month." The current month is the one case where a single column is a BLEND
+// (actual-so-far + assumption for the rest, per channelMonthBasis) rather than purely one or the
+// other -- flagging it directly in the header, instead of only inside each cell's hover/click
+// detail, makes that blended nature visible without having to click anything.
+function monthLabelShortWithCurrentFlag(key) {
+  const currentKey = new Date().toISOString().slice(0, 7);
+  const label = monthLabelShort(key);
+  return key === currentKey ? `${label}<br><span style="font-size:10px; font-weight:600; color:var(--accent-light);">actual + proj.</span>` : label;
+}
 function monthLabelLong(key) { return new Date(key + '-02').toLocaleString('en-US', { month: 'long', year: 'numeric' }); }
 function nextSixMonths() {
   const out = []; const d = new Date(); d.setDate(1);
@@ -3984,7 +4003,13 @@ async function renderRevenue() {
   el.innerHTML = `<div class="card empty-state">Loading revenue data…</div>`;
 
   const todayIso = new Date().toISOString().slice(0, 10);
-  const histStartIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 5); d.setDate(1); return d.toISOString().slice(0, 10); })();
+  // Alex (2026-11-06): "You should also have data back 12 months for the core 3 products so
+  // going back 6 months shouldn't be an issue for most." The UI's trailing-history selector caps
+  // at 6 months, but the fetch window was only pulling 5 months back -- widened to 12 so every
+  // selector option (including a future "12 mo" option) has real data behind it for every
+  // product with that much history (verified: TL001/TL002/TL003/TL004/TL005/TL006/TL007 each
+  // have 14 real months in historical_revenue_pct going back to Oct 2025; TL-010 has 13).
+  const histStartIso = (() => { const d = new Date(); d.setMonth(d.getMonth() - 12); d.setDate(1); return d.toISOString().slice(0, 10); })();
   const months = nextSixMonths();
 
   const [{ data: products }, { data: revActuals }, { data: revForecasts }, { data: forecastParams }, { data: openOrders }, { data: scenarios }, { data: vendors }, { data: componentQoh }, { data: activeRecs }, { data: invSnapshot }, { data: committedScenarioPOs }, { data: historicalPct }, { data: manualAdj }] = await Promise.all([
@@ -4446,17 +4471,23 @@ function showMixCellDetail(view, channel, productId, month) {
     whyHtml = `<div class="muted" style="font-size:13px; margin-bottom:4px;">No historical actual data available${channel === 'amazon' ? ' for Amazon yet' : ' for this product yet'} to compare against.</div>`;
   }
 
-  const chartBlock = history.length ? `<div style="height:170px; margin:10px 0;"><canvas id="${chartId}"></canvas></div>` : '';
+  const chartBlock = history.length ? `
+    <div style="display:flex; align-items:center; gap:14px; margin:8px 0 2px;">
+      <span style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--muted);"><span style="width:10px; height:10px; border-radius:2px; background:#8A7257; display:inline-block;"></span>Actual</span>
+      <span style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--muted);"><span style="width:10px; height:10px; border-radius:2px; background:#C9A876; display:inline-block;"></span>Projected</span>
+    </div>
+    <div style="height:190px; margin:4px 0 10px;"><canvas id="${chartId}"></canvas></div>
+  ` : '';
 
   const body = `
-    <div style="font-size:16px; margin-bottom:4px;"><strong>${valueLine}</strong></div>
+    <div style="font-size:19px; margin-bottom:4px;"><strong>${valueLine}</strong></div>
     ${whyHtml}
     ${chartBlock}
     <details ${rationale ? '' : 'open'} style="margin-top:2px;">
       <summary>Written rationale</summary>
-      <div class="muted" style="font-size:14px; line-height:1.4; margin:4px 0 8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
+      <div class="muted" style="font-size:15px; line-height:1.4; margin:4px 0 8px;">${rationale ? rationale : '<em>No rationale recorded yet.</em>'}</div>
     </details>
-    ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftMixPct('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:12px;">Switch to a draft scenario to edit.</div>'}
+    ${editable ? `<button class="btn btn-primary" onclick="document.getElementById('detail-modal-backdrop').remove(); editDraftMixPct('${channel}','${productId}','${month}')">Edit</button>` : '<div class="muted" style="font-size:13px;">Switch to a draft scenario to edit.</div>'}
   `;
   showDetail(`${p?.display_name} — ${monthLabelLong(month)} — Revenue Share`, body);
 
@@ -4467,20 +4498,32 @@ function showMixCellDetail(view, channel, productId, month) {
       const labels = [...history.map(h => monthLabelShort(h.month)), projLabel];
       const values = [...history.map(h => h.pct * 100), (cur.revenue_pct || 0) * 100];
       const colors = [...history.map(() => '#8A7257'), '#C9A876'];
+      // Alex (2026-11-06): "When I click on percentage of revenue I don't think we need to wait
+      // to hover over to bring in the values maybe on top of the bars." Datalabels plugin prints
+      // each bar's % directly above it -- tooltip stays as a fallback for exact precision, but
+      // the number is now visible at a glance with zero interaction. Actual-vs-projected is
+      // already one bar per month (not two side-by-side series) distinguished purely by color --
+      // this IS the "layered" treatment Alex asked for applied everywhere else, kept here.
       new Chart(canvas, {
         type: 'bar',
         data: { labels, datasets: [{ data: values.map(v => Math.round(v * 100) / 100), backgroundColor: colors }] },
         options: {
           responsive: true, maintainAspectRatio: false,
+          layout: { padding: { top: 22 } },
           plugins: {
             legend: { display: false },
             tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y.toFixed(1)}%` } },
+            datalabels: {
+              display: true, anchor: 'end', align: 'top', offset: 2,
+              font: { size: 12, weight: '700' }, color: '#2C2A26',
+              formatter: (v) => `${v.toFixed(1)}%`,
+            },
           },
           scales: {
-            x: { ticks: { font: { size: 10 } } },
+            x: { ticks: { font: { size: 12 } } },
             // Audit (2026-11-05, knowledge-work-data-viz checklist "bar charts start at zero"):
             // without beginAtZero, Chart.js auto-scales to the data's min/max.
-            y: { beginAtZero: true, ticks: { font: { size: 10 }, callback: (v) => `${v}%` } },
+            y: { beginAtZero: true, ticks: { font: { size: 11 }, callback: (v) => `${v}%` } },
           },
         },
       });
@@ -4988,7 +5031,7 @@ function renderRevenueBody() {
     `;
   };
   const channelTable = kpiTable(
-    ['Channel', ...months.map(monthLabelShort)],
+    ['Channel', ...months.map(monthLabelShortWithCurrentFlag)],
     [
       ['<strong>Shopify</strong>', ...months.map(m => channelCell('shopify', m))],
       ['<strong>Amazon</strong>', ...months.map(m => channelCell('amazon', m))],
@@ -5095,31 +5138,54 @@ function renderRevenueBody() {
       if (!mix) return null;
       return isPctView ? mix.revenue_pct : mix.avg_selling_price;
     };
+    // Alex (2026-11-06): "I want to see it represented as simply a comparison from last month
+    // not the true percentage increase." Switched off relative (compound) % change -- a swing
+    // from 24% to 18% was reading as a dramatic "-25%" when the simple, useful fact is "-6 pts."
+    // % of Revenue now shows a plain percentage-POINT difference; ASP shows a plain dollar
+    // difference. Both are "this vs. last month," not "growth rate."
     const momDelta = (p, colIndex, isPctView) => {
       if (!S.showMoMDelta || colIndex === 0) return '';
       const allCols = [...historyMonths.map(m => ({ m, isHistory: true })), ...months.map(m => ({ m, isHistory: false }))];
       const curVal = seriesValue(p, allCols[colIndex].m, allCols[colIndex].isHistory, isPctView);
       const prevVal = seriesValue(p, allCols[colIndex - 1].m, allCols[colIndex - 1].isHistory, isPctView);
-      if (curVal == null || prevVal == null || Math.abs(prevVal) < 0.0001) return '';
-      const pct = ((curVal - prevVal) / prevVal) * 100;
-      if (Math.abs(pct) < 0.5) return '';
-      const up = pct > 0;
-      const color = up ? 'var(--good-text)' : 'var(--bad-text)';
-      return `<div style="font-size:11px; font-weight:700; color:${color}; margin-top:2px;">${up ? '+' : ''}${pct.toFixed(1)}%</div>`;
+      if (curVal == null || prevVal == null) return '';
+      const up = curVal > prevVal;
+      const color = up ? 'var(--good-text)' : (curVal < prevVal ? 'var(--bad-text)' : 'var(--muted)');
+      if (isPctView) {
+        const ptsDiff = (curVal - prevVal) * 100;
+        if (Math.abs(ptsDiff) < 0.05) return `<div style="font-size:11px; font-weight:700; color:var(--muted); margin-top:2px;">flat</div>`;
+        return `<div style="font-size:11px; font-weight:700; color:${color}; margin-top:2px;">${up ? '+' : ''}${ptsDiff.toFixed(1)} pts</div>`;
+      }
+      const dollarDiff = curVal - prevVal;
+      if (Math.abs(dollarDiff) < 0.005) return `<div style="font-size:11px; font-weight:700; color:var(--muted); margin-top:2px;">flat</div>`;
+      return `<div style="font-size:11px; font-weight:700; color:${color}; margin-top:2px;">${up ? '+' : ''}${fmtMoney2(dollarDiff)}</div>`;
+    };
+    // Alex (2026-11-06): "If the product wasn't sold yet - let's have a label there instead of it
+    // being blank." A history column with no row is ambiguous between "not launched yet" and
+    // "launched but zero units" -- distinguish using the product's EARLIEST real history month
+    // (if we have ANY row for it at all, elsewhere in the fetched window) vs. truly no row ever.
+    const earliestHistoryMonth = (p) => {
+      const hist = mixView === 'asp' || mixView === 'units' ? S.historicalAspByProduct[p.product_id] : S.historicalPctByProduct[p.product_id];
+      return hist && hist.length ? hist[0].month : null;
     };
     const historyCell = (p, m, colIndex) => {
       if (channel !== 'shopify') return '<span class="muted" style="font-size:11px;">No Amazon history</span>';
+      const earliest = earliestHistoryMonth(p);
+      const notYetLaunched = earliest != null && m < earliest;
       if (mixView === 'pct') {
         const row = (S.historicalPctByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:13px;"><strong>${(row.pct * 100).toFixed(1)}%</strong>${momDelta(p, colIndex, true)}</span>` : '<span class="muted">—</span>';
+        if (row) return `<span style="font-size:13px;"><strong>${(row.pct * 100).toFixed(1)}%</strong>${momDelta(p, colIndex, true)}</span>`;
+        return notYetLaunched ? '<span class="muted" style="font-size:12px;">Not sold yet</span>' : '<span class="muted">—</span>';
       }
       if (mixView === 'asp') {
         const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:13px;"><strong>${fmtMoney2(row.asp)}</strong>${momDelta(p, colIndex, false)}</span>` : '<span class="muted">—</span>';
+        if (row) return `<span style="font-size:13px;"><strong>${fmtMoney2(row.asp)}</strong>${momDelta(p, colIndex, false)}</span>`;
+        return notYetLaunched ? '<span class="muted" style="font-size:12px;">Not sold yet</span>' : '<span class="muted">—</span>';
       }
       if (mixView === 'units') {
         const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
-        return row ? `<span style="font-size:13px;"><strong>${row.units.toLocaleString()}</strong></span>` : '<span class="muted">—</span>';
+        if (row) return `<span style="font-size:13px;"><strong>${row.units.toLocaleString()}</strong></span>`;
+        return notYetLaunched ? '<span class="muted" style="font-size:12px;">Not sold yet</span>' : '<span class="muted">—</span>';
       }
       return '<span class="muted">—</span>';
     };
@@ -5173,7 +5239,7 @@ function renderRevenueBody() {
     }
     const allColWidths = historyMonths.length ? [monthColWidths[0], ...historyColWidths, ...monthColWidths.slice(1)] : monthColWidths;
     const noWrapCols = Array.from({ length: historyMonths.length + 6 }, (_, i) => i + 1);
-    return mixSortControls(channel) + kpiTable(['Product', ...historyMonths.map(m => monthLabelShort(m)), ...months.map(monthLabelShort)], rows, null, allColWidths, noWrapCols);
+    return mixSortControls(channel) + kpiTable(['Product', ...historyMonths.map(m => monthLabelShort(m)), ...months.map(monthLabelShortWithCurrentFlag)], rows, null, allColWidths, noWrapCols);
   };
 
 
@@ -5464,10 +5530,10 @@ function renderProductTrendChart() {
   const legendRows = ids.map((pid, i) => {
     const p = S.products.find(pr => pr.product_id === pid);
     return `
-      <div style="display:flex; align-items:center; gap:6px; margin:2px 0;">
-        <span style="width:10px; height:10px; border-radius:50%; background:${colors[i % colors.length]}; display:inline-block;"></span>
-        <span style="font-size:13px;">${p?.display_name || pid}</span>
-        ${ids.length > 1 ? `<button class="btn btn-ghost" style="padding:1px 6px; font-size:10px; margin-left:4px;" onclick="removeProductFromTrendChart('${pid}')">✕</button>` : ''}
+      <div style="display:flex; align-items:center; gap:7px; margin:3px 0;">
+        <span style="width:12px; height:12px; border-radius:50%; background:${colors[i % colors.length]}; display:inline-block;"></span>
+        <span style="font-size:15px; font-weight:600;">${p?.display_name || pid}</span>
+        ${ids.length > 1 ? `<button class="btn btn-ghost" style="padding:2px 7px; font-size:11px; margin-left:4px;" onclick="removeProductFromTrendChart('${pid}')">✕</button>` : ''}
       </div>
     `;
   }).join('');
@@ -5534,8 +5600,8 @@ function renderProductTrendChart() {
         tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : ctx.parsed.y.toFixed(1) + '%'}` } },
       },
       scales: {
-        x: { ticks: { font: { size: 10 } } },
-        y: { beginAtZero: true, ticks: { font: { size: 10 }, callback: (v) => `${v}%` } },
+        x: { ticks: { font: { size: 12 } } },
+        y: { beginAtZero: true, ticks: { font: { size: 12 }, callback: (v) => `${v}%` } },
       },
     },
   });
