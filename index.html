@@ -18,11 +18,11 @@
     --border: #E5E0D8;
     --accent: #5C4A36;
     --accent-light: #8A7257;
-    --good-bg: #E5EEE0;
+    --good-bg: #EAF3EC;
     --good-text: #3F6B35;
-    --bad-bg: #F3E2E0;
+    --bad-bg: #F6E8E6;
     --bad-text: #A33B2E;
-    --watch-bg: #FBF0DD;
+    --watch-bg: #FBF3E3;
     --watch-text: #96631A;
   }
   * { box-sizing: border-box; }
@@ -305,8 +305,8 @@
     <button class="tab-btn" data-tab="revenue">Revenue</button>
     <button class="tab-btn" data-tab="components">Components</button>
     <button class="tab-btn" data-tab="landed">Landed Orders</button>
-    <button class="tab-btn" data-tab="activity">Activity Log</button>
     <button class="tab-btn" data-tab="catalog">Catalog</button>
+    <button class="tab-btn" data-tab="activity">Activity Log</button>
   </nav>
 </header>
 
@@ -1250,6 +1250,13 @@ function applyOpenOrdersFilter() {
 
 
   groupsEl.innerHTML = [...byProduct.entries()].sort((a, b) => productSortRank(a[1].name) - productSortRank(b[1].name) || a[1].name.localeCompare(b[1].name)).map(([sku, group]) => {
+    // Alex (2026-11-10): "finished good PO's should be first, then component orders under."
+    // Within each product's group, sort finished-good rows ahead of componentry rows (stable
+    // otherwise -- doesn't reorder within either group beyond that).
+    const sortedRows = group.rows.slice().sort((a, b) => {
+      const rank = (o) => (o.order_type === 'componentry' ? 1 : 0);
+      return rank(a) - rank(b);
+    });
     const inv = (window._invSnapshotBySku || {})[sku] || {};
     const safetyStock = (window._safetyStockBySku || {})[sku];
     const invColor = (qty) => {
@@ -1275,8 +1282,8 @@ function applyOpenOrdersFilter() {
       ${group.rows.length === 0
         ? `<div class="empty-state" style="padding:14px;">No open orders right now — everything has landed or been cancelled. Use "+ Add Order" above to place a new one.</div>`
         : `<table style="white-space:nowrap;">
-        <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th>Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal;">Tracking</th><th>Contact Schedule</th></tr></thead>
-        <tbody>${group.rows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
+        <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th style="${window._revealOrderData ? 'min-width:140px;' : ''}">Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal; ${window._revealOrderData ? 'min-width:220px;' : ''}">Tracking</th><th>Contact Schedule</th></tr></thead>
+        <tbody>${sortedRows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
       </table>`}
     </div>
   `;
@@ -1586,9 +1593,14 @@ function buildActionDetail(o) {
 function renderPoNumberCell(o, canAct) {
   const value = o.internal_ref || o.vendor_po_number || null;
   if (window._revealOrderData) {
+    // Alex (2026-11-10): "whenever Reveal order and tracking is clicked, it should only increase
+    // to 3 rows of text and it should increase the column size to optimize for scrolling." --
+    // clamp to 3 lines (line-clamp) with a scrollbar for anything longer, instead of growing the
+    // row/page height unbounded.
+    const clampStyle = 'display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow-y:auto; max-height:4.2em; white-space:normal; word-break:break-word;';
     return canAct
-      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="editPoNumber('${o.ledger_id}')">${value || '+ Add'}</button>`
-      : (value || '—');
+      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px; ${clampStyle} text-align:left;" onclick="editPoNumber('${o.ledger_id}')">${value || '+ Add'}</button>`
+      : `<span style="${clampStyle}">${value || '—'}</span>`;
   }
   return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showPoNumberDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
 }
@@ -1596,9 +1608,10 @@ function renderPoNumberCell(o, canAct) {
 function renderTrackingCell(o, canAct) {
   const value = o.tracking_info || null;
   if (window._revealOrderData) {
+    const clampStyle = 'display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow-y:auto; max-height:4.2em; white-space:normal; word-break:break-word;';
     return canAct
-      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px; white-space:normal; word-break:break-word;" onclick="editTracking('${o.ledger_id}')">${value || '+ Add'}</button>`
-      : (value || '—');
+      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px; ${clampStyle} text-align:left;" onclick="editTracking('${o.ledger_id}')">${value || '+ Add'}</button>`
+      : `<span style="${clampStyle}">${value || '—'}</span>`;
   }
   return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showTrackingDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
 }
@@ -1749,7 +1762,7 @@ function renderOpenOrderRow(o, editing) {
       <td>${renderPoNumberCell(o, canAct)}</td>
       <td>${o.vendor_name || '—'}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
-      <td style="white-space:normal; max-width:160px; word-break:break-word;">${renderTrackingCell(o, canAct)}</td>
+      <td style="white-space:normal; ${window._revealOrderData ? 'min-width:220px;' : 'max-width:160px;'} word-break:break-word;">${renderTrackingCell(o, canAct)}</td>
       <td>${renderContactScheduleCell(o)}</td>
     </tr>
   `;
@@ -5576,18 +5589,19 @@ function setMixSkuFilter(productIds) {
 function showProductTrendChart(productId, channel) {
   window._trendChartProductIds = new Set([productId]);
   window._trendChartChannel = channel;
+  window._trendChartMonths = window._trendChartMonths || 6;
   renderProductTrendChart();
 }
 
 // Alex (2026-11-06): "the trend chart button is gone" -- the launcher got removed along with
 // the broken single-SKU/channel dropdowns last round, but the button itself (not the dropdowns)
 // was supposed to stay, now driven off the SKU multi-select filter instead of its own separate
-// picker. With no SKU filter active, defaults to every product currently shown in the table
-// (same products the multi-select itself would list) rather than erroring with nothing selected.
+// picker. With no SKU filter active, defaults to every ACTIVE product (Alex, 2026-11-10: "a
+// multi-select for what products to look at defaulting with what's active").
 function launchTrendChartFromSkuFilter() {
   const S = window._revState;
   const selected = S.mixSkuFilter && S.mixSkuFilter.length ? S.mixSkuFilter : null;
-  const ids = selected || S.products.filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id]).map(p => p.product_id);
+  const ids = selected || S.products.filter(p => p.is_active && (S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id])).map(p => p.product_id);
   if (!ids.length) return;
   // Prefer Shopify if the first selected product has Shopify history; otherwise fall back to
   // Amazon so a SKU sold only on Amazon still opens a usable chart instead of an empty one.
@@ -5595,13 +5609,7 @@ function launchTrendChartFromSkuFilter() {
   const channel = (S.historicalPctByProduct[firstId] && S.historicalPctByProduct[firstId].length) ? 'shopify' : 'amazon';
   window._trendChartProductIds = new Set(ids);
   window._trendChartChannel = channel;
-  renderProductTrendChart();
-}
-
-function addProductToTrendChart(productId) {
-  if (!productId) return;
-  window._trendChartProductIds = window._trendChartProductIds || new Set();
-  window._trendChartProductIds.add(productId);
+  window._trendChartMonths = window._trendChartMonths || 6;
   renderProductTrendChart();
 }
 
@@ -5614,17 +5622,88 @@ function removeProductFromTrendChart(productId) {
   renderProductTrendChart();
 }
 
+// Alex (2026-11-10): "the trend chart should have controls to view channel, a multi-select for
+// what products to look at defaulting with what's active, it should have time period toggles and
+// shouldn't include future projections." Switches channel in place (re-render, same popup) and
+// re-renders on a time-period click -- both without closing/reopening the modal.
+function setTrendChartChannel(channel) {
+  window._trendChartChannel = channel;
+  renderProductTrendChart();
+}
+
+function setTrendChartMonths(n) {
+  window._trendChartMonths = n;
+  renderProductTrendChart();
+}
+
+function toggleTrendChartSkuMenu(evt) {
+  const existing = document.getElementById('trend-sku-menu');
+  if (existing) { existing.remove(); document.getElementById('trend-sku-menu-backdrop')?.remove(); return; }
+  const S = window._revState;
+  const channel = window._trendChartChannel || 'shopify';
+  const btn = evt.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  const allMixProducts = S.products.filter(p => S.liveMix[channel]?.[p.product_id])
+    .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
+  const selected = new Set(window._trendChartProductIds || []);
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'trend-sku-menu-backdrop';
+  backdrop.style.cssText = 'position:fixed; inset:0; z-index:2500; background:transparent;';
+  backdrop.onclick = () => { backdrop.remove(); menu.remove(); };
+
+  const menu = document.createElement('div');
+  menu.id = 'trend-sku-menu';
+  menu.className = 'card';
+  const menuWidth = 280;
+  const left = Math.min(rect.left + window.scrollX, document.documentElement.scrollWidth - menuWidth - 12);
+  menu.style.cssText = `position:absolute; top:${rect.bottom + window.scrollY + 4}px; left:${left}px; width:${menuWidth}px; z-index:2501; padding:10px; box-shadow:0 8px 24px rgba(0,0,0,0.22); max-height:340px; overflow-y:auto;`;
+  menu.innerHTML = `
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">Show these products:</div>
+    ${allMixProducts.map(p => `
+      <label style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:14px; cursor:pointer;">
+        <input type="checkbox" data-trend-sku-id="${p.product_id}" ${selected.has(p.product_id) ? 'checked' : ''} />
+        <span>${p.display_name}</span>
+      </label>
+    `).join('')}
+    <div style="display:flex; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+      <button class="btn btn-primary" style="flex:1; padding:5px 0; font-size:13px;" id="trend-sku-apply-btn">Apply</button>
+      <button class="btn btn-ghost" style="flex:1; padding:5px 0; font-size:13px;" id="trend-sku-clear-btn">Select none</button>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  document.body.appendChild(menu);
+  document.getElementById('trend-sku-apply-btn').onclick = () => {
+    const checked = Array.from(menu.querySelectorAll('[data-trend-sku-id]:checked')).map(cb => cb.dataset.trendSkuId);
+    window._trendChartProductIds = new Set(checked);
+    backdrop.remove(); menu.remove();
+    renderProductTrendChart();
+  };
+  document.getElementById('trend-sku-clear-btn').onclick = () => {
+    menu.querySelectorAll('[data-trend-sku-id]').forEach(cb => cb.checked = false);
+  };
+}
+
 function renderProductTrendChart() {
   const S = window._revState;
   const channel = window._trendChartChannel || 'shopify';
+  const monthsBack = window._trendChartMonths || 6;
   const ids = Array.from(window._trendChartProductIds || []);
   if (!ids.length) return;
   const colors = ['#5C4A36', '#8A7257', '#C9A876', '#3F6B35', '#A33B2E', '#96631A'];
   const chartId = 'product-trend-chart';
 
-  const allMixProducts = S.products.filter(p => S.liveMix[channel]?.[p.product_id]);
-  const pickerOptions = allMixProducts.filter(p => !ids.includes(p.product_id))
-    .sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name));
+  const channelToggle = `
+    <div style="display:flex; gap:6px;">
+      ${['shopify', 'amazon'].map(ch => `<button class="btn ${channel === ch ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px;" onclick="setTrendChartChannel('${ch}')">${ch === 'shopify' ? 'Shopify' : 'Amazon'}</button>`).join('')}
+    </div>
+  `;
+  const periodToggle = `
+    <div style="display:flex; gap:6px;">
+      ${[3, 6, 12].map(n => `<button class="btn ${monthsBack === n ? 'btn-primary' : 'btn-ghost'}" style="padding:5px 11px; font-size:13px;" onclick="setTrendChartMonths(${n})">${n} mo</button>`).join('')}
+    </div>
+  `;
+  const skuMultiSelectBtn = `<button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="toggleTrendChartSkuMenu(event)">SKUs (${ids.length}) ▾</button>`;
 
   const legendRows = ids.map((pid, i) => {
     const p = S.products.find(pr => pr.product_id === pid);
@@ -5638,20 +5717,16 @@ function renderProductTrendChart() {
   }).join('');
 
   const body = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+      ${channelToggle}
+      ${periodToggle}
+      ${skuMultiSelectBtn}
+    </div>
     <div style="margin-bottom:8px;">${legendRows}</div>
-    ${pickerOptions.length ? `
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-        <select id="trend-chart-add-select" style="padding:5px 8px; font-size:13px; border-radius:6px; border:1px solid var(--border); flex:1;">
-          ${pickerOptions.map(p => `<option value="${p.product_id}">${p.display_name}</option>`).join('')}
-        </select>
-        <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="addProductToTrendChart(document.getElementById('trend-chart-add-select').value)">+ Add product</button>
-      </div>
-    ` : ''}
     <div style="height:280px;"><canvas id="${chartId}"></canvas></div>
     <div class="muted" style="font-size:12px; margin-top:8px;">
-      Solid = real actual history (Shopify). Dashed = projected (current scenario). ${channel === 'amazon' ? 'Amazon has no historical ingestion yet -- only the projected segment will show.' : ''}
+      Real actual history only (${channel === 'shopify' ? 'Shopify' : 'Amazon'}) -- no future projections. ${channel === 'amazon' ? 'Amazon has no historical ingestion yet -- chart will be empty.' : ''}
     </div>
-    <div id="trend-chart-overlap-note"></div>
   `;
   showDetail(`% of Revenue — Trend (${channel === 'shopify' ? 'Shopify' : 'Amazon'})`, body, 'wide');
 
@@ -5659,70 +5734,26 @@ function renderProductTrendChart() {
   if (!canvas) return;
   if (window._trendChartInstance) { window._trendChartInstance.destroy(); window._trendChartInstance = null; }
 
-  // Alex (2026-11-06): "I'd like to have only one Nov 26 on the x axis but have the two data
-  // points be layered and the difference shown. That dip visually inclines people to believe
-  // there's a massive dip but it's just another november datapoint." Root cause: the x-axis was
-  // built as historyMonths THEN S.months concatenated, so a month present in both (the current
-  // month, since it has both a real actual row AND a live scenario projection) appeared as two
-  // separate adjacent columns with two different values -- reading as a sharp drop/spike between
-  // them. Fixed: one deduped, sorted month axis; each product gets an "actual" dataset (solid,
-  // real history only) and a separate "projected" dataset (dashed, scenario only) -- for any
-  // month present in both, BOTH datasets place a point on that SAME column, so the two numbers
-  // sit layered on one x position instead of reading as a trend line between two different
-  // months. The gap between those two stacked points is the real signal, and gets spelled out in
-  // the note below the chart.
+  // Alex (2026-11-10): "shouldn't include future projections" -- actual history only, no
+  // dashed/projected dataset at all. Window is the last N real months that exist in history,
+  // not N months counted from today (so it still shows real data even if the most recent ingest
+  // is a few days behind), capped at the selected monthsBack toggle.
   const historyMonthSet = new Set();
   ids.forEach(pid => (S.historicalPctByProduct[pid] || []).forEach(h => historyMonthSet.add(h.month)));
-  const projectedMonthSet = new Set(S.months);
-  const allMonths = Array.from(new Set([...historyMonthSet, ...projectedMonthSet])).sort();
-  const labels = allMonths.map(m => {
-    const isHist = historyMonthSet.has(m);
-    const isProj = projectedMonthSet.has(m);
-    if (isHist && isProj) return `${monthLabelShort(m)} (actual + proj.)`;
-    return isProj ? `${monthLabelShort(m)} (proj.)` : monthLabelShort(m);
-  });
+  const allMonths = Array.from(historyMonthSet).sort().slice(-monthsBack);
+  const labels = allMonths.map(m => monthLabelShort(m));
 
-  const overlapMonths = allMonths.filter(m => historyMonthSet.has(m) && projectedMonthSet.has(m));
-  const datasets = [];
-  const overlapNotes = [];
-  ids.forEach((pid, i) => {
+  const datasets = ids.map((pid, i) => {
     const p = S.products.find(pr => pr.product_id === pid);
     const color = colors[i % colors.length];
     const hist = S.historicalPctByProduct[pid] || [];
     const histByMonth = Object.fromEntries(hist.map(h => [h.month, h.pct * 100]));
-    const actualData = allMonths.map(m => histByMonth[m] ?? null);
-    const projData = allMonths.map(m => {
-      if (!projectedMonthSet.has(m)) return null;
-      const mix = S.draftMix[channel]?.[pid]?.[m];
-      return mix ? mix.revenue_pct * 100 : null;
-    });
-    datasets.push({
-      label: `${p?.display_name || pid} — actual`, data: actualData,
+    const data = allMonths.map(m => histByMonth[m] ?? null);
+    return {
+      label: p?.display_name || pid, data,
       borderColor: color, backgroundColor: color, spanGaps: false, tension: 0.15, pointRadius: 4,
-    });
-    datasets.push({
-      label: `${p?.display_name || pid} — projected`, data: projData,
-      borderColor: color, backgroundColor: color, borderDash: [5, 4], spanGaps: false, tension: 0.15, pointRadius: 4,
-    });
-    overlapMonths.forEach(m => {
-      const actualVal = histByMonth[m];
-      const mix = S.draftMix[channel]?.[pid]?.[m];
-      const projVal = mix ? mix.revenue_pct * 100 : null;
-      if (actualVal == null || projVal == null) return;
-      const diff = projVal - actualVal;
-      const currentKey = new Date().toISOString().slice(0, 7);
-      const isCurrentMonth = m === currentKey;
-      const mtdCaveat = isCurrentMonth
-        ? ` — this is a MONTH-TO-DATE actual (the month isn't over), not a full-month figure, so it's naturally lower than the full-month projection; it's not a real dip.`
-        : '';
-      overlapNotes.push(`<strong>${p?.display_name || pid}</strong>, ${monthLabelShort(m)}: actual-so-far <strong>${actualVal.toFixed(1)}%</strong> vs. full-month projected <strong>${projVal.toFixed(1)}%</strong> (${diff >= 0 ? '+' : ''}${diff.toFixed(1)} pts)${mtdCaveat}`);
-    });
+    };
   });
-
-  const noteEl = document.getElementById('trend-chart-overlap-note');
-  if (noteEl && overlapNotes.length) {
-    noteEl.innerHTML = `<div style="margin-top:8px; padding:8px 10px; background:#F7F4EE; border-radius:8px; font-size:13px; line-height:1.6;">${overlapNotes.join('<br>')}</div>`;
-  }
 
   window._trendChartInstance = new Chart(canvas, {
     type: 'line',
