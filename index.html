@@ -2863,6 +2863,8 @@ function renderCatalogProductsTable() {
   // pills still show here (a root product needs to know it's used by a bundle), just pointing at
   // the separate Bundles accordion instead of another row of this same table.
   const rootProducts = products.filter(p => p.product_type === 'root');
+  // Alex (2026-11-10): "I want active products to be sorted first in the products container."
+  rootProducts.sort((a, b) => (a.is_active ? 0 : 1) - (b.is_active ? 0 : 1) || a.sku_code.localeCompare(b.sku_code));
   window._catalogAllProducts = products;
   window._catalogRootProducts = rootProducts;
   const productById = {};
@@ -2962,6 +2964,7 @@ function renderCatalogProductsTable() {
         <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Live Stock</span><br><strong style="font-size:14px;">${liveQty != null ? liveQty.toLocaleString() + ' units' : '—'}</strong></div>
         <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Safety Stock</span><br><strong style="font-size:14px;">${p.safety_stock_qty ? p.safety_stock_qty.toLocaleString() + ' units' : '—'}</strong></div>
         ${memberOf.length ? `<div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">In Bundle${memberOf.length > 1 ? 's' : ''}</span><br>${memberOf.map(bc => `<span class="pill clickable-pill watch" style="font-size:11px; margin-right:3px;" onclick="jumpToCatalogBundle('${bc.bundle_id}')">${(productById[bc.bundle_id]?.display_name || 'Unknown').replace(/"/g, '&quot;')}</span>`).join('')}</div>` : ''}
+        ${canAct ? `<div style="margin-left:auto;"><button class="btn btn-ghost" style="font-size:12px; color:var(--bad-text);" onclick="event.stopPropagation(); deleteProduct('${p.id}', '${(p.display_name || '').replace(/'/g, "\\'")}')">Delete Product</button></div>` : ''}
       </div>
     `;
 
@@ -3007,45 +3010,193 @@ function renderCatalogProductsTable() {
   openComponentIds.forEach(id => toggleCatalogComponentExpand(id));
 }
 
-// Alex (2026-11-04): "I need somewhere to add a new product and build a new bundle on this tab."
-// A plain root product: SKU + display name, created inactive-by-default-unchecked-is-fine (Active
-// defaults checked since a brand-new SKU is normally meant to go live). Safety stock/COGS/notes
-// are left for the usual pills after creation -- no need to front-load every field in one form.
+// Alex (2026-11-10): "when clicking new product... there should be separate screenflows to help
+// with product setup." Replaced the single-form modal with a 4-step wizard: Basics -> Components
+// (each with a vendor right there, not deferred) -> COGS -> Review & Create. Per Alex: safety
+// stock is intentionally OUT of this flow -- it's an auto-generated demand_engine.py output for
+// products with real sales history, not something a brand-new product (zero history) can get a
+// real value for; the wizard shouldn't pretend otherwise by asking for a number anyway.
+window._npWizard = null;
+
+function npWizardInit() {
+  window._npWizard = { step: 1, sku_code: '', display_name: '', is_active: true, components: [], cogs: {} };
+}
+
 async function showNewProductModal() {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  npWizardInit();
+  const [{ data: vendors }] = await Promise.all([sb.from('vendors').select('id, vendor_name').eq('is_active', true).order('vendor_name')]);
+  window._npWizardVendors = vendors || [];
+  renderNpWizard();
+}
+
+function npStepLabel(n, label) {
+  const w = window._npWizard;
+  const active = w.step === n;
+  const done = w.step > n;
+  return `<span style="display:flex; align-items:center; gap:5px; font-size:12px; ${active ? 'font-weight:700; color:var(--ink);' : 'color:var(--muted);'}">
+    <span style="width:18px; height:18px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:11px; ${done ? 'background:var(--good-text); color:#fff;' : active ? 'background:var(--accent); color:#fff;' : 'background:var(--border); color:var(--muted);'}">${done ? '✓' : n}</span>${label}
+  </span>`;
+}
+
+function renderNpWizard() {
+  const w = window._npWizard;
   document.getElementById('detail-modal-backdrop')?.remove();
   const el = document.createElement('div');
   el.id = 'detail-modal-backdrop';
   el.className = 'detail-modal-backdrop';
   el.onclick = (e) => { if (e.target === el) el.remove(); };
-  el.innerHTML = `
-    <div class="detail-modal" style="max-width:420px;">
-      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">New Product</div>
+
+  const stepperHtml = `
+    <div style="display:flex; justify-content:space-between; gap:6px; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+      ${npStepLabel(1, 'Basics')}${npStepLabel(2, 'Components')}${npStepLabel(3, 'COGS')}${npStepLabel(4, 'Review')}
+    </div>
+  `;
+
+  let bodyHtml = '';
+  if (w.step === 1) {
+    bodyHtml = `
       <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">SKU Code</label>
-      <input type="text" id="np-sku-input" placeholder="e.g. TL010" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
+      <input type="text" id="np-sku-input" placeholder="e.g. TL010" value="${w.sku_code}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
       <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Display Name</label>
-      <input type="text" id="np-name-input" placeholder="e.g. Night Oil 100ml" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
-      <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:14px;">
-        <input type="checkbox" id="np-active-input" checked /> Active
+      <input type="text" id="np-name-input" placeholder="e.g. Night Oil 100ml" value="${w.display_name}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:14px;" />
+      <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+        <input type="checkbox" id="np-active-input" ${w.is_active ? 'checked' : ''} /> Active
       </label>
-      <div style="display:flex; gap:8px;">
-        <button class="btn btn-primary" id="np-save-btn">Create</button>
-        <button class="btn btn-ghost" id="np-cancel-btn">Cancel</button>
+    `;
+  } else if (w.step === 2) {
+    const compRows = w.components.map((c, i) => `
+      <div style="border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:8px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+        <span style="flex:1; min-width:120px; font-size:14px;">${c.component_name}</span>
+        <span class="muted" style="font-size:12px;">${c.qty_per_unit} ${c.unit_of_measure || 'each'}</span>
+        <span class="muted" style="font-size:12px;">${(window._npWizardVendors.find(v => v.id === c.vendor_id) || {}).vendor_name || 'No vendor'}</span>
+        <button class="btn btn-ghost" style="padding:2px 7px; font-size:12px; color:var(--bad-text);" onclick="npRemoveComponent(${i})">Remove</button>
+      </div>
+    `).join('');
+    bodyHtml = `
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">Add every component this product is made of. At least one is recommended -- you can also add more later from the Catalog tab.</div>
+      ${compRows || '<div class="muted" style="font-size:13px; margin-bottom:8px;">No components added yet.</div>'}
+      <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:4px;">
+        <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Component Name</label>
+        <input type="text" id="np-comp-name" placeholder="e.g. Amber glass bottle, 2oz" style="width:100%; padding:7px 9px; border-radius:8px; border:1px solid var(--border); margin-bottom:8px;" />
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <div style="flex:1;">
+            <label style="display:block; font-size:12px; font-weight:600; margin-bottom:3px;">Qty per Unit</label>
+            <input type="number" id="np-comp-qty" value="1" step="any" style="width:100%; padding:7px 9px; border-radius:8px; border:1px solid var(--border);" />
+          </div>
+          <div style="flex:1;">
+            <label style="display:block; font-size:12px; font-weight:600; margin-bottom:3px;">UoM</label>
+            <input type="text" id="np-comp-uom" placeholder="each, mL, g" style="width:100%; padding:7px 9px; border-radius:8px; border:1px solid var(--border);" />
+          </div>
+        </div>
+        <label style="display:block; font-size:12px; font-weight:600; margin-bottom:3px;">Vendor</label>
+        <select id="np-comp-vendor" style="width:100%; padding:7px 9px; border-radius:8px; border:1px solid var(--border); margin-bottom:8px;">
+          <option value="">No vendor yet</option>
+          ${window._npWizardVendors.map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost" style="font-size:13px;" onclick="npAddComponent()">+ Add Component</button>
+      </div>
+    `;
+  } else if (w.step === 3) {
+    bodyHtml = `
+      <div class="muted" style="font-size:12px; margin-bottom:10px;">Optional -- can be filled in later from the Catalog tab's COGS pill. Enter the unit cost if known now.</div>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Unit COGS ($)</label>
+      <input type="number" step="0.01" id="np-cogs-input" value="${w.cogs.unit_cogs ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border);" />
+    `;
+  } else if (w.step === 4) {
+    bodyHtml = `
+      <div style="font-size:14px; line-height:1.7;">
+        <div><span class="muted">SKU</span> <strong>${w.sku_code}</strong></div>
+        <div><span class="muted">Name</span> <strong>${w.display_name}</strong></div>
+        <div><span class="muted">Active</span> <strong>${w.is_active ? 'Yes' : 'No'}</strong></div>
+        <div><span class="muted">Components</span> <strong>${w.components.length}</strong>${w.components.length ? ': ' + w.components.map(c => c.component_name).join(', ') : ''}</div>
+        <div><span class="muted">Unit COGS</span> <strong>${w.cogs.unit_cogs != null ? fmtMoney2(w.cogs.unit_cogs) : 'Not set'}</strong></div>
+      </div>
+    `;
+  }
+
+  const canBack = w.step > 1;
+  const isLast = w.step === 4;
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:460px;">
+      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">New Product</div>
+      ${stepperHtml}
+      <div style="min-height:140px;">${bodyHtml}</div>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        ${canBack ? `<button class="btn btn-ghost" onclick="npWizardBack()">Back</button>` : ''}
+        ${isLast
+          ? `<button class="btn btn-primary" onclick="npWizardCreate()">Create Product</button>`
+          : `<button class="btn btn-primary" onclick="npWizardNext()">Next</button>`}
+        <button class="btn btn-ghost" id="np-cancel-btn" style="margin-left:auto;">Cancel</button>
       </div>
     </div>
   `;
   document.body.appendChild(el);
-  document.getElementById('np-cancel-btn').onclick = () => el.remove();
-  document.getElementById('np-save-btn').onclick = async () => {
-    const sku_code = document.getElementById('np-sku-input').value.trim();
-    const display_name = document.getElementById('np-name-input').value.trim();
-    const is_active = document.getElementById('np-active-input').checked;
+  document.getElementById('np-cancel-btn').onclick = () => { el.remove(); window._npWizard = null; };
+}
+
+function npAddComponent() {
+  const name = document.getElementById('np-comp-name')?.value.trim();
+  if (!name) { alert('Component name is required.'); return; }
+  const qty_per_unit = Number(document.getElementById('np-comp-qty')?.value) || 1;
+  const unit_of_measure = document.getElementById('np-comp-uom')?.value.trim() || null;
+  const vendor_id = document.getElementById('np-comp-vendor')?.value || null;
+  window._npWizard.components.push({ component_name: name, qty_per_unit, unit_of_measure, vendor_id });
+  renderNpWizard();
+}
+
+function npRemoveComponent(i) {
+  window._npWizard.components.splice(i, 1);
+  renderNpWizard();
+}
+
+function npWizardNext() {
+  const w = window._npWizard;
+  if (w.step === 1) {
+    const sku_code = document.getElementById('np-sku-input')?.value.trim();
+    const display_name = document.getElementById('np-name-input')?.value.trim();
+    const is_active = document.getElementById('np-active-input')?.checked ?? true;
     if (!sku_code || !display_name) { alert('SKU code and display name are both required.'); return; }
-    const { data, error } = await sb.from('products').insert({ sku_code, display_name, product_type: 'root', is_active }).select().single();
-    if (error) { alert('Create failed: ' + error.message); return; }
-    await logAction('products', data.id, 'create', `Created new product ${display_name} (${sku_code})`, null, data);
-    el.remove();
-    await renderCatalogProducts();
-  };
+    w.sku_code = sku_code; w.display_name = display_name; w.is_active = is_active;
+  } else if (w.step === 3) {
+    const unit_cogs = Number(document.getElementById('np-cogs-input')?.value) || null;
+    w.cogs = { unit_cogs };
+  }
+  w.step += 1;
+  renderNpWizard();
+}
+
+function npWizardBack() {
+  const w = window._npWizard;
+  w.step -= 1;
+  renderNpWizard();
+}
+
+async function npWizardCreate() {
+  const w = window._npWizard;
+  const { data: product, error } = await sb.from('products').insert({
+    sku_code: w.sku_code, display_name: w.display_name, product_type: 'root', is_active: w.is_active,
+    unit_cogs: w.cogs.unit_cogs,
+  }).select().single();
+  if (error) { alert('Create failed: ' + error.message); return; }
+  await logAction('products', product.id, 'create', `Created new product ${w.display_name} (${w.sku_code}) via setup wizard`, null, product);
+
+  for (const c of w.components) {
+    const { data: comp, error: compError } = await sb.from('components').insert({
+      component_name: c.component_name, product_id: product.id, unit_of_measure: c.unit_of_measure, qty_per_unit: c.qty_per_unit,
+    }).select().single();
+    if (compError) { alert(`Product created, but failed to add component "${c.component_name}": ${compError.message}`); continue; }
+    await logAction('components', comp.id, 'create', `Created component ${c.component_name} for ${w.display_name} via setup wizard`, null, comp);
+    if (c.vendor_id) {
+      const { error: cvError } = await sb.from('component_vendors').insert({ component_id: comp.id, vendor_id: c.vendor_id, is_preferred: true });
+      if (cvError) alert(`Component "${c.component_name}" created, but failed to link its vendor: ${cvError.message}`);
+    }
+  }
+
+  document.getElementById('detail-modal-backdrop')?.remove();
+  window._npWizard = null;
+  await renderCatalogProducts();
+  await renderCatalogComponents();
 }
 
 async function editProductNameInline(productId) {
@@ -3059,6 +3210,45 @@ async function editProductNameInline(productId) {
   const { error } = await sb.from('products').update({ display_name }).eq('id', productId);
   if (error) { alert('Save failed: ' + error.message); return; }
   await logAction('products', productId, 'update', `Renamed product to ${display_name}`, { display_name: p.display_name }, { display_name });
+  await renderCatalogProducts();
+  await renderCatalogBundles();
+}
+
+// Alex (2026-11-10): "I also need a way to delete a product if need be." A product has 13 other
+// tables with FKs into it (inventory_ledger, historical_revenue_pct, purchase_orders,
+// agent_recommendations, etc.) -- Alex explicitly chose (over cascade-delete or UI-checkbox-only):
+// hard delete only when the product has genuinely zero real activity across every one of those,
+// otherwise block it and point at the existing Active toggle instead. Checks the handful that
+// matter in practice (a brand-new/test product created in error would show zero everywhere; any
+// real product will have landed at least one of these the moment it's live).
+async function deleteProduct(productId, displayName) {
+  const [
+    { count: ledgerCount }, { count: revenueCount }, { count: poCount },
+    { count: bundleMemberCount }, { count: componentCount },
+  ] = await Promise.all([
+    sb.from('inventory_ledger').select('id', { count: 'exact', head: true }).eq('product_id', productId),
+    sb.from('historical_revenue_pct').select('product_id', { count: 'exact', head: true }).eq('product_id', productId),
+    sb.from('purchase_orders').select('id', { count: 'exact', head: true }).eq('product_id', productId),
+    sb.from('bundle_compositions').select('id', { count: 'exact', head: true }).eq('root_product_id', productId),
+    sb.from('components').select('id', { count: 'exact', head: true }).eq('product_id', productId),
+  ]);
+  const blockers = [];
+  if (ledgerCount) blockers.push(`${ledgerCount} inventory ledger row${ledgerCount === 1 ? '' : 's'}`);
+  if (revenueCount) blockers.push(`${revenueCount} month${revenueCount === 1 ? '' : 's'} of revenue history`);
+  if (poCount) blockers.push(`${poCount} purchase order${poCount === 1 ? '' : 's'}`);
+  if (bundleMemberCount) blockers.push(`used in ${bundleMemberCount} bundle${bundleMemberCount === 1 ? '' : 's'}`);
+  if (componentCount) blockers.push(`${componentCount} component${componentCount === 1 ? '' : 's'} on file`);
+
+  if (blockers.length) {
+    alert(`Can't delete "${displayName}" -- it has real activity: ${blockers.join(', ')}. Use the Active checkbox to retire it instead; a true delete would either fail or silently wipe that history.`);
+    return;
+  }
+  if (!confirm(`Delete "${displayName}"? It has no inventory history, revenue history, POs, bundle membership, or components on file, so this is a clean, permanent delete.`)) return;
+
+  const { data: before } = await sb.from('products').select('*').eq('id', productId).single();
+  const { error } = await sb.from('products').delete().eq('id', productId);
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  await logAction('products', productId, 'delete', `Deleted product ${displayName} (no real activity on file)`, before, null);
   await renderCatalogProducts();
   await renderCatalogBundles();
 }
