@@ -349,8 +349,8 @@
 </script>
 <script>
 // ---- Config: fill in your Supabase project URL + anon (public) key ----
-const SUPABASE_URL = "https://rvbferpfrgkayxuujpna.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ2YmZlcnBmcmdrYXl4dXVqcG5hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1MDc2NjUsImV4cCI6MjEwODA4MzY2NX0._UNtJphO40WvJfoDqQ612Vi1Wx78D2S6FVl2-VMt76w";
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Alex (2026-11-06): "When I click on percentage of revenue I don't think we need to wait to
@@ -2907,6 +2907,14 @@ function renderCatalogProductsTable() {
     const cogsCell = canAct
       ? `<span class="pill clickable-pill ${p.unit_cogs ? 'good' : 'watch'}" onclick="event.stopPropagation(); showProductCogsModal('${p.id}')">${p.unit_cogs ? fmtMoney2(p.unit_cogs) : 'Missing'}</span>`
       : (p.unit_cogs ? fmtMoney2(p.unit_cogs) : '—');
+    // Alex (2026-11-10): "I want a column that has the COGs breakdown and profit profiles per
+    // each product that I can click on and a box pops out with the information." -- separate
+    // from the existing editable unit_cogs pill above (that one feeds cash-at-risk math); this
+    // is a read-only summary pill opening the full line-item breakdown + margin waterfall synced
+    // from the sheet's "COGs Active" tab, see showProductProfitModal.
+    const profitCell = p.cogs_breakdown
+      ? `<span class="pill clickable-pill good" onclick="event.stopPropagation(); showProductProfitModal('${p.id}')">View breakdown</span>`
+      : `<span class="muted" style="font-size:13px;">Not synced</span>`;
     const notesCell = canAct
       ? `<span class="pill clickable-pill ${p.notes ? 'good' : 'watch'}" onclick="event.stopPropagation(); showProductNotesModal('${p.id}', '${(p.display_name || '').replace(/'/g, "\\'")}')">${p.notes ? 'On File' : 'Missing'}</span>`
       : (p.notes || '—');
@@ -2940,9 +2948,10 @@ function renderCatalogProductsTable() {
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${activeCell}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${ssCell}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${cogsCell}</td>
+        <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${profitCell}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${notesCell}</td>
       </tr>
-      <tr id="cp-detail-${p.id}" style="display:none;"><td colspan="6" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
+      <tr id="cp-detail-${p.id}" style="display:none;"><td colspan="7" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
     `;
   }).join('');
 
@@ -2954,9 +2963,9 @@ function renderCatalogProductsTable() {
       <table style="width:100%; font-size:14px; border-collapse:collapse;">
         <thead><tr>
           <th style="padding:6px 6px; width:18px;"></th>
-          ${['Name', 'Active', 'Safety Stock', 'COGS', 'Notes'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
+          ${['Name', 'Active', 'Safety Stock', 'COGS', 'Profit', 'Notes'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="6" class="muted" style="padding:10px;">No products found.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="7" class="muted" style="padding:10px;">No products found.</td></tr>'}</tbody>
       </table>
     </div>
   `;
@@ -3126,6 +3135,9 @@ function renderCatalogBundlesTable() {
     const notesCell = canAct
       ? `<span class="pill clickable-pill ${b.notes ? 'good' : 'watch'}" onclick="event.stopPropagation(); showProductNotesModal('${b.id}', '${(b.display_name || '').replace(/'/g, "\\'")}')">${b.notes ? 'On File' : 'Missing'}</span>`
       : (b.notes || '—');
+    const bundleProfitCell = b.cogs_breakdown
+      ? `<span class="pill clickable-pill good" onclick="event.stopPropagation(); showProductProfitModal('${b.id}')">View breakdown</span>`
+      : `<span class="muted" style="font-size:13px;">Not synced</span>`;
 
     const nestedHtml = `
       <div class="section-label" style="margin:0 0 6px;">Contains</div>
@@ -3138,9 +3150,10 @@ function renderCatalogBundlesTable() {
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);" onclick="event.stopPropagation();">${nameHtml}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${activeCell}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${count} product${count === 1 ? '' : 's'}</td>
+        <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${bundleProfitCell}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${notesCell}</td>
       </tr>
-      <tr id="cb-detail-${b.id}" style="display:none;"><td colspan="5" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
+      <tr id="cb-detail-${b.id}" style="display:none;"><td colspan="6" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
     `;
   }).join('');
 
@@ -3152,9 +3165,9 @@ function renderCatalogBundlesTable() {
       <table style="width:100%; font-size:14px; border-collapse:collapse;">
         <thead><tr>
           <th style="padding:6px 6px; width:18px;"></th>
-          ${['Name', 'Active', 'Contains', 'Notes'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
+          ${['Name', 'Active', 'Contains', 'Profit', 'Notes'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:10px;">No bundles yet — use "+ New Bundle" above.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="6" class="muted" style="padding:10px;">No bundles yet — use "+ New Bundle" above.</td></tr>'}</tbody>
       </table>
     </div>
   `;
@@ -3313,6 +3326,87 @@ async function showProductCogsModal(productId) {
     if (decision === 'now') await requestRecalc('product', productId);
     renderCatalogProducts();
   };
+}
+
+// Alex (2026-11-10): "I want a column that has the COGs breakdown and profit profiles per each
+// product that I can click on and a box pops out with the information." Shows the full
+// line-item breakdown synced from the sheet's "COGs Active" tab (per-component costs, freight,
+// logistics, shipping, marketing) plus the margin waterfall (PC1/PC2/PC3) exactly as the sheet
+// computes it: PC1 = Price - COGS; PC2 = PC1 - Logistics - Shipping; PC3 = PC2 - Marketing.
+// Read-only -- cogs_breakdown is synced from the sheet, not hand-edited here; the existing
+// "COGS" pill/showProductCogsModal next to it is still how unit_cogs itself gets manually
+// overridden for cash-at-risk math when the sheet hasn't been re-synced yet.
+async function showProductProfitModal(productId) {
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const { data: p } = await sb.from('products').select('display_name, cogs_breakdown').eq('id', productId).single();
+  if (!p || !p.cogs_breakdown) return;
+  const d = p.cogs_breakdown;
+  const money = (v) => (v == null ? '—' : fmtMoney2(v));
+  const pct = (v) => (v == null ? '—' : (v * 100).toFixed(1) + '%');
+
+  // Line items are every breakdown key except the summary/margin rows, which get their own
+  // dedicated sections below so they read as a waterfall instead of a flat list.
+  const summaryKeys = new Set(['COGs', 'COGs as %', 'Price', 'Logistics Cost', 'Shipping Cost', 'Shipping',
+    'Marketing Cost', 'PC 1 ($)', 'PC 1 (%)', 'PC 2 ($)', 'PC 2 (%)', 'PC 3 ($)', 'PC 3 (%)',
+    'Breakeven ROAS', 'Breakeven CAC', 'sheet_product_name', 'source', 'Total']);
+  const lineItems = Object.keys(d).filter(k => !summaryKeys.has(k) && typeof d[k] === 'number');
+  const shipping = d['Shipping Cost'] ?? d['Shipping'];
+
+  const lineItemsHtml = lineItems.length
+    ? lineItems.map(k => `
+        <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:13px;">
+          <span class="muted">${k.trim()}</span><span>${money(d[k])}</span>
+        </div>`).join('')
+    : '<div class="muted" style="font-size:13px;">No per-component breakdown on file.</div>';
+
+  const waterfallRow = (label, value, pctValue, bold) => `
+    <div style="display:flex; justify-content:space-between; padding:4px 0; ${bold ? 'font-weight:700;' : ''} border-top:1px solid var(--border);">
+      <span>${label}</span>
+      <span>${money(value)}${pctValue != null ? ` <span class="muted" style="font-size:12px;">(${pct(pctValue)})</span>` : ''}</span>
+    </div>`;
+
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:460px;">
+      <div style="font-weight:700; margin-bottom:2px; font-family:'Playfair Display'; font-size:17px;">Profit Profile — ${p.display_name}</div>
+      <div class="muted" style="font-size:12px; margin-bottom:12px;">Synced from the sheet's "COGs Active" tab (${d.sheet_product_name || '—'}).</div>
+
+      <div class="section-label" style="margin-bottom:4px;">Component &amp; landed costs</div>
+      ${lineItemsHtml}
+      <div style="display:flex; justify-content:space-between; padding:4px 0; font-weight:700; border-top:1px solid var(--border); margin-top:2px;">
+        <span>Total COGS</span><span>${money(d['COGs'])} <span class="muted" style="font-size:12px;">(${pct(d['COGs as %'])} of price)</span></span>
+      </div>
+
+      <div class="section-label" style="margin:14px 0 4px;">Margin waterfall</div>
+      ${waterfallRow('Price', d['Price'], null, true)}
+      ${waterfallRow('− COGS', d['COGs'] != null ? -d['COGs'] : null, null, false)}
+      ${waterfallRow('= Gross profit (PC1)', d['PC 1 ($)'], d['PC 1 (%)'], true)}
+      ${waterfallRow('− Logistics', d['Logistics Cost'] != null ? -d['Logistics Cost'] : null, null, false)}
+      ${waterfallRow('− Shipping', shipping != null ? -shipping : null, null, false)}
+      ${waterfallRow('= Contribution margin (PC2)', d['PC 2 ($)'], d['PC 2 (%)'], true)}
+      ${d['Marketing Cost'] != null ? waterfallRow('− Marketing', -d['Marketing Cost'], null, false) : ''}
+      ${d['PC 3 ($)'] != null ? waterfallRow('= Net margin after marketing (PC3)', d['PC 3 ($)'], d['PC 3 (%)'], true) : ''}
+
+      ${d['Breakeven ROAS'] != null ? `
+        <div class="section-label" style="margin:14px 0 4px;">Breakeven</div>
+        <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:13px;">
+          <span class="muted">Breakeven ROAS</span><span>${d['Breakeven ROAS'].toFixed(2)}x</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:13px;">
+          <span class="muted">Breakeven CAC</span><span>${money(d['Breakeven CAC'])}</span>
+        </div>
+      ` : ''}
+
+      <div style="margin-top:14px;">
+        <button class="btn btn-ghost" id="pp-close-btn">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('pp-close-btn').onclick = () => el.remove();
 }
 
 // ---------- Components section ----------
