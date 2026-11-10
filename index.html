@@ -919,7 +919,12 @@ function showContactsKpiDetail() {
         `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
       ];
     });
-  showDetail('Vendor Contacts Due — next 7 days', kpiTable(['Vendor', 'Product', 'Order #', 'ETA', 'Next Contact', 'Why', '', ''], rows, 5, null, [3, 6, 7]), 'wide');
+  showDetail('Vendor Contacts Due — next 7 days', kpiTable(
+    ['Vendor', 'Product', 'Order #', 'ETA', 'Next Contact', 'Why', '', ''],
+    rows, 5,
+    ['100px', '130px', '90px', '85px', '105px', null, '95px', '100px'],
+    [3, 6, 7]
+  ), 'wide');
 }
 
 function showQcKpiDetail() {
@@ -1743,16 +1748,22 @@ function renderOpenOrderRow(o, editing) {
   const canAct = canEdit();
   const componentText = o.order_type === 'componentry' ? componentShortLabel(o.component_name) : '—';
   const orderTypeLabel = o.order_type === 'componentry' ? 'Component' : 'Finished Good';
+  // Alex (2026-11-10): "The colors of the rows for finished goods vs components are still the
+  // same color." Both the Order Type pill and the row's own background now differ: Finished Good
+  // = good (green) pill + a faint green-tinted row background; Component = watch (amber) pill +
+  // a faint amber-tinted row background -- visible even without reading the pill text.
+  const orderTypePillClass = o.order_type === 'componentry' ? 'watch' : 'good';
+  const rowBg = o.order_type === 'componentry' ? 'var(--watch-bg)' : 'var(--good-bg)';
   const selectCell = canAct ? `<td><input type="checkbox" id="select-${o.ledger_id}" ${window._selectedOrderIds?.has(o.ledger_id) ? 'checked' : ''} onchange="toggleOrderSelect('${o.ledger_id}', this.checked)" /></td>` : '<td></td>';
   if (editing) {
     return `
-      <tr id="row-${o.ledger_id}">
+      <tr id="row-${o.ledger_id}" style="background:${rowBg};">
         ${selectCell}
         <td>
           <button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="saveOrderEdit('${o.ledger_id}')">Save</button>
           <button class="btn btn-ghost" style="padding:5px 10px; font-size:13px;" onclick="applyOpenOrdersFilter()">Cancel</button>
         </td>
-        <td><span class="pill watch">${orderTypeLabel}</span></td>
+        <td><span class="pill ${orderTypePillClass}">${orderTypeLabel}</span></td>
         <td>${componentText}</td>
         <td></td>
         <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
@@ -1770,10 +1781,10 @@ function renderOpenOrderRow(o, editing) {
     `;
   }
   return `
-    <tr id="row-${o.ledger_id}">
+    <tr id="row-${o.ledger_id}" style="background:${rowBg};">
       ${selectCell}
       <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}', this)" title="Actions">⋯</button>` : ''}</td>
-      <td><span class="pill watch">${orderTypeLabel}</span></td>
+      <td><span class="pill ${orderTypePillClass}">${orderTypeLabel}</span></td>
       <td>${componentText}</td>
       <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showOpenOrderDetail('${o.ledger_id}')">${o.action_needed}</span></td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
@@ -1953,12 +1964,54 @@ function editOpenOrderRow(ledgerId) {
 }
 
 // ---------- Activity log / undo ----------
-async function logAction(tableName, recordId, action, description, beforeData, afterData) {
+async function logAction(tableName, recordId, action, description, beforeData, afterData, opts) {
   const { data, error } = await sb.from('activity_log').insert({
     table_name: tableName, record_id: recordId, action, description,
     before_data: beforeData, after_data: afterData, performed_by: currentUserRow?.email || 'dashboard',
   }).select().single();
-  if (!error && data) showUndoToast(data.id, description);
+  // Alex (2026-11-10): "The creation of the new product didn't log into the activity log and so
+  // I wasn't able to undo it." Root cause: it WAS logged (confirmed in the DB) -- the real bug is
+  // that every multi-row operation (the New Product wizard logs one row for the product, then
+  // one MORE per component) calls showUndoToast() every time, and each call replaces whatever
+  // toast is currently showing. With even one component, the product's own undo toast got
+  // overwritten within milliseconds by the component's toast before anyone could click it --
+  // not a logging failure, a toast-clobbering bug. Pass `opts.silent = true` to skip the toast
+  // for intermediate rows in a bulk operation; the caller shows ONE consolidated toast at the end
+  // instead (see npWizardCreate's bulkUndoToast).
+  if (!error && data && !opts?.silent) showUndoToast(data.id, description);
+  return !error && data ? data.id : null;
+}
+
+// Alex (2026-11-10): same bug class as the toast-clobbering above, generalized -- ANY operation
+// that logs more than one activity_log row in one user action needs ONE toast whose Undo button
+// reverts every row from that operation, not just the last one logged. logIds is oldest-first
+// (the order they were created); undone in REVERSE order so dependent rows (e.g. a component
+// that references a product) are undone before the row they depend on.
+function showBulkUndoToast(logIds, description) {
+  document.getElementById('undo-toast')?.remove();
+  if (!logIds.length) return;
+  const toast = document.createElement('div');
+  toast.id = 'undo-toast';
+  toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2b2420; color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; display:flex; align-items:center; gap:12px; z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,0.35); max-width:520px;';
+  toast.innerHTML = `<span>${description}</span><button style="background:#fff; color:#2b2420; padding:4px 10px; font-size:13px; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" onclick="undoBulkActions(${JSON.stringify(logIds)})">Undo</button>`;
+  document.body.appendChild(toast);
+  setTimeout(() => { if (document.getElementById('undo-toast') === toast) toast.remove(); }, 10000);
+}
+
+async function undoBulkActions(logIds) {
+  document.getElementById('undo-toast')?.remove();
+  for (const id of [...logIds].reverse()) {
+    await undoAction(id, { skipRefresh: true });
+  }
+  await Promise.all([
+    renderOverview(), renderLandedOrders(), renderComponents(),
+    window._revState ? renderRevenue() : null,
+    document.getElementById('catalog-accordion-body-products') ? renderCatalogProducts() : null,
+    document.getElementById('catalog-accordion-body-components') ? renderCatalogComponents() : null,
+    document.getElementById('catalog-accordion-body-bundles') ? renderCatalogBundles() : null,
+  ]);
+  const activityTab = document.getElementById('tab-activity');
+  if (activityTab && !activityTab.classList.contains('hidden')) await renderActivityLog();
 }
 
 function showUndoToast(logId, description) {
@@ -1971,10 +2024,10 @@ function showUndoToast(logId, description) {
   setTimeout(() => { if (document.getElementById('undo-toast') === toast) toast.remove(); }, 10000);
 }
 
-async function undoAction(logId) {
+async function undoAction(logId, opts) {
   const { data: log, error } = await sb.from('activity_log').select('*').eq('id', logId).single();
   if (error || !log) { alert('Could not load this action.'); return; }
-  if (log.undone) { alert('This action was already undone.'); return; }
+  if (log.undone) { if (!opts?.skipRefresh) alert('This action was already undone.'); return; }
   document.getElementById('undo-toast')?.remove();
 
   if (log.action === 'delete') {
@@ -1990,6 +2043,7 @@ async function undoAction(logId) {
     await sb.from(log.table_name).update(rest).eq('id', log.record_id);
   }
   await sb.from('activity_log').update({ undone: true, undone_at: new Date().toISOString(), undone_by: currentUserRow?.email || 'dashboard' }).eq('id', logId);
+  if (opts?.skipRefresh) return;
   // Undo now applies everywhere (Alex, 2026-10-22: "The undo button functionality should exist
   // everywhere") -- refresh every tab that might show the reverted data, not just Overview/Landed
   // Orders, since an undo can now originate from the Revenue tab (channel/mix/ASP edits, draft
@@ -3098,19 +3152,65 @@ function renderNpWizard() {
       </div>
     `;
   } else if (w.step === 3) {
+    // Alex (2026-11-10, round 2): "I need a way to set up the full margin profile upon creating
+    // a product as well." -- step 3 is now the same editable breakdown as the Catalog Profit
+    // modal (computeProfitWaterfall), not just a single COGS number. Freight/other costs start
+    // as a blank line item the user can rename; component costs default to $0 (no per-component
+    // cost was captured in step 2, which only asked for qty/UoM/vendor, not a dollar figure) --
+    // editable here before the product is created, exactly like the post-creation modal.
+    w.cogsLineItems = w.cogsLineItems || w.components.map(c => ({ key: c.component_name, value: 0 }));
+    w.cogsExtra = w.cogsExtra || { price: 0, logistics: 0, shipping: 0, marketing: 0 };
+    const wf = npComputeWizardWaterfall();
+    const lineItemRows = w.cogsLineItems.map((li, i) => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; font-size:13px; gap:8px;">
+        <span class="muted">${li.key}</span>
+        <input type="number" step="0.01" id="np-li-${i}" value="${li.value}" style="width:90px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); text-align:right;" oninput="npUpdateMarginPreview()" />
+      </div>
+    `).join('');
     bodyHtml = `
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">Optional -- can be filled in later from the Catalog tab's COGS pill. Enter the unit cost if known now.</div>
-      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Unit COGS ($)</label>
-      <input type="number" step="0.01" id="np-cogs-input" value="${w.cogs.unit_cogs ?? ''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border);" />
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">Optional -- can be filled in later from the Catalog tab. Component costs default from Step 2; add Price/Logistics/Shipping/Marketing to see the full margin waterfall now.</div>
+      <div class="section-label" style="margin-bottom:2px;">Component costs</div>
+      ${lineItemRows || '<div class="muted" style="font-size:13px;">No components added in Step 2.</div>'}
+      <div style="display:flex; justify-content:space-between; padding:3px 0; font-weight:700; border-top:1px solid var(--border); margin-top:2px;">
+        <span>Total COGS</span><span id="np-cogs-total">${fmtMoney2(wf.cogs)}</span>
+      </div>
+      <div class="section-label" style="margin:10px 0 2px;">Margin waterfall</div>
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; font-size:13px; gap:8px;">
+        <span class="muted">Price</span>
+        <input type="number" step="0.01" id="np-margin-price" value="${w.cogsExtra.price}" style="width:90px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); text-align:right;" oninput="npUpdateMarginPreview()" />
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:3px 0; font-weight:700; border-top:1px solid var(--border);">
+        <span>= Gross profit (PC1)</span><span id="np-pc1">${fmtMoney2(wf.pc1)}</span>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; font-size:13px; gap:8px;">
+        <span class="muted">Logistics</span>
+        <input type="number" step="0.01" id="np-margin-logistics" value="${w.cogsExtra.logistics}" style="width:90px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); text-align:right;" oninput="npUpdateMarginPreview()" />
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; font-size:13px; gap:8px;">
+        <span class="muted">Shipping</span>
+        <input type="number" step="0.01" id="np-margin-shipping" value="${w.cogsExtra.shipping}" style="width:90px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); text-align:right;" oninput="npUpdateMarginPreview()" />
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:3px 0; font-weight:700; border-top:1px solid var(--border);">
+        <span>= Contribution margin (PC2)</span><span id="np-pc2">${fmtMoney2(wf.pc2)}</span>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; font-size:13px; gap:8px;">
+        <span class="muted">Marketing</span>
+        <input type="number" step="0.01" id="np-margin-marketing" value="${w.cogsExtra.marketing}" style="width:90px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); text-align:right;" oninput="npUpdateMarginPreview()" />
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:3px 0; font-weight:700; border-top:1px solid var(--border);">
+        <span>= Net margin after marketing (PC3)</span><span id="np-pc3">${fmtMoney2(wf.pc3)}</span>
+      </div>
     `;
   } else if (w.step === 4) {
+    const w3 = npComputeWizardWaterfall();
     bodyHtml = `
       <div style="font-size:14px; line-height:1.7;">
         <div><span class="muted">SKU</span> <strong>${w.sku_code}</strong></div>
         <div><span class="muted">Name</span> <strong>${w.display_name}</strong></div>
         <div><span class="muted">Active</span> <strong>${w.is_active ? 'Yes' : 'No'}</strong></div>
         <div><span class="muted">Components</span> <strong>${w.components.length}</strong>${w.components.length ? ': ' + w.components.map(c => c.component_name).join(', ') : ''}</div>
-        <div><span class="muted">Unit COGS</span> <strong>${w.cogs.unit_cogs != null ? fmtMoney2(w.cogs.unit_cogs) : 'Not set'}</strong></div>
+        <div><span class="muted">Unit COGS</span> <strong>${fmtMoney2(w3.cogs)}</strong></div>
+        <div><span class="muted">Price / PC1 / PC2 / PC3</span> <strong>${fmtMoney2(w3.price)} / ${fmtMoney2(w3.pc1)} / ${fmtMoney2(w3.pc2)} / ${fmtMoney2(w3.pc3)}</strong></div>
       </div>
     `;
   }
@@ -3150,6 +3250,36 @@ function npRemoveComponent(i) {
   renderNpWizard();
 }
 
+function npComputeWizardWaterfall() {
+  const w = window._npWizard;
+  const breakdown = {
+    ...Object.fromEntries(w.cogsLineItems.map(li => [li.key, li.value])),
+    'Price': w.cogsExtra.price, 'Logistics Cost': w.cogsExtra.logistics,
+    'Shipping Cost': w.cogsExtra.shipping, 'Marketing Cost': w.cogsExtra.marketing,
+  };
+  return computeProfitWaterfall(breakdown);
+}
+
+// Live-updates the Step 3 margin waterfall preview as the user types, reading current input
+// values straight off the DOM (mirrors recomputeProfitModalPreview's pattern for the post-
+// creation Catalog modal) without re-rendering the whole wizard body on every keystroke.
+function npUpdateMarginPreview() {
+  const w = window._npWizard;
+  w.cogsLineItems.forEach((li, i) => { li.value = Number(document.getElementById(`np-li-${i}`)?.value) || 0; });
+  w.cogsExtra = {
+    price: Number(document.getElementById('np-margin-price')?.value) || 0,
+    logistics: Number(document.getElementById('np-margin-logistics')?.value) || 0,
+    shipping: Number(document.getElementById('np-margin-shipping')?.value) || 0,
+    marketing: Number(document.getElementById('np-margin-marketing')?.value) || 0,
+  };
+  const r = npComputeWizardWaterfall();
+  const setText = (id, text) => { const node = document.getElementById(id); if (node) node.textContent = text; };
+  setText('np-cogs-total', fmtMoney2(r.cogs));
+  setText('np-pc1', fmtMoney2(r.pc1));
+  setText('np-pc2', fmtMoney2(r.pc2));
+  setText('np-pc3', fmtMoney2(r.pc3));
+}
+
 function npWizardNext() {
   const w = window._npWizard;
   if (w.step === 1) {
@@ -3159,8 +3289,25 @@ function npWizardNext() {
     if (!sku_code || !display_name) { alert('SKU code and display name are both required.'); return; }
     w.sku_code = sku_code; w.display_name = display_name; w.is_active = is_active;
   } else if (w.step === 3) {
-    const unit_cogs = Number(document.getElementById('np-cogs-input')?.value) || null;
-    w.cogs = { unit_cogs };
+    // Alex (2026-11-10, round 2): capture the full margin profile, not just unit_cogs. Build the
+    // same flat breakdown dict shape computeProfitWaterfall()/the Catalog profit modal expect
+    // (component line items by name + Price/Logistics Cost/Shipping Cost/Marketing Cost), store
+    // it as cogs_breakdown so the Catalog tab's COGS/profit popup works immediately post-creation
+    // instead of needing the numbers re-entered there.
+    w.cogsLineItems.forEach((li, i) => { li.value = Number(document.getElementById(`np-li-${i}`)?.value) || 0; });
+    w.cogsExtra = {
+      price: Number(document.getElementById('np-margin-price')?.value) || 0,
+      logistics: Number(document.getElementById('np-margin-logistics')?.value) || 0,
+      shipping: Number(document.getElementById('np-margin-shipping')?.value) || 0,
+      marketing: Number(document.getElementById('np-margin-marketing')?.value) || 0,
+    };
+    const breakdown = npComputeWizardWaterfall();
+    w.cogs = { unit_cogs: breakdown.cogs };
+    w.cogsBreakdown = {
+      ...Object.fromEntries(w.cogsLineItems.map(li => [li.key, li.value])),
+      'Price': w.cogsExtra.price, 'Logistics Cost': w.cogsExtra.logistics,
+      'Shipping Cost': w.cogsExtra.shipping, 'Marketing Cost': w.cogsExtra.marketing,
+    };
   }
   w.step += 1;
   renderNpWizard();
@@ -3174,29 +3321,70 @@ function npWizardBack() {
 
 async function npWizardCreate() {
   const w = window._npWizard;
+  const logIds = [];
   const { data: product, error } = await sb.from('products').insert({
     sku_code: w.sku_code, display_name: w.display_name, product_type: 'root', is_active: w.is_active,
-    unit_cogs: w.cogs.unit_cogs,
+    unit_cogs: w.cogs.unit_cogs, cogs_breakdown: w.cogsBreakdown || null,
   }).select().single();
   if (error) { alert('Create failed: ' + error.message); return; }
-  await logAction('products', product.id, 'create', `Created new product ${w.display_name} (${w.sku_code}) via setup wizard`, null, product);
+  const productLogId = await logAction('products', product.id, 'create', `Created new product ${w.display_name} (${w.sku_code}) via setup wizard`, null, product, { silent: true });
+  if (productLogId) logIds.push(productLogId);
 
   for (const c of w.components) {
     const { data: comp, error: compError } = await sb.from('components').insert({
       component_name: c.component_name, product_id: product.id, unit_of_measure: c.unit_of_measure, qty_per_unit: c.qty_per_unit,
     }).select().single();
     if (compError) { alert(`Product created, but failed to add component "${c.component_name}": ${compError.message}`); continue; }
-    await logAction('components', comp.id, 'create', `Created component ${c.component_name} for ${w.display_name} via setup wizard`, null, comp);
+    const compLogId = await logAction('components', comp.id, 'create', `Created component ${c.component_name} for ${w.display_name} via setup wizard`, null, comp, { silent: true });
+    if (compLogId) logIds.push(compLogId);
     if (c.vendor_id) {
-      const { error: cvError } = await sb.from('component_vendors').insert({ component_id: comp.id, vendor_id: c.vendor_id, is_preferred: true });
-      if (cvError) alert(`Component "${c.component_name}" created, but failed to link its vendor: ${cvError.message}`);
+      const { data: cv, error: cvError } = await sb.from('component_vendors').insert({ component_id: comp.id, vendor_id: c.vendor_id, is_preferred: true }).select().single();
+      if (cvError) { alert(`Component "${c.component_name}" created, but failed to link its vendor: ${cvError.message}`); continue; }
+      const cvLogId = await logAction('component_vendors', cv.id, 'create', `Linked vendor to ${c.component_name} via setup wizard`, null, cv, { silent: true });
+      if (cvLogId) logIds.push(cvLogId);
     }
   }
+
+  // Alex (2026-11-10): "The creation of the new product didn't log into the activity log and so
+  // I wasn't able to undo it." -- one consolidated toast for the whole wizard run (product +
+  // every component + every vendor link), instead of N toasts each clobbering the last. "Undo"
+  // reverts all of it, in reverse creation order.
+  showBulkUndoToast(logIds, `Created ${w.display_name} (${w.sku_code})${w.components.length ? ` with ${w.components.length} component${w.components.length === 1 ? '' : 's'}` : ''}`);
 
   document.getElementById('detail-modal-backdrop')?.remove();
   window._npWizard = null;
   await renderCatalogProducts();
   await renderCatalogComponents();
+}
+
+// Styled replacement for window.confirm()/alert() -- Alex (2026-11-10): "instead of a screen
+// popup after 'delete product' is hit, it should be a pop up box." Reused anywhere a plain
+// browser confirm()/alert() would otherwise show (block/success message with just an OK button,
+// or a real confirm with OK/Cancel) -- same detail-modal visual language as showPromptModal.
+function showConfirmModal(title, message, opts) {
+  return new Promise(resolve => {
+    document.getElementById('detail-modal-backdrop')?.remove();
+    const el = document.createElement('div');
+    el.id = 'detail-modal-backdrop';
+    el.className = 'detail-modal-backdrop';
+    const finish = (val) => { el.remove(); resolve(val); };
+    el.onclick = (e) => { if (e.target === el) finish(opts?.okOnly ? true : false); };
+    el.innerHTML = `
+      <div class="detail-modal" style="max-width:460px;">
+        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px; ${opts?.danger ? 'color:var(--bad-text);' : ''}">${title}</div>
+        <div style="font-size:14px; line-height:1.5; margin-bottom:16px;">${message}</div>
+        <div style="display:flex; gap:8px;">
+          ${opts?.okOnly
+            ? `<button class="btn btn-primary" id="confirm-modal-ok">OK</button>`
+            : `<button class="btn ${opts?.danger ? 'btn-primary' : 'btn-primary'}" style="${opts?.danger ? 'background:var(--bad-text);' : ''}" id="confirm-modal-ok">${opts?.okLabel || 'Confirm'}</button>
+               <button class="btn btn-ghost" id="confirm-modal-cancel">Cancel</button>`}
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    document.getElementById('confirm-modal-ok').onclick = () => finish(true);
+    document.getElementById('confirm-modal-cancel')?.addEventListener('click', () => finish(false));
+  });
 }
 
 async function editProductNameInline(productId) {
@@ -3240,14 +3428,23 @@ async function deleteProduct(productId, displayName) {
   if (componentCount) blockers.push(`${componentCount} component${componentCount === 1 ? '' : 's'} on file`);
 
   if (blockers.length) {
-    alert(`Can't delete "${displayName}" -- it has real activity: ${blockers.join(', ')}. Use the Active checkbox to retire it instead; a true delete would either fail or silently wipe that history.`);
+    await showConfirmModal(
+      `Can't delete "${displayName}"`,
+      `It has real activity: ${blockers.join(', ')}. Use the Active checkbox to retire it instead; a true delete would either fail or silently wipe that history.`,
+      { okOnly: true, danger: true }
+    );
     return;
   }
-  if (!confirm(`Delete "${displayName}"? It has no inventory history, revenue history, POs, bundle membership, or components on file, so this is a clean, permanent delete.`)) return;
+  const confirmed = await showConfirmModal(
+    'Delete this product?',
+    `Delete "${displayName}"? It has no inventory history, revenue history, POs, bundle membership, or components on file, so this is a clean, permanent delete.`,
+    { okLabel: 'Delete', danger: true }
+  );
+  if (!confirmed) return;
 
   const { data: before } = await sb.from('products').select('*').eq('id', productId).single();
   const { error } = await sb.from('products').delete().eq('id', productId);
-  if (error) { alert('Delete failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Delete failed', error.message, { okOnly: true, danger: true }); return; }
   await logAction('products', productId, 'delete', `Deleted product ${displayName} (no real activity on file)`, before, null);
   await renderCatalogProducts();
   await renderCatalogBundles();
