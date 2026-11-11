@@ -208,6 +208,18 @@
     width: min(640px, 92vw);
     max-height: 88vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
   }
+  /* Alex (2026-11-11): "The vendor contacts due popup screen, the 'why' column has 25+ rows of
+     wrapped text... Make the column wider." Root cause, confirmed live in the DOM: this base
+     class hardcodes `width: min(640px, 92vw)`, which wins over any inline `max-width` a caller
+     sets (width is more specific than max-width when both apply to the same box) -- so EVERY
+     'wide' showDetail(...) call (Open Recs, Overdue, Vendor Contacts Due, QC Run, Trend Chart)
+     has been silently stuck at 640px this whole time despite requesting 1180px. The colWidths
+     fixes from rounds 12-14 were computing correct relative proportions, just squeezed into a
+     container 540px narrower than intended. Fixed by also setting `width` (not just max-width)
+     inline whenever size === 'wide', so the 1180px cap actually takes effect. */
+  .detail-modal.wide {
+    width: min(1180px, 92vw);
+  }
   /* Collapsible "show the math" sections (Alex, 2026-10-22: "optimize each popup for minimal
      scrolling") -- native <details>/<summary>, zero extra JS, zero height until expanded. */
   .detail-modal details { margin-top: 10px; }
@@ -668,8 +680,9 @@ function showDetail(title, body, size) {
   el.className = 'detail-modal-backdrop';
   el.onclick = (e) => { if (e.target === el) el.remove(); };
   const maxWidth = size === 'wide' ? '1180px' : '640px';
+  const wideClass = size === 'wide' ? ' wide' : '';
   el.innerHTML = `
-    <div class="detail-modal" style="max-width:${maxWidth}; display:flex; flex-direction:column; overflow:hidden;">
+    <div class="detail-modal${wideClass}" style="max-width:${maxWidth}; display:flex; flex-direction:column; overflow:hidden;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px; flex-shrink:0;">${title}</div>
       <div style="font-size:14px; color:var(--ink); line-height:1.5; overflow-y:auto; flex:1; min-height:0;">${body}</div>
       <button class="btn btn-ghost" style="margin-top:16px; flex-shrink:0;" onclick="document.getElementById('detail-modal-backdrop').remove()">Close</button>
