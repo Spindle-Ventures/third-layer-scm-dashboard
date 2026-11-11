@@ -914,28 +914,39 @@ function showContactsKpiDetail() {
     .slice()
     .sort((a, b) => (a.next_contact || '').localeCompare(b.next_contact || ''))
     .map(o => {
-      const overdue = o.next_contact < today;
+      const overdue = o.next_contact && o.next_contact < today;
+      const dueToday = o.next_contact && o.next_contact <= today;
+      const msgs = (window._vendorMessagesByLedger || {})[o.ledger_id] || [];
+      const lastOutbound = msgs.filter(m => m.direction === 'outbound').sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
+      const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
+      const awaitingReply = lastOutbound && (!lastInbound || lastInbound.created_at <= lastOutbound.sent_at);
+      // Alex (2026-11-12): "when clicked shows the status of today's outreaches plus anything
+      // that's been sent previously but not responded to." Status column makes which bucket an
+      // order is in explicit, since a row can be in both (due today AND still unanswered).
+      let statusLabel, statusCls;
+      if (dueToday && awaitingReply) { statusLabel = 'Due today + no reply'; statusCls = 'bad'; }
+      else if (dueToday) { statusLabel = 'Due today'; statusCls = 'watch'; }
+      else if (awaitingReply) { statusLabel = `No reply (sent ${fmtDate((lastOutbound.sent_at || '').slice(0, 10))})`; statusCls = 'bad'; }
+      else { statusLabel = 'Scheduled'; statusCls = 'watch'; }
       return [
         o.vendor_name || '—',
         `<strong>${o.product_name}</strong>`,
         o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>',
         `<strong>${fmtDate(o.eta)}</strong>`,
-        `<span class="pill ${overdue ? 'bad' : 'watch'}">${fmtDate(o.next_contact)}</span>`,
+        `<span class="pill ${statusCls}">${statusLabel}</span>`,
         buildActionDetail(o),
-        // Alex (2026-10-23): "I don't see the vendor contacts due that shows the message
-        // prepped to send to the vendor." -- a dedicated button opening the ready-to-copy
-        // outreach text, separate from "Why" (which explains the situation to US).
-        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="showVendorMessagePopup('${o.ledger_id}')">Message</button>`,
+        `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showContactScheduleDetail('${o.ledger_id}')">Thread</button>`,
         `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
       ];
     });
-  showDetail('Vendor Contacts Due — next 7 days', kpiTable(
-    ['Vendor', 'Product', 'Order #', 'ETA', 'Next Contact', 'Why', '', ''],
+  showDetail('Vendor Contacts Due — today + outstanding', kpiTable(
+    ['Vendor', 'Product', 'Order #', 'ETA', 'Status', 'Why', '', ''],
     rows, 5,
-    ['100px', '130px', '90px', '105px', '120px', null, '95px', '115px'],
+    ['100px', '130px', '90px', '105px', '150px', null, '85px', '115px'],
     [3, 6, 7]
   ), 'wide');
 }
+
 
 function showQcKpiDetail() {
   const { lastQc } = window._kpiContext || { lastQc: null };
@@ -984,6 +995,19 @@ async function renderOverview() {
 
   window._allActiveProductsCache = allActiveProducts || [];
 
+  // Alex (2026-11-11/12): contact-schedule status chip AND the Vendor Contacts Due KPI's
+  // "outstanding, no reply" group both need every open order's vendor_messages BEFORE the KPI
+  // counts below are computed -- moved here (was previously fetched further down, after the KPI
+  // block had already run with stale/empty data on first load).
+  const openLedgerIdsForMsgPrefetch = (openOrders || []).map(o => o.ledger_id).filter(Boolean);
+  window._vendorMessagesByLedger = {};
+  if (openLedgerIdsForMsgPrefetch.length) {
+    const { data: allMsgsPrefetch } = await sb.from('vendor_messages').select('*').in('ledger_id', openLedgerIdsForMsgPrefetch);
+    (allMsgsPrefetch || []).forEach(m => {
+      if (!window._vendorMessagesByLedger[m.ledger_id]) window._vendorMessagesByLedger[m.ledger_id] = [];
+      window._vendorMessagesByLedger[m.ledger_id].push(m);
+    });
+  }
 
   window._invSnapshotBySku = {};
   (invSnapshot || []).forEach(s => {
@@ -1043,15 +1067,26 @@ async function renderOverview() {
   window._revenuePacingMonthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
   const today = new Date().toISOString().slice(0, 10);
-  const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
   const activeRecs = (recs || []).filter(r => r.urgency !== 'OK');
   const criticalCount = activeRecs.filter(r => r.urgency === 'CRITICAL').length;
   const overdueOrders = (openOrders || []).filter(o => o.action_needed === 'Overdue');
   const overdueCount = overdueOrders.length;
-  // "Vendor Contacts Due" = overdue contacts + anything coming up in the next 7 days, so Alex can
-  // see what communications are coming, not just what's already late.
-  const contactsDueOrSoon = (openOrders || []).filter(o => o.order_status !== 'paused' && o.next_contact && o.next_contact <= in7Days);
+  // Alex (2026-11-12): "I don't think at this point we need a 'vendor contacts' card for the
+  // next 7 days, it should just be today and then when clicked shows the status of today's
+  // outreaches plus anything that's been sent previously but not responded to." Two groups:
+  // (a) contact due TODAY (next_contact == today, or overdue and still unresolved), (b) any
+  // order with an outbound email and no inbound reply since, regardless of how long ago it was
+  // sent -- "previously but not responded to" has no day cutoff by design.
+  const contactsDueToday = (openOrders || []).filter(o => o.order_status !== 'paused' && o.next_contact && o.next_contact <= today);
+  const outstandingNoReply = (openOrders || []).filter(o => {
+    if (o.order_status === 'paused') return false;
+    const msgs = (window._vendorMessagesByLedger || {})[o.ledger_id] || [];
+    const lastOutbound = msgs.filter(m => m.direction === 'outbound').sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
+    const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
+    return lastOutbound && (!lastInbound || lastInbound.created_at <= lastOutbound.sent_at);
+  });
+  const contactsDueOrSoon = [...contactsDueToday, ...outstandingNoReply.filter(o => !contactsDueToday.some(c => c.ledger_id === o.ledger_id))];
   const contactDueCount = contactsDueOrSoon.length;
   const lastQc = (qcRuns && qcRuns[0]) || null;
   const needsActionCount = (openOrders || []).filter(o => o.action_needed !== 'On Track').length;
@@ -1127,7 +1162,7 @@ async function renderOverview() {
           <div class="kpi-label">Vendor Contacts Due</div>
           <div class="kpi-value">${contactDueCount}</div>
         </div>
-        <div class="pill ${contactDueCount > 0 ? 'watch' : 'good'}">${contactDueCount > 0 ? 'due now or within 7 days' : 'none in next 7 days'}</div>
+        <div class="pill ${contactDueCount > 0 ? 'watch' : 'good'}">${contactDueCount > 0 ? 'due today or awaiting reply' : 'none due, nothing outstanding'}</div>
       </div>
       <div class="card kpi-card clickable-pill" onclick="showQcKpiDetail()">
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
@@ -1176,18 +1211,6 @@ async function renderOverview() {
   `;
 
   window._openOrdersCache = openOrders || [];
-  // Alex (2026-11-11): contact-schedule status chip (Healthy/Needs Attention/Awaiting Reply)
-  // needs every open order's vendor_messages up front, not just the one a user happens to click
-  // into -- otherwise every chip falls back to the old next_contact-only logic until opened once.
-  const openLedgerIds = (openOrders || []).map(o => o.ledger_id).filter(Boolean);
-  window._vendorMessagesByLedger = {};
-  if (openLedgerIds.length) {
-    const { data: allMsgs } = await sb.from('vendor_messages').select('*').in('ledger_id', openLedgerIds);
-    (allMsgs || []).forEach(m => {
-      if (!window._vendorMessagesByLedger[m.ledger_id]) window._vendorMessagesByLedger[m.ledger_id] = [];
-      window._vendorMessagesByLedger[m.ledger_id].push(m);
-    });
-  }
   const productSelect = document.getElementById('filter-product');
   // Union of products with an open order AND every active product, so one with zero open orders
   // (e.g. everything landed/cancelled) still appears in the filter instead of silently vanishing.
