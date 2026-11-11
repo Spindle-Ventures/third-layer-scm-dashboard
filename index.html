@@ -3409,45 +3409,160 @@ async function editProductNameInline(productId) {
 // otherwise block it and point at the existing Active toggle instead. Checks the handful that
 // matter in practice (a brand-new/test product created in error would show zero everywhere; any
 // real product will have landed at least one of these the moment it's live).
-async function deleteProduct(productId, displayName) {
+// Alex (2026-11-10, round 13): "I need the ability to delete components & products at will and
+// when deleting ensure I'm sure and then delete from database." Full cascade delete -- confirmed
+// explicitly with Alex: delete should wipe ALL related rows (ledger, revenue, POs, bundle links,
+// forecasts, etc.), not just block on them like the old "clean delete only" rule did. Still
+// checks and SHOWS what it's about to wipe (open orders / vendor links, same "blockers" idea as
+// before) so "ensure I'm sure" is a real review step, not just a generic warning -- and requires
+// typing the exact name to confirm, since this is now genuinely irreversible-feeling (though it
+// IS still undoable via the Activity Log's bulk-undo, like every other delete here).
+async function cascadeDeleteProduct(productId, displayName) {
   const [
-    { count: ledgerCount }, { count: revenueCount }, { count: poCount },
-    { count: bundleMemberCount }, { count: componentCount },
+    { data: ledgerRows }, { data: revenueRows }, { data: poRows },
+    { data: bundleAsRoot }, { data: bundleAsMember }, { data: componentRows },
+    { data: agentRecRows }, { data: forecastRows }, { data: forecastMonthlyRows },
+    { data: adjRows }, { data: projRows }, { data: snapshotRows },
+    { data: scenarioMixRows }, { data: scenarioPoRows },
   ] = await Promise.all([
-    sb.from('inventory_ledger').select('id', { count: 'exact', head: true }).eq('product_id', productId),
-    sb.from('historical_revenue_pct').select('product_id', { count: 'exact', head: true }).eq('product_id', productId),
-    sb.from('purchase_orders').select('id', { count: 'exact', head: true }).eq('product_id', productId),
-    sb.from('bundle_compositions').select('id', { count: 'exact', head: true }).eq('root_product_id', productId),
-    sb.from('components').select('id', { count: 'exact', head: true }).eq('product_id', productId),
+    sb.from('inventory_ledger').select('*').eq('product_id', productId),
+    sb.from('historical_revenue_pct').select('*').eq('product_id', productId),
+    sb.from('purchase_orders').select('*').eq('product_id', productId),
+    sb.from('bundle_compositions').select('*').eq('root_product_id', productId),
+    sb.from('bundle_compositions').select('*').eq('bundle_id', productId),
+    sb.from('components').select('*').eq('product_id', productId),
+    sb.from('agent_recommendations').select('*').eq('product_id', productId),
+    sb.from('forecast_params').select('*').eq('product_id', productId),
+    sb.from('forecast_params_monthly').select('*').eq('product_id', productId),
+    sb.from('manual_throughput_adjustments').select('*').eq('product_id', productId),
+    sb.from('monthly_projections').select('*').eq('product_id', productId),
+    sb.from('product_inventory_snapshot').select('*').eq('product_id', productId),
+    sb.from('revenue_scenario_mix').select('*').eq('product_id', productId),
+    sb.from('revenue_scenario_po').select('*').eq('product_id', productId),
   ]);
-  const blockers = [];
-  if (ledgerCount) blockers.push(`${ledgerCount} inventory ledger row${ledgerCount === 1 ? '' : 's'}`);
-  if (revenueCount) blockers.push(`${revenueCount} month${revenueCount === 1 ? '' : 's'} of revenue history`);
-  if (poCount) blockers.push(`${poCount} purchase order${poCount === 1 ? '' : 's'}`);
-  if (bundleMemberCount) blockers.push(`used in ${bundleMemberCount} bundle${bundleMemberCount === 1 ? '' : 's'}`);
-  if (componentCount) blockers.push(`${componentCount} component${componentCount === 1 ? '' : 's'} on file`);
+  const componentIds = (componentRows || []).map(c => c.id);
+  let componentVendorRows = [];
+  let componentLedgerRows = [];
+  let componentPoRows = [];
+  if (componentIds.length) {
+    const [{ data: cv }, { data: cl }, { data: cp }] = await Promise.all([
+      sb.from('component_vendors').select('*').in('component_id', componentIds),
+      sb.from('inventory_ledger').select('*').in('component_id', componentIds),
+      sb.from('purchase_orders').select('*').in('component_id', componentIds),
+    ]);
+    componentVendorRows = cv || []; componentLedgerRows = cl || []; componentPoRows = cp || [];
+  }
+  const summary = [
+    { label: 'inventory ledger rows (finished good)', rows: ledgerRows },
+    { label: 'months of revenue history', rows: revenueRows },
+    { label: 'purchase orders (finished good)', rows: poRows },
+    { label: 'bundle compositions (as a bundle root)', rows: bundleAsRoot },
+    { label: 'bundle compositions (as a bundle member)', rows: bundleAsMember },
+    { label: 'components', rows: componentRows },
+    { label: 'component-vendor links', rows: componentVendorRows },
+    { label: 'component inventory ledger rows', rows: componentLedgerRows },
+    { label: 'component purchase orders', rows: componentPoRows },
+    { label: 'agent recommendations', rows: agentRecRows },
+    { label: 'forecast params', rows: forecastRows },
+    { label: 'monthly forecast params', rows: forecastMonthlyRows },
+    { label: 'manual throughput adjustments', rows: adjRows },
+    { label: 'monthly projections', rows: projRows },
+    { label: 'inventory snapshots', rows: snapshotRows },
+    { label: 'revenue scenario mix rows', rows: scenarioMixRows },
+    { label: 'revenue scenario PO rows', rows: scenarioPoRows },
+  ].filter(s => s.rows && s.rows.length);
 
-  if (blockers.length) {
-    await showConfirmModal(
-      `Can't delete "${displayName}"`,
-      `It has real activity: ${blockers.join(', ')}. Use the Active checkbox to retire it instead; a true delete would either fail or silently wipe that history.`,
-      { okOnly: true, danger: true }
-    );
+  const bodyMsg = summary.length
+    ? `This will PERMANENTLY delete "${displayName}" AND everything tied to it:<br><br>` +
+      summary.map(s => `&nbsp;&nbsp;• ${s.rows.length} ${s.label}`).join('<br>') +
+      `<br><br>Type the product name below to confirm.`
+    : `"${displayName}" has no related records on file -- this will permanently delete just the product itself.<br><br>Type the product name below to confirm.`;
+  const typed = await showPromptModal(`Delete "${displayName}"?`, bodyMsg, '');
+  if (typed === null || typed.trim() !== displayName) {
+    if (typed !== null) await showConfirmModal('Not deleted', 'The name you typed didn\'t match exactly, so nothing was deleted.', { okOnly: true, danger: true });
     return;
   }
-  const confirmed = await showConfirmModal(
-    'Delete this product?',
-    `Delete "${displayName}"? It has no inventory history, revenue history, POs, bundle membership, or components on file, so this is a clean, permanent delete.`,
-    { okLabel: 'Delete', danger: true }
-  );
-  if (!confirmed) return;
 
   const { data: before } = await sb.from('products').select('*').eq('id', productId).single();
+  const logIds = [];
+  const logDelete = async (table, row) => {
+    const id = await logAction(table, row.id, 'delete', `Cascade-deleted ${table} row (product "${displayName}" delete)`, row, null, { silent: true });
+    if (id) logIds.push(id);
+  };
+  // Children first, in dependency order, so no FK violation occurs mid-delete.
+  for (const row of componentVendorRows) { await sb.from('component_vendors').delete().eq('id', row.id); await logDelete('component_vendors', row); }
+  for (const row of componentLedgerRows) { await sb.from('inventory_ledger').delete().eq('id', row.id); await logDelete('inventory_ledger', row); }
+  for (const row of componentPoRows) { await sb.from('purchase_orders').delete().eq('id', row.id); await logDelete('purchase_orders', row); }
+  for (const row of (componentRows || [])) { await sb.from('components').delete().eq('id', row.id); await logDelete('components', row); }
+  for (const row of (bundleAsRoot || [])) { await sb.from('bundle_compositions').delete().eq('id', row.id); await logDelete('bundle_compositions', row); }
+  for (const row of (bundleAsMember || [])) { await sb.from('bundle_compositions').delete().eq('id', row.id); await logDelete('bundle_compositions', row); }
+  for (const row of (ledgerRows || [])) { await sb.from('inventory_ledger').delete().eq('id', row.id); await logDelete('inventory_ledger', row); }
+  for (const row of (poRows || [])) { await sb.from('purchase_orders').delete().eq('id', row.id); await logDelete('purchase_orders', row); }
+  for (const row of (revenueRows || [])) { await sb.from('historical_revenue_pct').delete().eq('id', row.id); await logDelete('historical_revenue_pct', row); }
+  for (const row of (agentRecRows || [])) { await sb.from('agent_recommendations').delete().eq('id', row.id); await logDelete('agent_recommendations', row); }
+  for (const row of (forecastRows || [])) { await sb.from('forecast_params').delete().eq('id', row.id); await logDelete('forecast_params', row); }
+  for (const row of (forecastMonthlyRows || [])) { await sb.from('forecast_params_monthly').delete().eq('id', row.id); await logDelete('forecast_params_monthly', row); }
+  for (const row of (adjRows || [])) { await sb.from('manual_throughput_adjustments').delete().eq('id', row.id); await logDelete('manual_throughput_adjustments', row); }
+  for (const row of (projRows || [])) { await sb.from('monthly_projections').delete().eq('id', row.id); await logDelete('monthly_projections', row); }
+  for (const row of (snapshotRows || [])) { await sb.from('product_inventory_snapshot').delete().eq('id', row.id); await logDelete('product_inventory_snapshot', row); }
+  for (const row of (scenarioMixRows || [])) { await sb.from('revenue_scenario_mix').delete().eq('id', row.id); await logDelete('revenue_scenario_mix', row); }
+  for (const row of (scenarioPoRows || [])) { await sb.from('revenue_scenario_po').delete().eq('id', row.id); await logDelete('revenue_scenario_po', row); }
+
   const { error } = await sb.from('products').delete().eq('id', productId);
-  if (error) { await showConfirmModal('Delete failed', error.message, { okOnly: true, danger: true }); return; }
-  await logAction('products', productId, 'delete', `Deleted product ${displayName} (no real activity on file)`, before, null);
+  if (error) { await showConfirmModal('Delete failed', `Cleared ${logIds.length} related row(s), but the product itself failed to delete: ${error.message}. Check the Activity Log -- you may need to undo the related-row deletes manually.`, { okOnly: true, danger: true }); return; }
+  const productLogId = await logAction('products', productId, 'delete', `Deleted product ${displayName} (cascade: ${logIds.length} related row${logIds.length === 1 ? '' : 's'})`, before, null, { silent: true });
+  if (productLogId) logIds.push(productLogId);
+
+  showBulkUndoToast(logIds, `Deleted ${displayName}${logIds.length > 1 ? ` and ${logIds.length - 1} related row${logIds.length - 1 === 1 ? '' : 's'}` : ''}`);
   await renderCatalogProducts();
   await renderCatalogBundles();
+  await renderCatalogComponents();
+}
+
+async function cascadeDeleteComponent(componentId, componentName) {
+  const [{ data: vendorLinks }, { data: ledgerRows }, { data: poRows }] = await Promise.all([
+    sb.from('component_vendors').select('*').eq('component_id', componentId),
+    sb.from('inventory_ledger').select('*').eq('component_id', componentId),
+    sb.from('purchase_orders').select('*').eq('component_id', componentId),
+  ]);
+  const summary = [
+    { label: 'vendor link(s)', rows: vendorLinks },
+    { label: 'inventory ledger row(s)', rows: ledgerRows },
+    { label: 'purchase order(s)', rows: poRows },
+  ].filter(s => s.rows && s.rows.length);
+  const bodyMsg = summary.length
+    ? `This will PERMANENTLY delete "${componentName}" AND everything tied to it:<br><br>` +
+      summary.map(s => `&nbsp;&nbsp;• ${s.rows.length} ${s.label}`).join('<br>') +
+      `<br><br>Type the component name below to confirm.`
+    : `"${componentName}" has no related records on file -- this will permanently delete just the component itself.<br><br>Type the component name below to confirm.`;
+  const typed = await showPromptModal(`Delete "${componentName}"?`, bodyMsg, '');
+  if (typed === null || typed.trim() !== componentName) {
+    if (typed !== null) await showConfirmModal('Not deleted', 'The name you typed didn\'t match exactly, so nothing was deleted.', { okOnly: true, danger: true });
+    return;
+  }
+
+  const { data: before } = await sb.from('components').select('*').eq('id', componentId).single();
+  const logIds = [];
+  const logDelete = async (table, row) => {
+    const id = await logAction(table, row.id, 'delete', `Cascade-deleted ${table} row (component "${componentName}" delete)`, row, null, { silent: true });
+    if (id) logIds.push(id);
+  };
+  for (const row of (vendorLinks || [])) { await sb.from('component_vendors').delete().eq('id', row.id); await logDelete('component_vendors', row); }
+  for (const row of (ledgerRows || [])) { await sb.from('inventory_ledger').delete().eq('id', row.id); await logDelete('inventory_ledger', row); }
+  for (const row of (poRows || [])) { await sb.from('purchase_orders').delete().eq('id', row.id); await logDelete('purchase_orders', row); }
+
+  const { error } = await sb.from('components').delete().eq('id', componentId);
+  if (error) { await showConfirmModal('Delete failed', `Cleared ${logIds.length} related row(s), but the component itself failed to delete: ${error.message}.`, { okOnly: true, danger: true }); return; }
+  const compLogId = await logAction('components', componentId, 'delete', `Deleted component ${componentName} (cascade: ${logIds.length} related row${logIds.length === 1 ? '' : 's'})`, before, null, { silent: true });
+  if (compLogId) logIds.push(compLogId);
+
+  showBulkUndoToast(logIds, `Deleted ${componentName}${logIds.length > 1 ? ` and ${logIds.length - 1} related row${logIds.length - 1 === 1 ? '' : 's'}` : ''}`);
+  await renderCatalogComponents();
+  await renderCatalogProducts();
+}
+
+async function deleteProduct(productId, displayName) {
+  await cascadeDeleteProduct(productId, displayName);
 }
 
 async function editComponentNameInline(componentId) {
@@ -3978,6 +4093,9 @@ function renderCatalogComponentsTable() {
     const manageVendorsHtml = canAct
       ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:12px;" onclick="showComponentVendorsModal('${c.id}', '${componentNameSafe}')">Manage Vendors</button>`
       : '';
+    const deleteComponentHtml = canAct
+      ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:12px; color:var(--bad-text); margin-left:8px;" onclick="cascadeDeleteComponent('${c.id}', '${componentNameSafe}')">Delete Component</button>`
+      : '';
 
     const nestedHtml = `
       <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:baseline; padding:6px 0 10px; border-bottom:1px solid var(--border); margin-bottom:8px;">
@@ -3985,7 +4103,7 @@ function renderCatalogComponentsTable() {
       </div>
       <div class="section-label" style="margin:0 0 6px;">Vendors</div>
       <div style="margin-bottom:8px;">${vendorsListHtml}</div>
-      ${manageVendorsHtml}
+      ${manageVendorsHtml}${deleteComponentHtml}
     `;
 
     return `
