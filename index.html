@@ -1811,8 +1811,12 @@ function renderOpenOrderRow(o, editing) {
 
 async function showAddOrderMenu() {
   if (!canEdit()) return;
+  // Alex (2026-11-11): "the dropdown should contain all products (right now it's missing the
+  // deodorant)" -- root cause: this lookup only loaded `is_active=true` products, and the
+  // Deodorant SKUs (+ Silicone Socks) are marked inactive. Now loads every product; inactive
+  // ones are visibly tagged "(inactive)" in the picker rather than silently hidden.
   const [{ data: products }, { data: vendors }] = await Promise.all([
-    sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
+    sb.from('products').select('id, sku_code, display_name, is_active'),
     sb.from('vendors').select('id, vendor_name').order('vendor_name'),
   ]);
   window._addOrderLookups = {
@@ -1828,6 +1832,14 @@ async function showAddOrderMenu() {
   showDetail('Add Order — Which type?', body);
 }
 
+// Alex (2026-11-11): "I should be able to create one PO for multiple products so the picklist
+// should be multi-select." Scoped to finished-good orders (where "Initiate PO" actually applies)
+// -- component orders stay single-product because each needs ITS OWN specific component
+// selected (a multi-select there would need a separate component+qty per product, a bigger
+// change not asked for here). inventory_ledger has no native "one PO, many products" concept
+// (every row is one product), so this reuses the existing `order_number` field as the shared PO
+// identifier: selecting N products and submitting creates N separate inventory_ledger rows, all
+// carrying the same order number/vendor/ETA/tracking/notes, one row per product with its own qty.
 async function showAddOrderForm(type) {
   const { products, vendors } = window._addOrderLookups || { products: [], vendors: [] };
   let components = [];
@@ -1837,23 +1849,37 @@ async function showAddOrderForm(type) {
   }
   window._addOrderLookups.components = components;
 
-  const productOptions = products.map(p => `<option value="${p.id}">${p.display_name}</option>`).join('');
+  // Alex (2026-11-11): "the dropdown should contain all products (right now it's missing the
+  // deodorant)" -- inactive products (Deodorant SKUs, Silicone Socks) are now included, visibly
+  // tagged so it's obvious they're inactive rather than silently indistinguishable from active.
+  const productOptionHtml = (p) => `<option value="${p.id}"${p.is_active === false ? ' style="color:var(--muted);"' : ''}>${p.display_name}${p.is_active === false ? ' (inactive)' : ''}</option>`;
   const vendorOptions = vendors.map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('');
 
-  const body = `
-    <div style="display:flex; flex-direction:column; gap:10px; font-size:14px;">
+  const productFieldHtml = type === 'finished_good'
+    ? `
+      <label>Product(s) <span class="muted" style="font-weight:400;">— ctrl/cmd-click to select more than one; add a quantity for each below</span><br>
+        <select id="add-order-product" multiple size="6" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" onchange="refreshAddOrderQtyRows()">${products.map(productOptionHtml).join('')}</select>
+      </label>
+      <div id="add-order-qty-rows" style="display:flex; flex-direction:column; gap:6px;"></div>
+    `
+    : `
       <label>Product<br>
-        <select id="add-order-product" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" onchange="refreshAddOrderComponents()">${productOptions}</select>
+        <select id="add-order-product" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" onchange="refreshAddOrderComponents()">${products.map(productOptionHtml).join('')}</select>
       </label>
       ${type === 'componentry' ? `
       <label>Component<br>
         <select id="add-order-component" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);"></select>
       </label>` : ''}
-      <label>Vendor<br>
-        <select id="add-order-vendor" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);"><option value="">— none —</option>${vendorOptions}</select>
-      </label>
       <label>Quantity<br>
         <input id="add-order-qty" type="number" min="1" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
+      </label>
+    `;
+
+  const body = `
+    <div style="display:flex; flex-direction:column; gap:10px; font-size:14px;">
+      ${productFieldHtml}
+      <label>Vendor<br>
+        <select id="add-order-vendor" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);"><option value="">— none —</option>${vendorOptions}</select>
       </label>
       <label>ETA<br>
         <input id="add-order-eta" type="date" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
@@ -1867,11 +1893,33 @@ async function showAddOrderForm(type) {
       <label>Notes (optional)<br>
         <input id="add-order-notes" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
       </label>
-      <button class="btn btn-primary" onclick="createNewOrder('${type}')">Create Order</button>
+      <button class="btn btn-primary" onclick="createNewOrder('${type}')">Create Order${type === 'finished_good' ? '(s)' : ''}</button>
     </div>
   `;
   showDetail(`Add ${type === 'componentry' ? 'Component' : 'Finished Good'} Order`, body);
   if (type === 'componentry') refreshAddOrderComponents();
+  if (type === 'finished_good') refreshAddOrderQtyRows();
+}
+
+// Builds one quantity input per currently-selected product in the multi-select, preserving any
+// quantity already typed for a product that's still selected after the selection changes.
+function refreshAddOrderQtyRows() {
+  const sel = document.getElementById('add-order-product');
+  const rowsEl = document.getElementById('add-order-qty-rows');
+  if (!sel || !rowsEl) return;
+  const products = window._addOrderLookups?.products || [];
+  const selectedIds = Array.from(sel.selectedOptions).map(o => o.value);
+  const prevValues = {};
+  rowsEl.querySelectorAll('input[data-product-id]').forEach(inp => { prevValues[inp.dataset.productId] = inp.value; });
+  rowsEl.innerHTML = selectedIds.map(id => {
+    const p = products.find(pr => pr.id === id);
+    return `
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="flex:1; font-size:13px;">${p?.display_name || id}</span>
+        <input type="number" min="1" placeholder="Qty" data-product-id="${id}" value="${prevValues[id] || ''}" style="width:100px; padding:5px 8px; border-radius:6px; border:1px solid var(--border);" />
+      </div>
+    `;
+  }).join('') || '<div class="muted" style="font-size:13px;">Select one or more products above.</div>';
 }
 
 function refreshAddOrderComponents() {
@@ -1883,23 +1931,63 @@ function refreshAddOrderComponents() {
 }
 
 async function createNewOrder(type) {
-  const productId = document.getElementById('add-order-product').value;
-  const componentId = type === 'componentry' ? document.getElementById('add-order-component').value : null;
   const vendorId = document.getElementById('add-order-vendor').value || null;
-  const qty = Number(document.getElementById('add-order-qty').value);
   const eta = document.getElementById('add-order-eta').value || null;
   const orderNumber = document.getElementById('add-order-number').value || null;
   const tracking = document.getElementById('add-order-tracking').value || null;
   const notes = document.getElementById('add-order-notes').value || null;
 
+  // Finished-good orders: one or more products, each with its own qty, sharing vendor/ETA/order
+  // number/tracking/notes -- this is the "one PO, multiple products" flow.
+  if (type === 'finished_good') {
+    const qtyInputs = Array.from(document.querySelectorAll('#add-order-qty-rows input[data-product-id]'));
+    if (!qtyInputs.length) { await showConfirmModal('Check your input', 'Select at least one product.', { okOnly: true }); return; }
+    const lineItems = [];
+    for (const inp of qtyInputs) {
+      const qty = Number(inp.value);
+      if (!qty || qty <= 0) { await showConfirmModal('Check your input', `Enter a quantity greater than 0 for every selected product.`, { okOnly: true }); return; }
+      lineItems.push({ productId: inp.dataset.productId, qty });
+    }
+    const inserted = [];
+    for (const { productId, qty } of lineItems) {
+      const payload = {
+        event_date: new Date().toISOString().slice(0, 10), event_type: 'production_run',
+        product_id: productId, component_id: null, vendor_id: vendorId, qty_in: qty, eta,
+        landed: false, order_status: 'open', order_number: orderNumber, tracking_info: tracking, notes,
+      };
+      const { data: row, error } = await sb.from('inventory_ledger').insert(payload).select().single();
+      if (error) { await showConfirmModal('Something went wrong', `Created ${inserted.length} of ${lineItems.length} order(s), then failed: ${error.message}`, { okOnly: true, danger: true }); break; }
+      inserted.push(row);
+    }
+    if (!inserted.length) return;
+    document.getElementById('detail-modal-backdrop')?.remove();
+    const products = window._addOrderLookups.products || [];
+    const logIds = [];
+    for (const row of inserted) {
+      const product = products.find(p => p.id === row.product_id);
+      const id = await logAction('inventory_ledger', row.id, 'create', `Added new finished-good order: ${product?.display_name || 'order'}, ${row.qty_in.toLocaleString()} units${orderNumber ? ` (Order # ${orderNumber})` : ''}`, null, row, { silent: inserted.length > 1 });
+      if (id) logIds.push(id);
+    }
+    if (inserted.length > 1) {
+      showBulkUndoToast(logIds, `Created ${inserted.length} linked order${inserted.length === 1 ? '' : 's'}${orderNumber ? ` (Order # ${orderNumber})` : ''}`);
+    }
+    await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
+    return;
+  }
+
+  // Component orders: unchanged single-product-with-one-component flow.
+  const productId = document.getElementById('add-order-product').value;
+  const componentId = document.getElementById('add-order-component').value;
+  const qty = Number(document.getElementById('add-order-qty').value);
+
   if (!qty || qty <= 0) { await showConfirmModal('Check your input', 'Enter a quantity greater than 0.', { okOnly: true }); return; }
-  if (type === 'componentry' && !componentId) { await showConfirmModal('Check your input', 'Select a component.', { okOnly: true }); return; }
+  if (!componentId) { await showConfirmModal('Check your input', 'Select a component.', { okOnly: true }); return; }
 
   const payload = {
     event_date: new Date().toISOString().slice(0, 10),
-    event_type: type === 'componentry' ? 'component_order' : 'production_run',
-    product_id: type === 'componentry' ? null : productId,
-    component_id: type === 'componentry' ? componentId : null,
+    event_type: 'component_order',
+    product_id: null,
+    component_id: componentId,
     vendor_id: vendorId,
     qty_in: qty,
     eta,
@@ -1913,7 +2001,7 @@ async function createNewOrder(type) {
   if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   document.getElementById('detail-modal-backdrop')?.remove();
   const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
-  await logAction('inventory_ledger', inserted.id, 'create', `Added new ${type === 'componentry' ? 'component' : 'finished-good'} order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
+  await logAction('inventory_ledger', inserted.id, 'create', `Added new component order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
   await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
 }
 
@@ -2500,7 +2588,7 @@ async function orderComponentFromComponentsTab(componentId, productId) {
   if (!canEdit()) { await showConfirmModal('Not allowed', 'You do not have permission to create orders.', { okOnly: true }); return; }
   if (!window._addOrderLookups) {
     const [{ data: products }, { data: vendors }] = await Promise.all([
-      sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
+      sb.from('products').select('id, sku_code, display_name, is_active'),
       sb.from('vendors').select('id, vendor_name').order('vendor_name'),
     ]);
     window._addOrderLookups = {
@@ -2528,7 +2616,7 @@ async function initiateLivePoFromOutlook(productId, recommendedQty, recommendedM
   if (!canEdit()) { await showConfirmModal('Not allowed', 'You do not have permission to create orders.', { okOnly: true }); return; }
   if (!window._addOrderLookups) {
     const [{ data: products }, { data: vendors }] = await Promise.all([
-      sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
+      sb.from('products').select('id, sku_code, display_name, is_active'),
       sb.from('vendors').select('id, vendor_name').order('vendor_name'),
     ]);
     window._addOrderLookups = {
@@ -2538,8 +2626,16 @@ async function initiateLivePoFromOutlook(productId, recommendedQty, recommendedM
   }
   await showAddOrderForm('finished_good');
   const productSel = document.getElementById('add-order-product');
-  if (productSel) productSel.value = productId;
-  if (recommendedQty) document.getElementById('add-order-qty').value = recommendedQty;
+  if (productSel) {
+    // `add-order-product` is now a multi-select for finished_good -- select just the
+    // recommended product and trigger the qty-rows refresh so its input actually appears.
+    Array.from(productSel.options).forEach(o => { o.selected = (o.value === productId); });
+    refreshAddOrderQtyRows();
+  }
+  if (recommendedQty) {
+    const qtyInput = document.querySelector(`#add-order-qty-rows input[data-product-id="${productId}"]`);
+    if (qtyInput) qtyInput.value = recommendedQty;
+  }
   if (recommendedMonth) document.getElementById('add-order-eta').value = recommendedMonth + '-01';
   const vendorSel = document.getElementById('add-order-vendor');
   if (vendorSel && recommendedVendorId) vendorSel.value = recommendedVendorId;
