@@ -333,9 +333,9 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="overview">Overview</button>
     <button class="tab-btn" data-tab="revenue">Revenue</button>
+    <button class="tab-btn" data-tab="catalog">Catalog</button>
     <button class="tab-btn" data-tab="components">Components</button>
     <button class="tab-btn" data-tab="landed">Landed Orders</button>
-    <button class="tab-btn" data-tab="catalog">Catalog</button>
     <button class="tab-btn" data-tab="activity">Activity Log</button>
   </nav>
 </header>
@@ -343,10 +343,10 @@
 <main>
   <div id="tab-overview" class="tab-panel"></div>
   <div id="tab-revenue" class="tab-panel hidden"></div>
+  <div id="tab-catalog" class="tab-panel hidden"></div>
   <div id="tab-components" class="tab-panel hidden"></div>
   <div id="tab-landed" class="tab-panel hidden"></div>
   <div id="tab-activity" class="tab-panel hidden"></div>
-  <div id="tab-catalog" class="tab-panel hidden"></div>
 </main>
 
 <!-- Floating Manny chat widget -- lives at the #app level (not inside any tab-panel), so it's
@@ -588,7 +588,11 @@ function fmtMoney2(n) { return '$' + Number(n || 0).toLocaleString('en-US', { mi
 function fmtDate(d) {
   if (!d) return '—';
   const [y, m, day] = d.split('-');
-  return `${m}/${day}/${y}`;
+  // Alex (2026-11-11): "the date should always fit on one line" -- applies everywhere a date
+  // is shown, not just inside table cells. Wrapping the formatted string in a nowrap span here
+  // (rather than auditing every call site) guarantees it holds even when a date lands inside a
+  // narrow flex/grid cell or a wrapped sentence.
+  return `<span style="white-space:nowrap;">${m}/${day}/${y}</span>`;
 }
 function fmtDateTime(ts) {
   const dt = new Date(ts);
@@ -596,7 +600,7 @@ function fmtDateTime(ts) {
   const dd = String(dt.getDate()).padStart(2, '0');
   const yyyy = dt.getFullYear();
   const time = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  return `${mm}/${dd}/${yyyy} ${time}`;
+  return `<span style="white-space:nowrap;">${mm}/${dd}/${yyyy} ${time}</span>`;
 }
 // Prompts the user for a date in MM/DD/YYYY (matching Alex's display-format requirement) and
 // converts it to the ISO YYYY-MM-DD format Postgres date columns need internally.
@@ -684,7 +688,7 @@ function showDetail(title, body, size) {
   el.innerHTML = `
     <div class="detail-modal${wideClass}" style="max-width:${maxWidth}; display:flex; flex-direction:column; overflow:hidden;">
       <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px; flex-shrink:0;">${title}</div>
-      <div style="font-size:14px; color:var(--ink); line-height:1.5; overflow-y:auto; flex:1; min-height:0;">${body}</div>
+      <div style="font-size:14px; color:var(--ink); line-height:1.5; overflow-y:auto; flex:1; min-height:0; scrollbar-gutter:stable;">${body}</div>
       <button class="btn btn-ghost" style="margin-top:16px; flex-shrink:0;" onclick="document.getElementById('detail-modal-backdrop').remove()">Close</button>
     </div>
   `;
@@ -5978,19 +5982,6 @@ function renderRevenueBody() {
   // is now the only product filter on this table.
   const mixFilterBar = skuFilterBar;
 
-  const mixSortControls = (channel) => {
-    const sort = S.mixSort[channel];
-    return `
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <span class="muted" style="font-size:12px;">Sort by:</span>
-        <select style="padding:3px 6px; font-size:12px; border-radius:6px; border:1px solid var(--border);" onchange="setMixSortKey('${channel}', this.value)">
-          ${mixSortOptions.map(o => `<option value="${o.key}" ${sort.key === o.key ? 'selected' : ''}>${o.label}</option>`).join('')}
-        </select>
-        <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="toggleMixSortDir('${channel}')">${sort.dir === 'desc' ? '↓ High → Low' : '↑ Low → High'}</button>
-      </div>
-    `;
-  };
-
   const mixTable = (channel) => {
     const sort = S.mixSort[channel];
     let prods = S.products.filter(p => S.liveMix[channel]?.[p.product_id]);
@@ -6005,7 +5996,7 @@ function renderRevenueBody() {
       withMetrics.map(x => ({ item: x.p, metrics: x.metrics })),
       { key: effectiveSortKey, dir: sort.dir, nameOf: (item) => item.display_name, fallbackRank: (item) => productSortRank(item.display_name) }
     );
-    if (!orderedProds.length) return mixSortControls(channel) + `<div class="empty-state" style="padding:10px; font-size:13px;">No products match this filter.</div>`;
+    if (!orderedProds.length) return `<div class="empty-state" style="padding:10px; font-size:13px;">No products match this filter.</div>`;
     // Alex (2026-11-05): trailing-history columns -- Shopify only (no equivalent Amazon
     // ingestion, same limit as the ASP/pct popups already carried). Amazon gets a plain "no
     // history" cell per column instead of silently showing nothing or fabricating a number.
@@ -6033,11 +6024,18 @@ function renderRevenueBody() {
     // from 24% to 18% was reading as a dramatic "-25%" when the simple, useful fact is "-6 pts."
     // % of Revenue now shows a plain percentage-POINT difference; ASP shows a plain dollar
     // difference. Both are "this vs. last month," not "growth rate."
-    const momDelta = (p, colIndex, isPctView) => {
+    const momDelta = (p, colIndex, mode) => {
       if (!S.showMoMDelta || colIndex === 0) return '';
       const allCols = [...historyMonths.map(m => ({ m, isHistory: true })), ...months.map(m => ({ m, isHistory: false }))];
-      const curVal = seriesValue(p, allCols[colIndex].m, allCols[colIndex].isHistory, isPctView);
-      const prevVal = seriesValue(p, allCols[colIndex - 1].m, allCols[colIndex - 1].isHistory, isPctView);
+      // Alex (2026-11-11): "I want the month over month change to be visible for units
+      // throughput in a similar UI that it is on % of revenue & average selling price." --
+      // extended with a 'units' mode alongside the existing pct/asp ('isPctView' boolean,
+      // kept as a loose truthy check below for backward compat with existing pct/asp call
+      // sites that still pass true/false).
+      const isPctView = mode === true;
+      const isUnitsView = mode === 'units';
+      const curVal = isUnitsView ? unitsValue(p, allCols[colIndex].m, allCols[colIndex].isHistory) : seriesValue(p, allCols[colIndex].m, allCols[colIndex].isHistory, isPctView);
+      const prevVal = isUnitsView ? unitsValue(p, allCols[colIndex - 1].m, allCols[colIndex - 1].isHistory) : seriesValue(p, allCols[colIndex - 1].m, allCols[colIndex - 1].isHistory, isPctView);
       if (curVal == null || prevVal == null) return '';
       const up = curVal > prevVal;
       const color = up ? 'var(--good-text)' : (curVal < prevVal ? 'var(--bad-text)' : 'var(--muted)');
@@ -6046,9 +6044,28 @@ function renderRevenueBody() {
         if (Math.abs(ptsDiff) < 0.05) return `<div style="font-size:11px; font-weight:700; color:var(--muted); margin-top:2px;">flat</div>`;
         return `<div style="font-size:11px; font-weight:700; color:${color}; margin-top:2px;">${up ? '+' : ''}${ptsDiff.toFixed(1)} pts</div>`;
       }
+      if (isUnitsView) {
+        const unitsDiff = Math.round(curVal - prevVal);
+        if (unitsDiff === 0) return `<div style="font-size:11px; font-weight:700; color:var(--muted); margin-top:2px;">flat</div>`;
+        return `<div style="font-size:11px; font-weight:700; color:${color}; margin-top:2px;">${up ? '+' : ''}${unitsDiff.toLocaleString()}</div>`;
+      }
       const dollarDiff = curVal - prevVal;
       if (Math.abs(dollarDiff) < 0.005) return `<div style="font-size:11px; font-weight:700; color:var(--muted); margin-top:2px;">flat</div>`;
       return `<div style="font-size:11px; font-weight:700; color:${color}; margin-top:2px;">${up ? '+' : ''}${fmtMoney2(dollarDiff)}</div>`;
+    };
+    // Resolves a column's unit throughput regardless of whether it's a real history month
+    // (stored units directly) or a forecast month (derived from channel revenue x mix %% /
+    // ASP, same formula the forecast units cell below already computes).
+    const unitsValue = (p, m, isHistory) => {
+      if (isHistory) {
+        if (channel !== 'shopify') return null;
+        const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
+        return row ? row.units : null;
+      }
+      const mix = S.draftMix[channel][p.product_id]?.[m];
+      const chanRev = S.draftChannel[m]?.[channel];
+      if (!mix || chanRev == null) return null;
+      return Math.round((chanRev * mix.revenue_pct) / mix.avg_selling_price);
     };
     // Alex (2026-11-06): "If the product wasn't sold yet - let's have a label there instead of it
     // being blank." A history column with no row is ambiguous between "not launched yet" and
@@ -6074,7 +6091,7 @@ function renderRevenueBody() {
       }
       if (mixView === 'units') {
         const row = (S.historicalAspByProduct[p.product_id] || []).find(h => h.month === m);
-        if (row) return `<span style="font-size:13px;"><strong>${row.units.toLocaleString()}</strong></span>`;
+        if (row) return `<span style="font-size:13px;"><strong>${row.units.toLocaleString()}</strong>${momDelta(p, colIndex, 'units')}</span>`;
         return notYetLaunched ? '<span class="muted" style="font-size:12px;">Not sold yet</span>' : '<span class="muted">—</span>';
       }
       return '<span class="muted">—</span>';
@@ -6099,7 +6116,7 @@ function renderRevenueBody() {
         }
         if (chanRev == null) return '<span class="muted">—</span>';
         const units = Math.round((chanRev * mix.revenue_pct) / mix.avg_selling_price);
-        return `<button class="btn btn-ghost" style="padding:4px 7px; font-size:14px;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong></button>`;
+        return `<button class="btn btn-ghost" style="padding:4px 7px; font-size:14px; display:flex; flex-direction:column; align-items:center;" onclick="showThroughputDetail('${p.product_id}','${m}')"><strong>${units.toLocaleString()}</strong>${momDelta(p, colIndex, 'units')}</button>`;
       }),
     ]);
     if (mixView === 'pct') {
@@ -6129,7 +6146,7 @@ function renderRevenueBody() {
     }
     const allColWidths = historyMonths.length ? [monthColWidths[0], ...historyColWidths, ...monthColWidths.slice(1)] : monthColWidths;
     const noWrapCols = Array.from({ length: historyMonths.length + 6 }, (_, i) => i + 1);
-    return mixSortControls(channel) + kpiTable(['Product', ...historyMonths.map(m => monthLabelShort(m)), ...months.map(monthLabelShortWithCurrentFlag)], rows, null, allColWidths, noWrapCols);
+    return kpiTable(['Product', ...historyMonths.map(m => monthLabelShort(m)), ...months.map(monthLabelShortWithCurrentFlag)], rows, null, allColWidths, noWrapCols);
   };
 
 
@@ -6287,20 +6304,6 @@ function setRevenueMixView(view) {
     ['shopify', 'amazon'].forEach(ch => { if (S.mixSort[ch]) S.mixSort[ch].key = newPrimaryKey; });
   }
   S.mixView = view;
-  renderRevenueBody();
-}
-
-function setMixSortKey(channel, key) {
-  const S = window._revState;
-  if (!S.mixSort) S.mixSort = { shopify: { key: 'revenue', dir: 'desc' }, amazon: { key: 'revenue', dir: 'desc' } };
-  S.mixSort[channel].key = key;
-  renderRevenueBody();
-}
-
-function toggleMixSortDir(channel) {
-  const S = window._revState;
-  if (!S.mixSort) S.mixSort = { shopify: { key: 'revenue', dir: 'desc' }, amazon: { key: 'revenue', dir: 'desc' } };
-  S.mixSort[channel].dir = S.mixSort[channel].dir === 'desc' ? 'asc' : 'desc';
   renderRevenueBody();
 }
 
