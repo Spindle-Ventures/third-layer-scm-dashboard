@@ -2764,6 +2764,7 @@ function renderCatalogVendorsTable() {
       </div>
       <div class="section-label" style="margin:0 0 6px;">Components Supplied</div>
       <div style="font-size:14px;">${componentsManageHtml}</div>
+      ${canAct ? `<button class="btn btn-ghost" style="font-size:12px; color:var(--bad-text); margin-top:10px;" onclick="cascadeDeleteVendor('${v.id}', '${vendorNameSafe}')">Delete Vendor</button>` : ''}
     `;
 
     return `
@@ -3568,6 +3569,69 @@ async function cascadeDeleteComponent(componentId, componentName) {
   await renderCatalogProducts();
 }
 
+// Alex (2026-11-10, round 15): "I'd like the 'delete product' or 'delete component' or 'delete
+// vendor' or 'delete bundle' screenflows to be pop up box instead of chrome popup." Vendors had
+// no delete option at all until now -- same cascade pattern as Product/Component: list every
+// related row category about to be wiped, type-the-name to confirm, cascade-delete children
+// first (component_vendors, purchase_orders, inventory_ledger, vendor_messages,
+// revenue_scenario_po, vendor_contacts), then the vendor itself, all logged + one consolidated
+// undo toast. (Bundle delete reuses cascadeDeleteProduct() as-is -- a bundle is just a `products`
+// row with product_type='bundle', and cascadeDeleteProduct already queries bundle_compositions
+// both as root and as member.)
+async function cascadeDeleteVendor(vendorId, vendorName) {
+  const [
+    { data: cvRows }, { data: poRows }, { data: ledgerRows },
+    { data: msgRows }, { data: scenarioPoRows }, { data: contactRows },
+  ] = await Promise.all([
+    sb.from('component_vendors').select('*').eq('vendor_id', vendorId),
+    sb.from('purchase_orders').select('*').eq('vendor_id', vendorId),
+    sb.from('inventory_ledger').select('*').eq('vendor_id', vendorId),
+    sb.from('vendor_messages').select('*').eq('vendor_id', vendorId),
+    sb.from('revenue_scenario_po').select('*').eq('vendor_id', vendorId),
+    sb.from('vendor_contacts').select('*').eq('vendor_id', vendorId),
+  ]);
+  const summary = [
+    { label: 'component-vendor link(s)', rows: cvRows },
+    { label: 'purchase order(s)', rows: poRows },
+    { label: 'inventory ledger row(s)', rows: ledgerRows },
+    { label: 'vendor message(s)', rows: msgRows },
+    { label: 'revenue scenario PO row(s)', rows: scenarioPoRows },
+    { label: 'contact(s) on file', rows: contactRows },
+  ].filter(s => s.rows && s.rows.length);
+  const bodyMsg = summary.length
+    ? `This will PERMANENTLY delete "${vendorName}" AND everything tied to it:<br><br>` +
+      summary.map(s => `&nbsp;&nbsp;• ${s.rows.length} ${s.label}`).join('<br>') +
+      `<br><br>Type the vendor name below to confirm.`
+    : `"${vendorName}" has no related records on file -- this will permanently delete just the vendor itself.<br><br>Type the vendor name below to confirm.`;
+  const typed = await showPromptModal(`Delete "${vendorName}"?`, bodyMsg, '');
+  if (typed === null || typed.trim() !== vendorName) {
+    if (typed !== null) await showConfirmModal('Not deleted', 'The name you typed didn\'t match exactly, so nothing was deleted.', { okOnly: true, danger: true });
+    return;
+  }
+
+  const { data: before } = await sb.from('vendors').select('*').eq('id', vendorId).single();
+  const logIds = [];
+  const logDelete = async (table, row) => {
+    const id = await logAction(table, row.id, 'delete', `Cascade-deleted ${table} row (vendor "${vendorName}" delete)`, row, null, { silent: true });
+    if (id) logIds.push(id);
+  };
+  for (const row of (cvRows || [])) { await sb.from('component_vendors').delete().eq('id', row.id); await logDelete('component_vendors', row); }
+  for (const row of (contactRows || [])) { await sb.from('vendor_contacts').delete().eq('id', row.id); await logDelete('vendor_contacts', row); }
+  for (const row of (msgRows || [])) { await sb.from('vendor_messages').delete().eq('id', row.id); await logDelete('vendor_messages', row); }
+  for (const row of (scenarioPoRows || [])) { await sb.from('revenue_scenario_po').delete().eq('id', row.id); await logDelete('revenue_scenario_po', row); }
+  for (const row of (poRows || [])) { await sb.from('purchase_orders').delete().eq('id', row.id); await logDelete('purchase_orders', row); }
+  for (const row of (ledgerRows || [])) { await sb.from('inventory_ledger').delete().eq('id', row.id); await logDelete('inventory_ledger', row); }
+
+  const { error } = await sb.from('vendors').delete().eq('id', vendorId);
+  if (error) { await showConfirmModal('Delete failed', `Cleared ${logIds.length} related row(s), but the vendor itself failed to delete: ${error.message}.`, { okOnly: true, danger: true }); return; }
+  const vendorLogId = await logAction('vendors', vendorId, 'delete', `Deleted vendor ${vendorName} (cascade: ${logIds.length} related row${logIds.length === 1 ? '' : 's'})`, before, null, { silent: true });
+  if (vendorLogId) logIds.push(vendorLogId);
+
+  showBulkUndoToast(logIds, `Deleted ${vendorName}${logIds.length > 1 ? ` and ${logIds.length - 1} related row${logIds.length - 1 === 1 ? '' : 's'}` : ''}`);
+  await renderCatalogVendors();
+  await renderCatalogComponents();
+}
+
 async function deleteProduct(productId, displayName) {
   await cascadeDeleteProduct(productId, displayName);
 }
@@ -3687,6 +3751,7 @@ function renderCatalogBundlesTable() {
     const nestedHtml = `
       <div class="section-label" style="margin:0 0 6px;">Contains</div>
       ${renderBundleContentsBlock(b)}
+      ${canAct ? `<button class="btn btn-ghost" style="font-size:12px; color:var(--bad-text); margin-top:10px;" onclick="cascadeDeleteProduct('${b.id}', '${(b.display_name || '').replace(/'/g, "\\'")}')">Delete Bundle</button>` : ''}
     `;
 
     return `
