@@ -509,7 +509,7 @@ function toggleMannyChat() {
 async function startNewMannyChat() {
   if (!(await showConfirmModal('Start a new conversation?', 'This archives the current chat (it stays in the database, just hidden) and clears Manny\'s memory of it -- the next message starts fresh.', 'Start New'))) return;
   const { error } = await sb.from('dashboard_chat_messages').update({ archived: true }).eq('archived', false);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   const el = document.getElementById('manny-chat-messages');
   el.innerHTML = `<div class="muted" style="font-size:13px; text-align:center; margin-top:20px;">New conversation started.</div>`;
 }
@@ -1365,7 +1365,7 @@ async function bulkSetContactSchedule() {
   const failCount = results.filter(r => !r).length;
   window._selectedOrderIds.clear();
   await renderOverview();
-  if (failCount > 0) alert(`${failCount} of ${ids.length} updates failed — see the error alert(s) above.`);
+  if (failCount > 0) await showConfirmModal('Something went wrong', `${failCount} of ${ids.length} updates failed.`, { okOnly: true, danger: true });
 }
 
 async function showSafetyStockDetail(sku) {
@@ -1879,8 +1879,8 @@ async function createNewOrder(type) {
   const tracking = document.getElementById('add-order-tracking').value || null;
   const notes = document.getElementById('add-order-notes').value || null;
 
-  if (!qty || qty <= 0) { alert('Enter a quantity greater than 0.'); return; }
-  if (type === 'componentry' && !componentId) { alert('Select a component.'); return; }
+  if (!qty || qty <= 0) { await showConfirmModal('Check your input', 'Enter a quantity greater than 0.', { okOnly: true }); return; }
+  if (type === 'componentry' && !componentId) { await showConfirmModal('Check your input', 'Select a component.', { okOnly: true }); return; }
 
   const payload = {
     event_date: new Date().toISOString().slice(0, 10),
@@ -1897,7 +1897,7 @@ async function createNewOrder(type) {
     notes,
   };
   const { data: inserted, error } = await sb.from('inventory_ledger').insert(payload).select().single();
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   document.getElementById('detail-modal-backdrop')?.remove();
   const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
   await logAction('inventory_ledger', inserted.id, 'create', `Added new ${type === 'componentry' ? 'component' : 'finished-good'} order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
@@ -1944,14 +1944,14 @@ function handleOrderAction(ledgerId, action) {
 }
 
 async function deleteOrderRow(ledgerId) {
-  if (!canDelete()) { alert('Only admins can delete a row.'); return; }
+  if (!canDelete()) { await showConfirmModal('Not allowed', 'Only admins can delete a row.', { okOnly: true }); return; }
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
   if (!(await showConfirmModal('Delete this order row?', `${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)}.<br><br>You'll get an Undo option right after, and it stays restorable from the Activity Log tab. Use "Cancel" instead if you just want it to stop showing as active while keeping a record.`, 'Delete'))) return;
   const { data: before, error: fetchErr } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
-  if (fetchErr) { alert('Failed: ' + fetchErr.message); return; }
+  if (fetchErr) { await showConfirmModal('Something went wrong', 'Failed: ' + fetchErr.message, { okOnly: true, danger: true }); return; }
   const { error } = await sb.from('inventory_ledger').delete().eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('inventory_ledger', ledgerId, 'delete', `Deleted order: ${o.product_name}, ${(o.qty || 0).toLocaleString()} units, ETA ${fmtDate(o.eta)}`, before, null);
   await renderOverview();
 }
@@ -2025,13 +2025,13 @@ function showUndoToast(logId, description) {
 
 async function undoAction(logId, opts) {
   const { data: log, error } = await sb.from('activity_log').select('*').eq('id', logId).single();
-  if (error || !log) { alert('Could not load this action.'); return; }
-  if (log.undone) { if (!opts?.skipRefresh) alert('This action was already undone.'); return; }
+  if (error || !log) { await showConfirmModal('Heads up', 'Could not load this action.', { okOnly: true, danger: true }); return; }
+  if (log.undone) { if (!opts?.skipRefresh) await showConfirmModal('Heads up', 'This action was already undone.', { okOnly: true }); return; }
   document.getElementById('undo-toast')?.remove();
 
   if (log.action === 'delete') {
     const { error: insErr } = await sb.from(log.table_name).insert(log.before_data);
-    if (insErr) { alert('Undo failed: ' + insErr.message); return; }
+    if (insErr) { await showConfirmModal('Something went wrong', 'Undo failed: ' + insErr.message, { okOnly: true, danger: true }); return; }
   } else if (log.action === 'create') {
     await sb.from(log.table_name).delete().eq('id', log.record_id);
   } else if (log.action === 'split') {
@@ -2059,9 +2059,9 @@ async function undoAction(logId, opts) {
 
 async function mutateLedgerRow(ledgerId, payload, description) {
   const { data: before, error: fetchErr } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
-  if (fetchErr) { alert('Failed: ' + fetchErr.message); return false; }
+  if (fetchErr) { await showConfirmModal('Something went wrong', 'Failed: ' + fetchErr.message, { okOnly: true, danger: true }); return false; }
   const { error } = await sb.from('inventory_ledger').update(payload).eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return false; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return false; }
   await logAction('inventory_ledger', ledgerId, 'update', description, before, { ...before, ...payload });
   return true;
 }
@@ -2146,7 +2146,7 @@ async function editLandedField(ledgerId, field, inputType, label, currentVal) {
   const input = await showPromptModal(label, null, currentVal ?? '', inputType);
   if (input === null) return;
   const val = inputType === 'number' ? Number(input) : (input || null);
-  if (inputType === 'number' && (!val || val <= 0)) { alert('Enter a quantity greater than 0.'); return; }
+  if (inputType === 'number' && (!val || val <= 0)) { await showConfirmModal('Check your input', 'Enter a quantity greater than 0.', { okOnly: true }); return; }
   const ok = await mutateLedgerRow(ledgerId, { [field]: val }, `Edited ${label.toLowerCase()} for ${o.product_name}`);
   if (ok) await renderLandedOrders();
 }
@@ -2161,14 +2161,14 @@ async function editLandedDate(ledgerId) {
 }
 
 async function deleteLandedOrderRow(ledgerId) {
-  if (!canDelete()) { alert('Only admins can delete a row.'); return; }
+  if (!canDelete()) { await showConfirmModal('Not allowed', 'Only admins can delete a row.', { okOnly: true }); return; }
   const o = (window._landedOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
   if (!(await showConfirmModal('Delete this landed order row?', `${o.product_name}, ${(o.qty || 0).toLocaleString()} units, landed ${fmtDate(o.date_landed)}.<br><br>Restorable from the Activity Log tab.`, 'Delete'))) return;
   const { data: before, error: fetchErr } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
-  if (fetchErr) { alert('Failed: ' + fetchErr.message); return; }
+  if (fetchErr) { await showConfirmModal('Something went wrong', 'Failed: ' + fetchErr.message, { okOnly: true, danger: true }); return; }
   const { error } = await sb.from('inventory_ledger').delete().eq('id', ledgerId);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('inventory_ledger', ledgerId, 'delete', `Deleted landed order: ${o.product_name}, ${(o.qty || 0).toLocaleString()} units`, before, null);
   await renderLandedOrders();
 }
@@ -2437,7 +2437,7 @@ async function manageComponentVendors(componentId) {
 async function setPreferredComponentVendor(componentId, linkId) {
   await sb.from('component_vendors').update({ is_preferred: false }).eq('component_id', componentId);
   const { error } = await sb.from('component_vendors').update({ is_preferred: true }).eq('id', linkId);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   document.getElementById('detail-modal-backdrop')?.remove();
   await renderComponents();
   await manageComponentVendors(componentId);
@@ -2449,7 +2449,7 @@ async function editComponentVendorField(linkId, field, label, currentVal) {
   const val = input === '' ? null : Number(input);
   const { data: before } = await sb.from('component_vendors').select('*').eq('id', linkId).single();
   const { data: link, error } = await sb.from('component_vendors').update({ [field]: val }).eq('id', linkId).select('*, components(component_name)').single();
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('component_vendors', linkId, 'update', `Edited ${link.components?.component_name || 'component'}'s ${field.replace(/_/g, ' ')}: ${before?.[field] ?? '—'} → ${val ?? '—'}`, before, link);
   document.getElementById('detail-modal-backdrop')?.remove();
   await renderComponents();
@@ -2460,7 +2460,7 @@ async function addComponentVendor(componentId) {
   const vendorId = document.getElementById('add-component-vendor-select')?.value;
   if (!vendorId) return;
   const { data, error } = await sb.from('component_vendors').insert({ component_id: componentId, vendor_id: vendorId, is_preferred: false }).select('*, vendors(vendor_name), components(component_name)').single();
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('component_vendors', data.id, 'create', `Added vendor ${data.vendors?.vendor_name || ''} to ${data.components?.component_name || 'component'}`, null, data);
   document.getElementById('detail-modal-backdrop')?.remove();
   await renderComponents();
@@ -2471,7 +2471,7 @@ async function removeComponentVendor(linkId, componentId) {
   if (!(await showConfirmModal('Remove this vendor link?', 'This does not affect past orders, only future vendor selection for this component.', 'Remove'))) return;
   const { data: before } = await sb.from('component_vendors').select('*, vendors(vendor_name), components(component_name)').eq('id', linkId).single();
   const { error } = await sb.from('component_vendors').delete().eq('id', linkId);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   if (before) {
     const { vendors, components, ...beforeRaw } = before;
     await logAction('component_vendors', linkId, 'delete', `Removed vendor ${vendors?.vendor_name || ''} from ${components?.component_name || 'component'}`, beforeRaw, null);
@@ -2484,7 +2484,7 @@ async function removeComponentVendor(linkId, componentId) {
 // Reuses the Overview tab's existing Add Order flow (same creation path as "+ Add Order" ->
 // "Component Order"), pre-selecting the product/component so it's a one-click start from here.
 async function orderComponentFromComponentsTab(componentId, productId) {
-  if (!canEdit()) { alert('You do not have permission to create orders.'); return; }
+  if (!canEdit()) { await showConfirmModal('Not allowed', 'You do not have permission to create orders.', { okOnly: true }); return; }
   if (!window._addOrderLookups) {
     const [{ data: products }, { data: vendors }] = await Promise.all([
       sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
@@ -2512,7 +2512,7 @@ async function orderComponentFromComponentsTab(componentId, productId) {
 // recommended qty/month/vendor -- "If the Status is Issue it should also come with a recommended
 // PO initiation with all info filled out."
 async function initiateLivePoFromOutlook(productId, recommendedQty, recommendedMonth, recommendedVendorId) {
-  if (!canEdit()) { alert('You do not have permission to create orders.'); return; }
+  if (!canEdit()) { await showConfirmModal('Not allowed', 'You do not have permission to create orders.', { okOnly: true }); return; }
   if (!window._addOrderLookups) {
     const [{ data: products }, { data: vendors }] = await Promise.all([
       sb.from('products').select('id, sku_code, display_name').eq('is_active', true),
@@ -2833,9 +2833,9 @@ async function showNewVendorModal() {
     const vendor_type = document.getElementById('nv-type-input').value;
     const preferred_contact_channel = document.getElementById('nv-channel-input').value;
     const is_active = document.getElementById('nv-active-input').checked;
-    if (!vendor_name) { alert('Vendor name is required.'); return; }
+    if (!vendor_name) { await showConfirmModal('Check your input', 'Vendor name is required.', { okOnly: true }); return; }
     const { data, error } = await sb.from('vendors').insert({ vendor_name, vendor_type, preferred_contact_channel, is_active }).select().single();
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Create failed: ' + error.message, { okOnly: true, danger: true }); return; }
     await logAction('vendors', data.id, 'create', `Created new vendor ${vendor_name}`, null, data);
     el.remove();
     await renderCatalogVendors();
@@ -3234,9 +3234,9 @@ function renderNpWizard() {
   document.getElementById('np-cancel-btn').onclick = () => { el.remove(); window._npWizard = null; };
 }
 
-function npAddComponent() {
+async function npAddComponent() {
   const name = document.getElementById('np-comp-name')?.value.trim();
-  if (!name) { alert('Component name is required.'); return; }
+  if (!name) { await showConfirmModal('Check your input', 'Component name is required.', { okOnly: true }); return; }
   const qty_per_unit = Number(document.getElementById('np-comp-qty')?.value) || 1;
   const unit_of_measure = document.getElementById('np-comp-uom')?.value.trim() || null;
   const vendor_id = document.getElementById('np-comp-vendor')?.value || null;
@@ -3279,13 +3279,13 @@ function npUpdateMarginPreview() {
   setText('np-pc3', fmtMoney2(r.pc3));
 }
 
-function npWizardNext() {
+async function npWizardNext() {
   const w = window._npWizard;
   if (w.step === 1) {
     const sku_code = document.getElementById('np-sku-input')?.value.trim();
     const display_name = document.getElementById('np-name-input')?.value.trim();
     const is_active = document.getElementById('np-active-input')?.checked ?? true;
-    if (!sku_code || !display_name) { alert('SKU code and display name are both required.'); return; }
+    if (!sku_code || !display_name) { await showConfirmModal('Check your input', 'SKU code and display name are both required.', { okOnly: true }); return; }
     w.sku_code = sku_code; w.display_name = display_name; w.is_active = is_active;
   } else if (w.step === 3) {
     // Alex (2026-11-10, round 2): capture the full margin profile, not just unit_cogs. Build the
@@ -3325,7 +3325,7 @@ async function npWizardCreate() {
     sku_code: w.sku_code, display_name: w.display_name, product_type: 'root', is_active: w.is_active,
     unit_cogs: w.cogs.unit_cogs, cogs_breakdown: w.cogsBreakdown || null,
   }).select().single();
-  if (error) { alert('Create failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Create failed: ' + error.message, { okOnly: true, danger: true }); return; }
   const productLogId = await logAction('products', product.id, 'create', `Created new product ${w.display_name} (${w.sku_code}) via setup wizard`, null, product, { silent: true });
   if (productLogId) logIds.push(productLogId);
 
@@ -3333,12 +3333,12 @@ async function npWizardCreate() {
     const { data: comp, error: compError } = await sb.from('components').insert({
       component_name: c.component_name, product_id: product.id, unit_of_measure: c.unit_of_measure, qty_per_unit: c.qty_per_unit,
     }).select().single();
-    if (compError) { alert(`Product created, but failed to add component "${c.component_name}": ${compError.message}`); continue; }
+    if (compError) { await showConfirmModal('Something went wrong', `Product created, but failed to add component "${c.component_name}": ${compError.message}`, { okOnly: true, danger: true }); continue; }
     const compLogId = await logAction('components', comp.id, 'create', `Created component ${c.component_name} for ${w.display_name} via setup wizard`, null, comp, { silent: true });
     if (compLogId) logIds.push(compLogId);
     if (c.vendor_id) {
       const { data: cv, error: cvError } = await sb.from('component_vendors').insert({ component_id: comp.id, vendor_id: c.vendor_id, is_preferred: true }).select().single();
-      if (cvError) { alert(`Component "${c.component_name}" created, but failed to link its vendor: ${cvError.message}`); continue; }
+      if (cvError) { await showConfirmModal('Something went wrong', `Component "${c.component_name}" created, but failed to link its vendor: ${cvError.message}`, { okOnly: true, danger: true }); continue; }
       const cvLogId = await logAction('component_vendors', cv.id, 'create', `Linked vendor to ${c.component_name} via setup wizard`, null, cv, { silent: true });
       if (cvLogId) logIds.push(cvLogId);
     }
@@ -3403,7 +3403,7 @@ async function editProductNameInline(productId) {
   const display_name = newName.trim();
   if (!display_name || display_name === p.display_name) return;
   const { error } = await sb.from('products').update({ display_name }).eq('id', productId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('products', productId, 'update', `Renamed product to ${display_name}`, { display_name: p.display_name }, { display_name });
   await renderCatalogProducts();
   await renderCatalogBundles();
@@ -3579,7 +3579,7 @@ async function editComponentNameInline(componentId) {
   const component_name = newName.trim();
   if (!component_name || component_name === before?.component_name) return;
   const { error } = await sb.from('components').update({ component_name }).eq('id', componentId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('components', componentId, 'update', `Renamed component to ${component_name}`, before, { component_name });
   await renderCatalogProducts();
   await renderCatalogComponents();
@@ -3592,7 +3592,7 @@ async function editComponentUomInline(componentId) {
   const unit_of_measure = newUom.trim() || null;
   if (unit_of_measure === before?.unit_of_measure) return;
   const { error } = await sb.from('components').update({ unit_of_measure }).eq('id', componentId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('components', componentId, 'update', `Edited unit of measure for ${before?.component_name}`, before, { ...before, unit_of_measure });
   await renderCatalogProducts();
   await renderCatalogComponents();
@@ -3750,9 +3750,9 @@ async function showNewBundleModal() {
     const sku_code = document.getElementById('nb-sku-input').value.trim();
     const display_name = document.getElementById('nb-name-input').value.trim();
     const is_active = document.getElementById('nb-active-input').checked;
-    if (!sku_code || !display_name) { alert('SKU code and display name are both required.'); return; }
+    if (!sku_code || !display_name) { await showConfirmModal('Check your input', 'SKU code and display name are both required.', { okOnly: true }); return; }
     const { data, error } = await sb.from('products').insert({ sku_code, display_name, product_type: 'bundle', is_active }).select().single();
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Create failed: ' + error.message, { okOnly: true, danger: true }); return; }
     await logAction('products', data.id, 'create', `Created new bundle ${display_name} (${sku_code})`, null, data);
     el.remove();
     window._catalogAccordionOpen = window._catalogAccordionOpen || {};
@@ -3768,7 +3768,7 @@ async function editBundleQtyInline(bundleCompositionId, bundleId) {
   const qty_per_bundle = Number(newQty) || 1;
   if (qty_per_bundle === before?.qty_per_bundle) return;
   const { error } = await sb.from('bundle_compositions').update({ qty_per_bundle }).eq('id', bundleCompositionId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('bundle_compositions', bundleId, 'update', `Changed bundle quantity to ${qty_per_bundle}`, before, { qty_per_bundle });
   await renderCatalogBundles();
 }
@@ -3780,7 +3780,7 @@ async function addBundleComponent(bundleId) {
   if (!rootProductId) return;
   const qty_per_bundle = Number(qtyInput?.value) || 1;
   const { error } = await sb.from('bundle_compositions').insert({ bundle_id: bundleId, root_product_id: rootProductId, qty_per_bundle });
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   const cache = window._catalogBundlesCache || { products: [] };
   const bundle = cache.products.find(p => p.id === bundleId);
   const product = cache.products.find(p => p.id === rootProductId);
@@ -3793,7 +3793,7 @@ async function addBundleComponent(bundleId) {
 async function removeBundleComponent(bundleCompositionId, bundleId) {
   const { data: before } = await sb.from('bundle_compositions').select('*').eq('id', bundleCompositionId).single();
   const { error } = await sb.from('bundle_compositions').delete().eq('id', bundleCompositionId);
-  if (error) { alert('Remove failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Remove failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('bundle_compositions', bundleId, 'delete', 'Removed a product from a bundle', before, null);
   await renderCatalogBundles();
 }
@@ -3802,7 +3802,7 @@ async function saveCatalogProductActive(productId) {
   const checked = document.getElementById(`cp-active-${productId}`)?.checked ?? document.getElementById(`cb-active-${productId}`)?.checked;
   const { data: before } = await sb.from('products').select('display_name, is_active').eq('id', productId).single();
   const { error } = await sb.from('products').update({ is_active: checked }).eq('id', productId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('products', productId, 'update', `${checked ? 'Activated' : 'Deactivated'} ${before?.display_name || 'product'}`, before, { ...before, is_active: checked });
 }
 
@@ -3828,7 +3828,7 @@ function showProductNotesModal(productId, productName) {
     document.getElementById('pn-save-btn').onclick = async () => {
       const notes = document.getElementById('pn-notes-input').value.trim() || null;
       const { error } = await sb.from('products').update({ notes }).eq('id', productId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
       await logAction('products', productId, 'update', `Edited notes for ${productName}`, { notes: data?.notes }, { notes });
       el.remove();
     };
@@ -3868,7 +3868,7 @@ async function showProductCogsModal(productId) {
       if (decision === null) return;
     }
     const { error } = await sb.from('products').update({ unit_cogs }).eq('id', productId);
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
     await logAction('products', productId, 'update', `Edited COGS for ${p.display_name}`, p, { ...p, unit_cogs });
     if (decision === 'now') await requestRecalc('product', productId);
     renderCatalogProducts();
@@ -3951,7 +3951,7 @@ async function saveProductProfitModal(productId) {
     if (decision === null) return;
   }
   const { error } = await sb.from('products').update({ unit_cogs: w.cogs, cogs_breakdown: breakdown }).eq('id', productId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('products', productId, 'update', `Edited profit breakdown for ${before?.display_name || 'product'} (unit_cogs ${before?.unit_cogs} -> ${w.cogs})`, before, { ...before, unit_cogs: w.cogs, cogs_breakdown: breakdown });
   document.getElementById('detail-modal-backdrop')?.remove();
   if (decision === 'now') await requestRecalc('product', productId);
@@ -4176,9 +4176,9 @@ async function showNewComponentModal() {
     const product_id = document.getElementById('nc-product-input').value || null;
     const unit_of_measure = document.getElementById('nc-uom-input').value.trim() || null;
     const qty_per_unit = Number(document.getElementById('nc-qty-input').value) || null;
-    if (!component_name) { alert('Component name is required.'); return; }
+    if (!component_name) { await showConfirmModal('Check your input', 'Component name is required.', { okOnly: true }); return; }
     const { data, error } = await sb.from('components').insert({ component_name, product_id, unit_of_measure, qty_per_unit }).select().single();
-    if (error) { alert('Create failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Create failed: ' + error.message, { okOnly: true, danger: true }); return; }
     await logAction('components', data.id, 'create', `Created new component ${component_name}`, null, data);
     el.remove();
     await renderCatalogComponents();
@@ -4207,7 +4207,7 @@ function showComponentNotesModal(componentId, componentName) {
     document.getElementById('ccn-save-btn').onclick = async () => {
       const notes = document.getElementById('ccn-notes-input').value.trim() || null;
       const { error } = await sb.from('components').update({ notes }).eq('id', componentId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
       await logAction('components', componentId, 'update', `Edited notes for ${componentName}`, { notes: data?.notes }, { notes });
       el.remove();
       renderCatalogComponents();
@@ -4383,7 +4383,7 @@ function showVendorNotesModal(vendorId, vendorName) {
     document.getElementById('vn-save-btn').onclick = async () => {
       const notes = document.getElementById('vn-notes-input').value.trim() || null;
       const { error } = await sb.from('vendors').update({ notes }).eq('id', vendorId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
       await logAction('vendors', vendorId, 'update', `Edited notes for ${vendorName}`, { notes: data?.notes }, { notes });
       el.remove();
       renderCatalogVendors();
@@ -4428,7 +4428,7 @@ async function showVendorLeadTimeModal(vendorId) {
       if (decision === null) return;
     }
     const { error } = await sb.from('vendors').update(after).eq('id', vendorId);
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
     await logAction('vendors', vendorId, 'update', `Edited lead time/cadence for ${v.vendor_name}`, v, after);
     if (decision === 'now') await requestRecalc('vendor', vendorId);
     renderCatalogVendors();
@@ -4551,7 +4551,7 @@ async function saveCatalogVendor(vendorId) {
   };
 
   const { error } = await sb.from('vendors').update(after).eq('id', vendorId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('vendors', vendorId, 'update', `Edited vendor ${after.vendor_name}`, before, after);
   renderCatalogVendors();
 }
@@ -4566,7 +4566,7 @@ async function editVendorNameInline(vendorId) {
   const vendor_name = newName.trim();
   if (!vendor_name || vendor_name === before?.vendor_name) return;
   const { error } = await sb.from('vendors').update({ vendor_name }).eq('id', vendorId);
-  if (error) { alert('Save failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('vendors', vendorId, 'update', `Renamed vendor to ${vendor_name}`, before, { vendor_name });
   await renderCatalogVendors();
 }
@@ -4590,7 +4590,7 @@ async function splitOrder(ledgerId) {
   const splitQtyStr = await showPromptModal('Split Order', `Total: ${o.qty.toLocaleString()} units. How many go into the NEW (second) order?`, Math.floor((o.qty || 0) / 2), 'number');
   if (!splitQtyStr) return;
   const splitQty = Number(splitQtyStr);
-  if (!splitQty || splitQty <= 0 || splitQty >= o.qty) { alert('Enter a quantity less than the current total.'); return; }
+  if (!splitQty || splitQty <= 0 || splitQty >= o.qty) { await showConfirmModal('Check your input', 'Enter a quantity less than the current total.', { okOnly: true }); return; }
   const newEta = await promptDateMMDDYYYY('ETA for the new (split-off) order', o.eta);
   const newOrderNumber = await showPromptModal('Order # for the new (split-off) order', 'Defaults to the original\'s.', o.internal_ref || '');
   if (newOrderNumber === null) return;
@@ -4600,7 +4600,7 @@ async function splitOrder(ledgerId) {
   const { data: before } = await sb.from('inventory_ledger').select('*').eq('id', ledgerId).single();
   // Reduce the original row, then insert a new ledger row carrying the remainder.
   const { error: err1 } = await sb.from('inventory_ledger').update({ qty_in: o.qty - splitQty }).eq('id', ledgerId);
-  if (err1) { alert('Failed: ' + err1.message); return; }
+  if (err1) { await showConfirmModal('Something went wrong', 'Failed: ' + err1.message, { okOnly: true, danger: true }); return; }
   const { data: inserted, error: err2 } = await sb.from('inventory_ledger').insert({
     event_date: new Date().toISOString().slice(0, 10),
     event_type: o.order_type === 'componentry' ? 'component_order' : 'production_run',
@@ -4616,7 +4616,7 @@ async function splitOrder(ledgerId) {
     tracking_info: newTracking || null,
     notes: `Split from original order ${ledgerId} via dashboard`,
   }).select().single();
-  if (err2) { alert('Original order was reduced, but creating the split-off order failed: ' + err2.message); }
+  if (err2) { await showConfirmModal('Something went wrong', 'Original order was reduced, but creating the split-off order failed: ' + err2.message, { okOnly: true, danger: true }); }
   else if (before) {
     await logAction('inventory_ledger', ledgerId, 'split', `Split ${o.product_name} into ${(o.qty - splitQty).toLocaleString()} + ${splitQty.toLocaleString()} units`, before, { new_row_id: inserted?.id });
   }
@@ -4651,12 +4651,12 @@ async function editRevenueForecast(channel) {
   const input = await showPromptModal(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} Revenue Forecast`, `Full-month forecast for ${monthLabel} ($)`, existingVal, 'number');
   if (input === null) return;
   const val = Number(String(input).replace(/[^0-9.]/g, ''));
-  if (!val || val <= 0) { alert('Enter a positive number.'); return; }
+  if (!val || val <= 0) { await showConfirmModal('Check your input', 'Enter a positive number.', { okOnly: true }); return; }
   const { error } = await sb.from('revenue_forecasts').upsert(
     { channel, forecast_month: monthStartIso, forecast_revenue: val, created_by: currentUserRow?.email || 'dashboard' },
     { onConflict: 'channel,forecast_month' }
   );
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await Promise.all([renderOverview(), renderRevenue()]);
 }
 
@@ -4695,7 +4695,7 @@ async function decideRecommendation(id, decision) {
   const { error } = await sb.from('agent_recommendations').update({
     decision, decided_by: currentUserRow.display_name || currentUserRow.email, decided_at: new Date().toISOString()
   }).eq('id', id);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await renderOverview();
 }
 
@@ -4958,7 +4958,7 @@ async function createRevenueScenario() {
   const name = await showPromptModal('New Scenario', 'e.g. "Holiday push", "Conservative Q1"', '');
   if (!name) return;
   const { data, error } = await sb.from('revenue_scenarios').insert({ name, status: 'draft', created_by: currentUserRow?.email || 'dashboard' }).select().single();
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   // Seed from the live numbers currently in window._revState so it starts as an exact copy.
   const S = window._revState;
   const chanRows = [];
@@ -4981,7 +4981,7 @@ async function createRevenueScenario() {
 async function deleteRevenueScenario(scenarioId) {
   if (!(await showConfirmModal('Delete this draft scenario?', 'This cannot be undone.', 'Delete'))) return;
   const { error } = await sb.from('revenue_scenarios').delete().eq('id', scenarioId);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   window._revState.scenarios = window._revState.scenarios.filter(s => s.id !== scenarioId);
   await selectRevenueScenario('live');
 }
@@ -5008,7 +5008,7 @@ async function commitRevenueScenario() {
     mixRows.length ? sb.from('forecast_params_monthly').upsert(mixRows, { onConflict: 'product_id,channel,forecast_month' }) : Promise.resolve({ error: null }),
     sb.from('revenue_scenarios').update({ status: 'committed', committed_at: new Date().toISOString() }).eq('id', sc.id),
   ]);
-  if (e1 || e2 || e3) { alert('Commit failed: ' + (e1 || e2 || e3).message); return; }
+  if (e1 || e2 || e3) { await showConfirmModal('Something went wrong', 'Commit failed: ' + (e1 || e2 || e3).message, { okOnly: true, danger: true }); return; }
 
   // Materialize any draft POs modeled in this scenario into real purchase_orders +
   // inventory_ledger rows (landed=false, scheduled production_run) -- per Alex's explicit choice
@@ -5034,23 +5034,23 @@ async function commitRevenueScenario() {
     if (ledgerErr) poMaterializeError = ledgerErr;
   }
   if (poMaterializeError) {
-    alert(`Scenario committed, but one or more draft POs failed to materialize into real purchase orders: ${poMaterializeError.message}. Check the Purchase Orders / Overview tabs and re-create them manually if needed.`);
+    await showConfirmModal('Something went wrong', `Scenario committed, but one or more draft POs failed to materialize into real purchase orders: ${poMaterializeError.message}. Check the Purchase Orders / Overview tabs and re-create them manually if needed.`, { okOnly: true, danger: true });
   }
 
-  alert(`"${sc.name}" is now the live forecast${S.draftPOs?.length ? `, and ${S.draftPOs.length} draft PO(s) are now real (status: draft) purchase orders` : ''}. Overview-tab recommendations and inventory projections will reflect it after the next daily pipeline run.`);
+  await showConfirmModal('Notice', `"${sc.name}" is now the live forecast${S.draftPOs?.length ? `, and ${S.draftPOs.length} draft PO(s) are now real (status: draft) purchase orders` : ''}. Overview-tab recommendations and inventory projections will reflect it after the next daily pipeline run.`, { okOnly: true });
   await renderRevenue();
   await renderOverview();
 }
 
 async function editDraftChannelMonth(channel, month) {
-  if (!canEditChannel()) { alert('You do not have permission to edit forecast numbers.'); return; }
+  if (!canEditChannel()) { await showConfirmModal('Not allowed', 'You do not have permission to edit forecast numbers.', { okOnly: true }); return; }
   const S = window._revState;
   const isLive = S.selectedScenarioId === 'live';
   const current = S.draftChannel[month]?.[channel];
   const input = await showPromptModal(`${channel === 'shopify' ? 'Shopify' : 'Amazon'} Forecast`, `${isLive ? 'Live forecast' : 'Scenario forecast'} for ${monthLabelLong(month)} ($)`, current ?? '', 'number');
   if (input === null) return;
   const val = Number(String(input).replace(/[^0-9.]/g, ''));
-  if (!val || val <= 0) { alert('Enter a positive number.'); return; }
+  if (!val || val <= 0) { await showConfirmModal('Check your input', 'Enter a positive number.', { okOnly: true }); return; }
   S.draftChannel[month][channel] = val;
   const label = `${channel === 'shopify' ? 'Shopify' : 'Amazon'} forecast, ${monthLabelShort(month)}`;
   if (isLive) {
@@ -5060,7 +5060,7 @@ async function editDraftChannelMonth(channel, month) {
       { channel, forecast_month: month + '-01', forecast_revenue: val, created_by: currentUserRow?.email || 'dashboard' },
       { onConflict: 'channel,forecast_month' }
     ).select().single();
-    if (error) { alert('Failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
     await logAction('revenue_forecasts', after.id, before ? 'update' : 'create', `Edited ${label} (live): ${before ? fmtMoney(before.forecast_revenue) : '—'} → ${fmtMoney(val)}`, before, after);
     renderOverview();
   } else {
@@ -5075,14 +5075,14 @@ async function editDraftChannelMonth(channel, month) {
 }
 
 async function editDraftMixPct(channel, productId, month) {
-  if (!isEditable()) { alert('Select or create a draft scenario to edit product mix.'); return; }
+  if (!isEditable()) { await showConfirmModal('Check your input', 'Select or create a draft scenario to edit product mix.', { okOnly: true }); return; }
   const S = window._revState;
   const product = S.products.find(p => p.product_id === productId);
   const cur = S.draftMix[channel][productId]?.[month] || {};
   const input = await showPromptModal(`${product?.display_name} — Revenue Share`, `${channel === 'shopify' ? 'Shopify' : 'Amazon'} revenue share for ${monthLabelLong(month)} (%)`, ((cur.revenue_pct || 0) * 100).toFixed(1), 'number');
   if (input === null) return;
   const val = Number(input);
-  if (isNaN(val) || val < 0) { alert('Enter a non-negative number.'); return; }
+  if (isNaN(val) || val < 0) { await showConfirmModal('Check your input', 'Enter a non-negative number.', { okOnly: true }); return; }
   const rationale = await showPromptModal('Rationale', 'Why this %? e.g. historical trend, planned promotion, new launch ramp.', cur.revenue_pct_rationale || '', 'textarea');
   if (rationale === null) return;
   S.draftMix[channel][productId][month] = { ...cur, revenue_pct: val / 100, revenue_pct_rationale: rationale || null };
@@ -5096,14 +5096,14 @@ async function editDraftMixPct(channel, productId, month) {
 }
 
 async function editDraftAsp(channel, productId, month) {
-  if (!isEditable()) { alert('Select or create a draft scenario to edit average selling price.'); return; }
+  if (!isEditable()) { await showConfirmModal('Check your input', 'Select or create a draft scenario to edit average selling price.', { okOnly: true }); return; }
   const S = window._revState;
   const product = S.products.find(p => p.product_id === productId);
   const cur = S.draftMix[channel][productId]?.[month] || {};
   const input = await showPromptModal(`${product?.display_name} — Avg Selling Price`, `${channel === 'shopify' ? 'Shopify' : 'Amazon'} avg selling price for ${monthLabelLong(month)} ($)`, cur.avg_selling_price ?? '', 'number');
   if (input === null) return;
   const val = Number(String(input).replace(/[^0-9.]/g, ''));
-  if (!val || val <= 0) { alert('Enter a positive number.'); return; }
+  if (!val || val <= 0) { await showConfirmModal('Check your input', 'Enter a positive number.', { okOnly: true }); return; }
   const rationale = await showPromptModal('Rationale', 'e.g. current price + typical discount mix, planned price change.', cur.asp_rationale || '', 'textarea');
   if (rationale === null) return;
   S.draftMix[channel][productId][month] = { ...cur, avg_selling_price: val, asp_rationale: rationale || null };
@@ -5471,11 +5471,11 @@ async function editManualThroughputAdjustment(productId, month) {
     const direction = document.getElementById('mta-direction-input').value;
     const magnitude = Number(document.getElementById('mta-magnitude-input').value);
     const reason = document.getElementById('mta-reason-input').value.trim();
-    if (isNaN(magnitude) || magnitude <= 0) { alert('Enter a positive number of units. Use "Remove" to clear an existing adjustment.'); return; }
+    if (isNaN(magnitude) || magnitude <= 0) { await showConfirmModal('Check your input', 'Enter a positive number of units. Use "Remove" to clear an existing adjustment.', { okOnly: true }); return; }
     const val = direction === 'addition' ? -Math.round(magnitude) : Math.round(magnitude);
     const payload = { product_id: productId, month: month + '-01', additional_units: val, reason: reason || null };
     const { data: after, error } = await sb.from('manual_throughput_adjustments').upsert(payload, { onConflict: 'product_id,month' }).select().single();
-    if (error) { alert('Failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
     await logAction('manual_throughput_adjustments', after.id, existing ? 'update' : 'create',
       `${existing ? 'Edited' : 'Added'} manual throughput adjustment for ${p?.display_name}, ${monthLabelShort(month)}: ${existing ? `${existing.additional_units} → ` : ''}${direction === 'addition' ? '+' : '-'}${magnitude} units (${direction})${reason ? ` — ${reason}` : ''}`,
       existing || null, after);
@@ -5490,7 +5490,7 @@ async function deleteManualThroughputAdjustment(productId, month) {
   if (!existing) return;
   if (!(await showConfirmModal('Remove this manual throughput adjustment?', 'The projected end-of-month figure will go back to the plain revenue-mix estimate for this month.', 'Remove'))) return;
   const { error } = await sb.from('manual_throughput_adjustments').delete().eq('id', existing.id);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   const p = S.products.find(pr => pr.product_id === productId);
   await logAction('manual_throughput_adjustments', existing.id, 'delete', `Removed manual throughput adjustment for ${p?.display_name}, ${monthLabelShort(month)}`, existing, null);
   document.getElementById('detail-modal-backdrop')?.remove();
@@ -5602,8 +5602,8 @@ function checkComponentFeasibility(productSku, qty) {
 // current draft scenario, see its effect on the 6-month projection immediately, and see (but
 // never be blocked by, per Alex's explicit decision) whether componentry on hand/in-flight is
 // enough to actually support it.
-function openDraftPoModal(productId, defaultMonth) {
-  if (!isEditable()) { alert('Select or create a draft scenario to add a draft PO.'); return; }
+async function openDraftPoModal(productId, defaultMonth) {
+  if (!isEditable()) { await showConfirmModal('Check your input', 'Select or create a draft scenario to add a draft PO.', { okOnly: true }); return; }
   const S = window._revState;
   const p = S.products.find(pr => pr.product_id === productId);
   document.getElementById('detail-modal-backdrop')?.remove();
@@ -5673,16 +5673,16 @@ function openDraftPoModal(productId, defaultMonth) {
   document.getElementById('draft-po-cancel').onclick = finish;
   document.getElementById('draft-po-save').onclick = async () => {
     const qty = Number(qtyInput.value);
-    if (!qty || qty <= 0) { alert('Enter a positive quantity.'); return; }
+    if (!qty || qty <= 0) { await showConfirmModal('Check your input', 'Enter a positive quantity.', { okOnly: true }); return; }
     const month = document.getElementById('draft-po-month').value;
     const vendorId = document.getElementById('draft-po-vendor').value;
-    if (!vendorId) { alert('Select a vendor — required to commit this PO later.'); return; }
+    if (!vendorId) { await showConfirmModal('Check your input', 'Select a vendor — required to commit this PO later.', { okOnly: true }); return; }
     const notes = document.getElementById('draft-po-notes').value || null;
     const { data, error } = await sb.from('revenue_scenario_po').insert({
       scenario_id: S.selectedScenarioId, product_id: productId, vendor_id: vendorId,
       qty, eta_month: month + '-01', notes, created_by: currentUserRow?.email || 'dashboard',
     }).select().single();
-    if (error) { alert('Failed: ' + error.message); return; }
+    if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
     S.draftPOs.push(data);
     await logAction('revenue_scenario_po', data.id, 'create', `Added draft PO: ${p.display_name}, ${qty.toLocaleString()} units landing ${monthLabelShort(month)} (${currentScenario()?.name})`, null, data);
     finish();
@@ -5695,7 +5695,7 @@ async function deleteDraftPo(id) {
   const S = window._revState;
   const before = (S.draftPOs || []).find(po => po.id === id);
   const { error } = await sb.from('revenue_scenario_po').delete().eq('id', id);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   if (before) {
     const product = S.products.find(p => p.product_id === before.product_id);
     await logAction('revenue_scenario_po', id, 'delete', `Removed draft PO: ${product?.display_name || 'product'}, ${before.qty.toLocaleString()} units`, before, null);
@@ -6500,13 +6500,13 @@ async function renderPOs() {
 
 async function approvePO(id) {
   const { error } = await sb.from('purchase_orders').update({ status: 'approved', approved_by: currentUserRow.display_name || currentUserRow.email }).eq('id', id);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await renderPOs();
 }
 async function cancelPO(id) {
   if (!(await showConfirmModal('Cancel this PO?', '', 'Cancel PO'))) return;
   const { error } = await sb.from('purchase_orders').update({ status: 'cancelled' }).eq('id', id);
-  if (error) { alert('Failed: ' + error.message); return; }
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await renderPOs();
 }
 
