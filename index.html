@@ -653,6 +653,13 @@ const PROBLEM_LABELS = {
   overdue_contact: 'Contact Due',
 };
 
+// Alex (2026-11-10, round 14): "review all popup boxes and optimize spacing for no scrolling
+// left or right or up or down." Confirmed with Alex: for popups holding a genuinely long table
+// (Activity Log, Overdue Orders, Vendor Contacts Due, Open Recommendations, etc.) the outer
+// popup chrome (title, Close button) should NEVER scroll -- only the table/content area gets its
+// own internal scrollbar, so the popup itself stays fixed on screen. Previously the whole
+// `.detail-modal` (title + body + Close button all together) scrolled as one block whenever the
+// table was long enough to exceed 88vh, which visually read as "the whole popup scrolls."
 function showDetail(title, body, size) {
   const existing = document.getElementById('detail-modal-backdrop');
   if (existing) existing.remove();
@@ -662,10 +669,10 @@ function showDetail(title, body, size) {
   el.onclick = (e) => { if (e.target === el) el.remove(); };
   const maxWidth = size === 'wide' ? '1180px' : '640px';
   el.innerHTML = `
-    <div class="detail-modal" style="max-width:${maxWidth};">
-      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${title}</div>
-      <div style="font-size:14px; color:var(--ink); line-height:1.5;">${body}</div>
-      <button class="btn btn-ghost" style="margin-top:16px;" onclick="document.getElementById('detail-modal-backdrop').remove()">Close</button>
+    <div class="detail-modal" style="max-width:${maxWidth}; display:flex; flex-direction:column; overflow:hidden;">
+      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px; flex-shrink:0;">${title}</div>
+      <div style="font-size:14px; color:var(--ink); line-height:1.5; overflow-y:auto; flex:1; min-height:0;">${body}</div>
+      <button class="btn btn-ghost" style="margin-top:16px; flex-shrink:0;" onclick="document.getElementById('detail-modal-backdrop').remove()">Close</button>
     </div>
   `;
   document.body.appendChild(el);
@@ -735,30 +742,6 @@ function showPromptModal(title, message, defaultValue, inputType) {
     });
     document.getElementById('prompt-modal-ok').onclick = () => finish(input.value);
     document.getElementById('prompt-modal-cancel').onclick = () => finish(null);
-  });
-}
-
-function showConfirmModal(title, message, confirmLabel) {
-  return new Promise(resolve => {
-    document.getElementById('detail-modal-backdrop')?.remove();
-    const el = document.createElement('div');
-    el.id = 'detail-modal-backdrop';
-    el.className = 'detail-modal-backdrop';
-    const finish = (val) => { el.remove(); resolve(val); };
-    el.onclick = (e) => { if (e.target === el) finish(false); };
-    el.innerHTML = `
-      <div class="detail-modal" style="max-width:480px;">
-        <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${title}</div>
-        <div style="font-size:14px; line-height:1.5; margin-bottom:16px;">${message}</div>
-        <div style="display:flex; gap:8px;">
-          <button class="btn btn-primary" id="confirm-modal-ok">${confirmLabel || 'Confirm'}</button>
-          <button class="btn btn-ghost" id="confirm-modal-cancel">Cancel</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(el);
-    document.getElementById('confirm-modal-ok').onclick = () => finish(true);
-    document.getElementById('confirm-modal-cancel').onclick = () => finish(false);
   });
 }
 
@@ -876,7 +859,17 @@ function showRecsKpiDetail() {
     PROBLEM_LABELS[r.problem_type] || r.problem_type,
     r.decision,
   ]);
-  showDetail('Open Recommendations', kpiTable(['Product', 'Urgency', 'Problem', 'Decision'], rows));
+  // Alex (2026-11-10, round 14): real overflow found live -- "Decision" is open text that can
+  // run long (a full recommendation sentence), but with no colWidths every column defaulted to
+  // nowrap except the last, so Product/Urgency/Problem forced the table past 640px with no wide
+  // text column getting the room it needed. Narrow, fixed-content columns get tight explicit
+  // widths; Decision (the one open-text column) gets the rest via null + 'wide' sizing.
+  showDetail('Open Recommendations', kpiTable(
+    ['Product', 'Urgency', 'Problem', 'Decision'],
+    rows, 3,
+    ['160px', '90px', '150px', null],
+    [1]
+  ), 'wide');
 }
 
 function showOverdueKpiDetail() {
@@ -938,7 +931,13 @@ function showQcKpiDetail() {
     `<span class="pill ${c.passed ? 'good' : 'bad'}">${c.passed ? 'Pass' : 'Fail'}</span>`,
     c.detail || '',
   ]);
-  showDetail(`QC Run — ${fmtDateTime(lastQc.run_at)}`, kpiTable(['Check', 'Result', 'Detail'], rows));
+  // Alex (2026-11-10, round 14): real overflow found live (912px content in a 625px modal) --
+  // "Check" names can be long ("3b. Projection staleness (informational)") and "Detail" is open
+  // text that can run to a full paragraph for the adversarial/informational checks. 'wide' +
+  // explicit widths, Detail as the one column that gets the rest of the room.
+  showDetail(`QC Run — ${fmtDateTime(lastQc.run_at)}`, kpiTable(
+    ['Check', 'Result', 'Detail'], rows, 2, ['220px', '80px', null], [1]
+  ), 'wide');
 }
 
 // ---------- Overview ----------
@@ -3361,7 +3360,15 @@ async function npWizardCreate() {
 // popup after 'delete product' is hit, it should be a pop up box." Reused anywhere a plain
 // browser confirm()/alert() would otherwise show (block/success message with just an OK button,
 // or a real confirm with OK/Cancel) -- same detail-modal visual language as showPromptModal.
+// Accepts either the
+// legacy 3rd-arg string (a custom confirm-button label, used by the original call sites) or an
+// options object ({okLabel, danger, okOnly}, added in round 13 for cascade-delete confirmations)
+// -- found as a real regression during the round-14 popup audit: a second showConfirmModal
+// definition silently overrode this one, so every pre-existing call passing a string label
+// (Cancel Order, Delete, Remove, Commit, ...) got treated as an options object instead and
+// always fell back to the default "Confirm" label.
 function showConfirmModal(title, message, opts) {
+  if (typeof opts === 'string') opts = { okLabel: opts };
   return new Promise(resolve => {
     document.getElementById('detail-modal-backdrop')?.remove();
     const el = document.createElement('div');
