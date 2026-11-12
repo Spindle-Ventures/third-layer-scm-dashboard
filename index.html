@@ -746,6 +746,23 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     try { sessionStorage.setItem('tl_active_tab', btn.dataset.tab); } catch (e) {}
   });
 });
+// Alex (2026-11-12, round 37 follow-up 3): "If I refresh a chrome tab, it should pull up right
+// where I left off." Tab selection already persisted above; add window scroll position too
+// (throttled via requestAnimationFrame, since scroll fires continuously) -- the most common
+// "where I left off" case (scrolled partway down a long Overview/Catalog list) now survives a
+// refresh alongside the active tab. Per-popup restoration was scoped out for this round: dozens
+// of call sites each build their own popup content from different arguments (ledger id, vendor
+// id, etc.) with no single generic "reopen" signature yet -- revisit as a focused follow-up if
+// still needed after tab+scroll is confirmed working.
+let _scrollSaveQueued = false;
+window.addEventListener('scroll', () => {
+  if (_scrollSaveQueued) return;
+  _scrollSaveQueued = true;
+  requestAnimationFrame(() => {
+    _scrollSaveQueued = false;
+    try { sessionStorage.setItem('tl_scroll_y', String(window.scrollY)); } catch (e) {}
+  });
+}, { passive: true });
 function restoreActiveTab() {
   let saved = null;
   try { saved = sessionStorage.getItem('tl_active_tab'); } catch (e) {}
@@ -756,6 +773,14 @@ function restoreActiveTab() {
   btn.classList.add('active');
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
   document.getElementById('tab-' + saved).classList.remove('hidden');
+  // Restore scroll position AFTER the tab panel is visible and its content has rendered --
+  // a hidden/not-yet-rendered panel has no real scrollHeight to scroll into, so this runs on
+  // the next frame rather than synchronously.
+  let savedY = null;
+  try { savedY = sessionStorage.getItem('tl_scroll_y'); } catch (e) {}
+  if (savedY != null) {
+    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, Number(savedY))));
+  }
 }
 
 // Alex (2026-11-12): "I'd like a refresh data button, and I'd like ideally if the screen didn't
@@ -934,7 +959,22 @@ function showAnchoredMenu(anchorEl, itemsHtml) {
   const menu = document.createElement('div');
   menu.id = 'anchored-menu';
   menu.className = 'card';
-  menu.style.cssText = `position:absolute; top:${rect.bottom + window.scrollY + 4}px; left:${left}px; width:${menuWidth}px; z-index:2501; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,0.22);`;
+  // Alex (2026-11-12, round 37 follow-up 3): "The action button should present the options up or
+  // down from when clicked based on where there's availability on the screen without scrolling.
+  // Right now the sub box with the action options only opens lower than the button and then it
+  // forces the user to scroll." Estimate the menu's height from its item count (roughly 34px per
+  // row + 16px padding -- can't measure the real rendered height before it's in the DOM) and flip
+  // it above the anchor instead of below whenever there isn't enough room in the viewport under
+  // the anchor but there IS enough room above it.
+  const itemCount = (itemsHtml.match(/<button/g) || []).length || 1;
+  const estMenuHeight = itemCount * 34 + 16;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  const openUpward = spaceBelow < estMenuHeight && spaceAbove > spaceBelow;
+  const top = openUpward
+    ? Math.max(8 + window.scrollY, rect.top + window.scrollY - estMenuHeight - 4)
+    : rect.bottom + window.scrollY + 4;
+  menu.style.cssText = `position:absolute; top:${top}px; left:${left}px; width:${menuWidth}px; z-index:2501; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,0.22);`;
   menu.innerHTML = itemsHtml;
   document.body.appendChild(backdrop);
   document.body.appendChild(menu);
@@ -1853,6 +1893,18 @@ function buildOrderPlacedSubject(o) {
 // the shorter round-32/33 wording with this explicit checklist -- still ends on the "let us know
 // if anything's off" open door, but every specific ask Alex named is now its own line so nothing
 // gets missed in the vendor's reply, and each stays easy to find/grep in the thread later.
+//
+// Alex (2026-11-12, round 37 follow-up 3): "Let's not ask if the landing date is doable, let's
+// confirm it is in the order placement email." Changed from a question ("Is X doable?") to a
+// statement of fact in the opening sentence; dropped from the confirm-these-3-things list
+// entirely since it's no longer a question. "add the destination in the email. Targeting a
+// landing date of date at landing location." -- the opening sentence now names the destination
+// alongside the date when one is on file. The actual Gmail signature ("All emails... signed as
+// Manny with the signature in gmail") isn't set by this function at all -- Gmail's send-as
+// signature is appended by Gmail itself server-side when sendAsEmail has a signature configured
+// (see vendor_email_sync.py's send_queued() and the google-workspace skill's gmail signature
+// setup) -- the body text's own closing line was changed from "Third Layer" to "Manny" so there
+// isn't a second, conflicting sign-off above the real Gmail signature.
 function buildOrderPlacedBody(o) {
   const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
   const itemPhrase = humanizeItemLabel(itemLabel);
@@ -1861,15 +1913,15 @@ function buildOrderPlacedBody(o) {
   const refLine = ref ? `Order ref: ${ref}\n\n` : '';
   const greeting = o.vendor_contact_name ? `Hi ${o.vendor_contact_name.split(' ')[0]},` : 'Hi,';
   const etaStr = o.eta ? plainDate(o.eta) : 'no ETA set yet';
+  const destPhrase = o.landing_destination_name ? ` at ${o.landing_destination_name}` : '';
   return (
     `${greeting}\n\n${refLine}` +
-    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}. Could you confirm the following?\n\n` +
-    `- Is a landing date of ${etaStr} doable on your end?\n` +
+    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}${destPhrase}. Could you confirm the following?\n\n` +
     `- Your order/confirmation number for this order\n` +
     `- Price and payment terms for this order\n\n` +
     `Please let us know proactively if anything changes or a delay comes up on your end -- the earlier we hear about it, the better we can plan around it.\n\n` +
     `Once invoicing is ready, please send it to TLAccounting@spindle.ventures.\n\n` +
-    `Thanks,\nThird Layer`
+    `Thanks,\nManny`
   );
 }
 
@@ -1879,6 +1931,13 @@ function buildOrderPlacedBody(o) {
 // (Alex alone decides when a vendor-facing message actually goes out -- standing rule).
 function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
   window._addOrderWizard = { step: 3 };
+  // Alex (2026-11-12, round 37 follow-up 3): "add the destination in the email. Targeting a
+  // landing date of date at landing location." ledgerRow.landing_destination_vendor_id is set at
+  // order creation (deriveLandingDest()) -- look up its display name from the same lookup list
+  // used to populate it, so the email can say exactly where it's landing.
+  const landingDestName = ledgerRow.landing_destination_vendor_id
+    ? (window._addOrderLookups?.landingDestVendors || []).find(v => v.id === ledgerRow.landing_destination_vendor_id)?.vendor_name
+    : null;
   const o = {
     order_type: 'componentry',
     component_name: itemLabel,
@@ -1888,6 +1947,7 @@ function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
     internal_ref: ledgerRow.order_number,
     ledger_id: ledgerRow.id,
     vendor_contact_name: vendor?.contact_name,
+    landing_destination_name: landingDestName,
   };
   const subject = buildOrderPlacedSubject(o);
   const body = buildOrderPlacedBody(o);
@@ -2152,6 +2212,11 @@ function renderContactScheduleCell(o) {
 
 // Alex (2026-11-12): "I should be able to see a top level contextual 2 sentences on the status
 // and also be able to drop open a container that reads the back & forth very easily."
+// Alex (2026-11-12, round 37 follow-up 3): "the single sentence on the status - can we make this
+// shorter and not grey with plain font, let's liven it up a bit." Cut to one short, punchy
+// sentence per case (dropped the second "No action needed/worth a follow-up" clause -- that's
+// what the colored status pill right above already conveys); styling moved from a plain muted
+// box to a livelier colored treatment (see showContactScheduleDetail()'s rendering of this).
 function buildContactStatusSummary(o, msgs) {
   const today = new Date().toISOString().slice(0, 10);
   const vendorLabel = o.vendor_name || 'the vendor';
@@ -2163,33 +2228,33 @@ function buildContactStatusSummary(o, msgs) {
   if (lastInbound && lastOutbound && lastInbound.created_at > lastOutbound.sent_at) {
     const when = fmtDate((lastInbound.created_at || '').slice(0, 10));
     if (lastInbound.parsed_status === 'confirmed') {
-      return `${vendorLabel} confirmed ${itemLabel} is on track as of ${when}. No action needed right now.`;
+      return `✅ ${vendorLabel} confirmed ${itemLabel} is on track as of ${when}.`;
     }
     if (lastInbound.parsed_status === 'delay') {
-      return `${vendorLabel} flagged a delay on ${itemLabel} as of ${when}. This needs a look — check the reply below and decide next steps.`;
+      return `⚠️ ${vendorLabel} flagged a delay on ${itemLabel} as of ${when}.`;
     }
-    return `${vendorLabel} replied on ${when} about ${itemLabel}, but the reply didn't clearly confirm or flag an issue. Worth reading it yourself below.`;
+    return `✉️ ${vendorLabel} replied on ${when} about ${itemLabel} — worth a read below.`;
   }
   if (lastOutbound) {
     const sentDate = fmtDate((lastOutbound.sent_at || '').slice(0, 10));
     const daysSince = daysBetween(lastOutbound.sent_at.slice(0, 10), today);
     if (daysSince >= 3) {
-      return `We emailed ${vendorLabel} on ${sentDate} about ${itemLabel} and haven't heard back in ${daysSince} days. Worth a follow-up.`;
+      return `⏳ Emailed ${vendorLabel} on ${sentDate} — no reply in ${daysSince} days.`;
     }
-    return `We emailed ${vendorLabel} on ${sentDate} about ${itemLabel} and are waiting on a reply. No action needed yet.`;
+    return `✉️ Emailed ${vendorLabel} on ${sentDate}, awaiting reply.`;
   }
   if (pendingDraft) {
     return pendingDraft.status === 'queued'
-      ? `A message to ${vendorLabel} about ${itemLabel} has been approved and will go out shortly.`
-      : `A draft message to ${vendorLabel} about ${itemLabel} is waiting for approval before anything is sent.`;
+      ? `📤 A message to ${vendorLabel} is approved and going out shortly.`
+      : `📝 A draft to ${vendorLabel} is waiting for approval.`;
   }
   if (o.next_contact) {
     const overdue = o.next_contact < today;
     return overdue
-      ? `A check-in with ${vendorLabel} about ${itemLabel} was due ${fmtDate(o.next_contact)} and hasn't happened yet. Worth reaching out.`
-      : `A check-in with ${vendorLabel} about ${itemLabel} is scheduled for ${fmtDate(o.next_contact)}. Nothing to do yet.`;
+      ? `⚠️ Check-in with ${vendorLabel} was due ${fmtDate(o.next_contact)}.`
+      : `📅 Check-in with ${vendorLabel} scheduled for ${fmtDate(o.next_contact)}.`;
   }
-  return `No outreach has been sent or scheduled with ${vendorLabel} about ${itemLabel} yet.`;
+  return `No outreach sent or scheduled with ${vendorLabel} yet.`;
 }
 
 async function showContactScheduleDetail(ledgerId) {
@@ -2260,13 +2325,23 @@ async function showContactScheduleDetail(ledgerId) {
   const nextContactLine = o.next_contact ? fmtDate(o.next_contact) : '<span class="muted">Not scheduled</span>';
   // Alex (2026-11-12, round 37 follow-up): "we don't need the 'Set vendor order number' button
   // in the contact status popup. remove the Vendor Order # and place the 'Landing Destination'
-  // to the right of next contact." Vendor's order # is still visible/editable elsewhere (the
-  // View/Edit Details popup, showPoNumberDetail()) -- just not duplicated here anymore. Landing
+  // to the right of next contact." Order number is still visible/editable elsewhere (the
+  // View/Edit Details popup, editVendorOrderNumber()) -- just not duplicated here anymore. Landing
   // Destination moves up into the same Last Contacted/Next Contact row instead of its own line
   // further down.
   const landingDestLine = o.landing_destination_name
     ? `<strong style="color:var(--ink);">${o.landing_destination_name}</strong>`
     : '<span class="muted">not set</span>';
+  // Alex (2026-11-12, round 37 follow-up 3): "the single sentence on the status - can we make
+  // this shorter and not grey with plain font, let's liven it up a bit." Tint the summary line's
+  // own background/text to match the status pill's color (good/watch/bad) instead of the flat
+  // neutral card-bg box every case previously shared -- same color language the pill already
+  // uses, just echoed down into this line so it doesn't read as plain/grey next to it.
+  const summaryTint = {
+    good: 'background:var(--good-bg, #e4f3e6); color:var(--good-text, #2f6b3f); border-color:var(--good-text, #2f6b3f);',
+    bad: 'background:var(--bad-bg, #f8e3e3); color:var(--bad-text, #9b3030); border-color:var(--bad-text, #9b3030);',
+    watch: 'background:var(--watch-bg, #fdf2d8); color:var(--watch-text, #8a6413); border-color:var(--watch-text, #8a6413);',
+  }[scheduleStatus.cls] || '';
 
   const body = `
     <div style="margin-bottom:14px;">
@@ -2277,7 +2352,7 @@ async function showContactScheduleDetail(ledgerId) {
         <div>Landing Destination: ${landingDestLine}</div>
       </div>
     </div>
-    <div style="font-size:14px; line-height:1.5; margin-bottom:14px; padding:10px 12px; border-radius:8px; background:var(--card-bg, #f5f5f5); border:1px solid var(--border);">${summary}</div>
+    <div style="font-size:14px; font-weight:600; line-height:1.5; margin-bottom:14px; padding:10px 12px; border-radius:8px; border:1px solid; ${summaryTint}">${summary}</div>
     <div class="section-label" style="margin-bottom:6px;">Email Thread</div>
     ${threadSection}
     ${canEdit() ? `
@@ -2578,7 +2653,9 @@ async function createNewOrder(type) {
       inserted.push(row);
     }
     if (!inserted.length) return;
-    document.getElementById('detail-modal-backdrop')?.remove();
+    // Alex (2026-11-12, round 37 follow-up 3): same "close then re-open" flash as the component
+    // order path -- removed; showOrderPlacedEmailScreen() below's showDetail() call does the one
+    // swap itself.
     const products = window._addOrderLookups.products || [];
     const logIds = [];
     for (const row of inserted) {
@@ -2599,7 +2676,11 @@ async function createNewOrder(type) {
     const vendorFg = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
     const firstProduct = products.find(p => p.id === inserted[0].product_id);
     const itemLabelFg = inserted.length > 1 ? `${inserted.length} products (${orderNumber || 'this order'})` : (firstProduct?.display_name || 'this order');
-    if (vendorId) showOrderPlacedEmailScreen(inserted[0], vendorFg, itemLabelFg);
+    if (vendorId) {
+      showOrderPlacedEmailScreen(inserted[0], vendorFg, itemLabelFg);
+    } else {
+      document.getElementById('detail-modal-backdrop')?.remove();
+    }
     return;
   }
 
@@ -2630,7 +2711,12 @@ async function createNewOrder(type) {
   };
   const { data: inserted, error } = await sb.from('inventory_ledger').insert(payload).select().single();
   if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
-  document.getElementById('detail-modal-backdrop')?.remove();
+  // Alex (2026-11-12, round 37 follow-up 3): "When I hit 'Create Order' on the pop up screen I
+  // want it to go straight to the email portion without closing the pop up screen. Each
+  // screenflow should operate without closing and then re-opening the boxes." This explicit
+  // close (before showOrderPlacedEmailScreen() below calls showDetail(), which itself always
+  // removes-and-replaces the backdrop in one tick) created a visible blank-screen flash between
+  // the two popups. Let showDetail() do the one swap itself -- no separate close here.
   const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
   await logAction('inventory_ledger', inserted.id, 'create', `Added new component order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
   await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
@@ -2640,7 +2726,13 @@ async function createNewOrder(type) {
   // now, even with no contact email on file (the screen itself offers a recipient field in that
   // case) -- never auto-sends; only queues the email on an explicit "Send Email" click there.
   const vendor = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
-  if (vendorId) showOrderPlacedEmailScreen(inserted, vendor, componentName);
+  if (vendorId) {
+    showOrderPlacedEmailScreen(inserted, vendor, componentName);
+  } else {
+    // No vendor selected at all (not just no contact email on file) -- nothing to transition
+    // to, so this is the one case that still needs an explicit close.
+    document.getElementById('detail-modal-backdrop')?.remove();
+  }
 }
 
 function showRecActionsMenu(recId, btnEl) {
@@ -2708,8 +2800,7 @@ function showOrderDetailsPopup(ledgerId) {
       ${row('Landing Destination', o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>', `editLandingDestination('${ledgerId}')`)}
       ${row('ETA', `<strong>${fmtDate(o.eta)}</strong>`, `editOpenOrderRow('${ledgerId}')`)}
       ${row('Quantity', o.qty != null ? o.qty.toLocaleString() : '—', `editOpenOrderRow('${ledgerId}')`)}
-      ${row('Order #', o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>', `editPoNumber('${ledgerId}')`)}
-      ${row("Vendor's Order #", o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`)}
+      ${row('Order number', (o.vendor_order_number || o.internal_ref || o.vendor_po_number) ? `<strong>${o.vendor_order_number || o.internal_ref || o.vendor_po_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`)}
       ${row('Tracking Info', o.tracking_info || '<span class="muted">none on file</span>', `editTracking('${ledgerId}')`)}
       ${row('Status', `<span class="pill clickable-pill ${actionPillClass(o.action_needed)}">${o.action_needed}</span>`)}
       ${row('Order Status', o.order_status === 'paused' ? 'Paused' : 'Open')}
@@ -3518,6 +3609,18 @@ function toggleCatalogVendorExpand(vendorId) {
 // detail modals (lead time, contacts, notes, manage components) are reused unchanged -- only the
 // row/expand shell around them changed, per Alex's "I like the look and feel" (don't reinvent
 // the parts that already work).
+// Alex (2026-11-12, round 37 follow-up 3): "I want to spell out the entirety of words" + "we
+// need another 'type' of vendor because Bollweg is a 3pl not a finished goods manufacturer."
+// Single source of truth for vendor_type -> full display label, shared by the Catalog tab table,
+// its inline type-select, and the New Vendor wizard, so all 3 real DB values (component_supplier
+// / finished_good_manufacturer / logistics_3pl -- see vendors_vendor_type_check) are always
+// spelled out identically everywhere instead of drifting into ad-hoc abbreviations per call site.
+const VENDOR_TYPE_LABELS = {
+  component_supplier: 'Component Supplier',
+  finished_good_manufacturer: 'Finished-Good Manufacturer',
+  logistics_3pl: 'Third-Party Logistics (3PL)',
+};
+
 function renderCatalogVendorsTable() {
   const { vendors, allContacts, componentVendors } = window._catalogVendorsCache || { vendors: [], allContacts: [], componentVendors: [] };
   const el = document.getElementById('catalog-accordion-body-vendors');
@@ -3532,7 +3635,14 @@ function renderCatalogVendorsTable() {
   componentVendors.forEach(cv => { (componentsByVendor[cv.vendor_id] = componentsByVendor[cv.vendor_id] || []).push(cv); });
 
   const rows = vendors.map(v => {
+    // Alex (2026-11-12, round 37 follow-up 3): "in the catalog tab, we need another 'type' of
+    // vendor because Bollweg is a 3pl not a finished goods manufacturer." vendors_vendor_type_check
+    // in the DB already allows 'logistics_3pl' (Bollweg is already tagged with it) -- this UI
+    // only ever offered/displayed 2 of the 3 real types, silently mislabeling any 3PL as
+    // Finished-Good Manufacturer. "Also I want to spell out the entirety of words" -- abbreviated
+    // labels ("Finished-Good Mfr") spelled out in full everywhere via VENDOR_TYPE_LABELS.
     const isComponentSupplier = v.vendor_type === 'component_supplier';
+    const is3pl = v.vendor_type === 'logistics_3pl';
     const contacts = contactsByVendor[v.id] || [];
     const primaryCount = contacts.filter(c => c.is_primary_poc).length;
     const contactPillLabel = contacts.length ? `${contacts.length} on file${primaryCount ? ` (${primaryCount} primary)` : ''}` : 'Missing';
@@ -3543,7 +3653,7 @@ function renderCatalogVendorsTable() {
     const nameHtml = canAct
       ? `<span class="pill clickable-pill good" style="font-size:14px;" onclick="event.stopPropagation(); editVendorNameInline('${v.id}')">${v.vendor_name}</span>`
       : `<span style="font-size:14px;">${v.vendor_name}</span>`;
-    const typeCell = isComponentSupplier ? 'Component Supplier' : 'Finished-Good Mfr';
+    const typeCell = VENDOR_TYPE_LABELS[v.vendor_type] || VENDOR_TYPE_LABELS.component_supplier;
     const activeCell = canAct
       ? `<input type="checkbox" id="cat-vendor-active-${v.id}" ${v.is_active ? 'checked' : ''} onchange="saveCatalogVendor('${v.id}')" onclick="event.stopPropagation();" />`
       : (v.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>');
@@ -3554,8 +3664,9 @@ function renderCatalogVendorsTable() {
     // Products' "SKU/stock strip on expand" pattern.
     const typeSelectHtml = canAct
       ? `<select id="cat-vendor-type-${v.id}" onchange="saveCatalogVendor('${v.id}')" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:13px;">
-          <option value="component_supplier" ${isComponentSupplier ? 'selected' : ''}>Component Supplier</option>
-          <option value="finished_good_manufacturer" ${!isComponentSupplier ? 'selected' : ''}>Finished-Good Mfr</option>
+          <option value="component_supplier" ${isComponentSupplier ? 'selected' : ''}>${VENDOR_TYPE_LABELS.component_supplier}</option>
+          <option value="finished_good_manufacturer" ${(!isComponentSupplier && !is3pl) ? 'selected' : ''}>${VENDOR_TYPE_LABELS.finished_good_manufacturer}</option>
+          <option value="logistics_3pl" ${is3pl ? 'selected' : ''}>${VENDOR_TYPE_LABELS.logistics_3pl}</option>
         </select>`
       : typeCell;
     const leadHtml = canAct
@@ -3601,8 +3712,15 @@ function renderCatalogVendorsTable() {
     </div>
     <div style="overflow-x:auto;">
       <table style="width:100%; font-size:14px; border-collapse:collapse;">
+        <colgroup>
+          <col style="width:28px;" />
+          <col style="width:34%;" />
+          <col style="width:26%;" />
+          <col style="width:14%;" />
+          <col style="width:26%;" />
+        </colgroup>
         <thead><tr>
-          <th style="padding:6px 6px; width:18px;"></th>
+          <th style="padding:6px 6px;"></th>
           ${['Name', 'Type', 'Active', 'Components'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
         </tr></thead>
         <tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:10px;">No vendors found.</td></tr>'}</tbody>
@@ -3651,8 +3769,9 @@ function renderNvWizard() {
       <input type="text" id="nv-name-input" placeholder="e.g. Pacific Packaging Co." value="${w.vendor_name}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;" />
       <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Type</label>
       <select id="nv-type-input" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;">
-        <option value="component_supplier" ${w.vendor_type === 'component_supplier' ? 'selected' : ''}>Component Supplier</option>
-        <option value="finished_good_manufacturer" ${w.vendor_type === 'finished_good_manufacturer' ? 'selected' : ''}>Finished-Good Manufacturer</option>
+        <option value="component_supplier" ${w.vendor_type === 'component_supplier' ? 'selected' : ''}>${VENDOR_TYPE_LABELS.component_supplier}</option>
+        <option value="finished_good_manufacturer" ${w.vendor_type === 'finished_good_manufacturer' ? 'selected' : ''}>${VENDOR_TYPE_LABELS.finished_good_manufacturer}</option>
+        <option value="logistics_3pl" ${w.vendor_type === 'logistics_3pl' ? 'selected' : ''}>${VENDOR_TYPE_LABELS.logistics_3pl}</option>
       </select>
       <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Preferred Contact Channel</label>
       <select id="nv-channel-input" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); margin-bottom:12px;">
@@ -3757,7 +3876,7 @@ function renderNvWizard() {
     bodyHtml = `
       <div style="font-size:14px; line-height:1.7;">
         <div><span class="muted">Vendor</span> <strong>${w.vendor_name}</strong></div>
-        <div><span class="muted">Type</span> <strong>${w.vendor_type === 'component_supplier' ? 'Component Supplier' : 'Finished-Good Manufacturer'}</strong></div>
+        <div><span class="muted">Type</span> <strong>${VENDOR_TYPE_LABELS[w.vendor_type] || VENDOR_TYPE_LABELS.component_supplier}</strong></div>
         <div><span class="muted">Default lead time / contact frequency</span> <strong>${w.default_lead_days}d / every ${w.default_cadence_days}d</strong></div>
         <div><span class="muted">Active</span> <strong>${w.is_active ? 'Yes' : 'No'}</strong></div>
         <div><span class="muted">Contacts</span> <strong>${w.contacts.length}</strong>${w.contacts.length ? ': ' + w.contacts.map(c => c.name).join(', ') : ''}</div>
@@ -6009,12 +6128,20 @@ async function editPoNumber(ledgerId) {
 // able to input the order number into the database." This is the VENDOR's own order/confirmation
 // number (distinct from editPoNumber's `internal_ref`/`order_number`, which is OUR reference) --
 // normally captured automatically from their reply via classify_reply, but editable by hand too.
+// Alex (2026-11-12, round 37 follow-up 3): "The vendor order and internal order are the same
+// thing. Just call it Order number." Previously two separate fields/rows (our internal
+// order_number/internal_ref vs the vendor's own vendor_order_number) -- collapsed into one
+// labeled field everywhere. Going forward every edit here writes to vendor_order_number (the
+// column vendor-reply auto-fill already targets); internal_ref/order_number stay as read-only
+// fallback display for older rows that only ever had the old field populated, never written to
+// again by this editor.
 async function editVendorOrderNumber(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
-  const newVal = await showPromptModal("Vendor's Order #", "The order/confirmation number the vendor gave us for this order", o.vendor_order_number || '');
+  const currentVal = o.vendor_order_number || o.internal_ref || o.vendor_po_number || '';
+  const newVal = await showPromptModal('Order number', 'The order/confirmation number for this order', currentVal);
   if (newVal === null) return;
-  const ok = await mutateLedgerRow(ledgerId, { vendor_order_number: newVal || null }, `Set vendor's order # for ${o.product_name} to "${newVal || '(cleared)'}"`);
+  const ok = await mutateLedgerRow(ledgerId, { vendor_order_number: newVal || null }, `Set order number for ${o.product_name} to "${newVal || '(cleared)'}"`);
   if (ok) await renderOverview();
 }
 
