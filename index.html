@@ -909,31 +909,17 @@ function showOverdueKpiDetail() {
 
 function showContactsKpiDetail() {
   const { contactsDueOrSoon } = window._kpiContext || { contactsDueOrSoon: [] };
-  const today = new Date().toISOString().slice(0, 10);
   const rows = contactsDueOrSoon
     .slice()
     .sort((a, b) => (a.next_contact || '').localeCompare(b.next_contact || ''))
     .map(o => {
-      const overdue = o.next_contact && o.next_contact < today;
-      const dueToday = o.next_contact && o.next_contact <= today;
-      const msgs = (window._vendorMessagesByLedger || {})[o.ledger_id] || [];
-      const lastOutbound = msgs.filter(m => m.direction === 'outbound').sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
-      const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
-      const awaitingReply = lastOutbound && (!lastInbound || lastInbound.created_at <= lastOutbound.sent_at);
-      // Alex (2026-11-12): "when clicked shows the status of today's outreaches plus anything
-      // that's been sent previously but not responded to." Status column makes which bucket an
-      // order is in explicit, since a row can be in both (due today AND still unanswered).
-      let statusLabel, statusCls;
-      if (dueToday && awaitingReply) { statusLabel = 'Due today + no reply'; statusCls = 'bad'; }
-      else if (dueToday) { statusLabel = 'Due today'; statusCls = 'watch'; }
-      else if (awaitingReply) { statusLabel = `No reply (sent ${fmtDate((lastOutbound.sent_at || '').slice(0, 10))})`; statusCls = 'bad'; }
-      else { statusLabel = 'Scheduled'; statusCls = 'watch'; }
+      const s = contactStatus(o);
       return [
         o.vendor_name || '—',
         `<strong>${o.product_name}</strong>`,
         o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>',
         `<strong>${fmtDate(o.eta)}</strong>`,
-        `<span class="pill ${statusCls}">${statusLabel}</span>`,
+        `<span class="pill ${s.cls}">${s.label}</span>`,
         buildActionDetail(o),
         `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showContactScheduleDetail('${o.ledger_id}')">Thread</button>`,
         `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="scrollToOrderRow('${o.ledger_id}')">Take me there</button>`,
@@ -1198,9 +1184,16 @@ async function renderOverview() {
             <option value="paused">Paused</option>
           </select>
         </label>
-        <label style="font-size:14px; font-weight:500;">Contact Scheduled For:
-          <input type="date" id="filter-contact-date" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:4px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';" />
-          <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px; margin-left:4px;" onclick="document.getElementById('filter-contact-date').value=''; applyOpenOrdersFilter();" title="Clear date filter">✕</button>
+        <label style="font-size:14px; font-weight:500;">Contact Status:
+          <select id="filter-contact-date" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
+            <option value="">All</option>
+            <option value="needs_attention">Needs Attention</option>
+            <option value="awaiting_reply">Awaiting Reply</option>
+            <option value="due_today">Due Today</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="healthy">Healthy</option>
+            <option value="not_contacted">Not Contacted</option>
+          </select>
         </label>
         <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
         <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
@@ -1291,7 +1284,7 @@ function applyOpenOrdersFilter() {
     if (productFilter !== 'all' && o.product_sku !== productFilter) return false;
     if (typeFilter !== 'all' && o.order_type !== typeFilter) return false;
     if (statusFilter !== 'all' && (statusFilter === 'paused') !== (o.order_status === 'paused')) return false;
-    if (contactDateFilter && o.next_contact !== contactDateFilter) return false;
+    if (contactDateFilter && contactStatus(o).key !== contactDateFilter) return false;
     if (onlyAction && o.action_needed === 'On Track') return false;
     return true;
   });
@@ -1718,31 +1711,41 @@ function renderTrackingCell(o, canAct) {
   return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showTrackingDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
 }
 
-function renderContactScheduleCell(o) {
+// Alex (2026-11-12): "We need to modify all the contact schedule data to transfer into the
+// status values as opposed to dates." Single shared classifier so the Overview filter, the
+// per-row chip, and the KPI popup can never drift from each other -- each of those 3 call sites
+// used to have its own copy-pasted version of this logic before this round.
+function contactStatus(o) {
   const today = new Date().toISOString().slice(0, 10);
-  // Alex (2026-11-12): "the 'Contact Schedule' should have only a few values which showcase the
-  // health in communications." Collapsed to a fixed small set of health states -- no more raw
-  // dates or ad-hoc fallback text leaking into the chip itself.
   const msgs = (window._vendorMessagesByLedger || {})[o.ledger_id] || [];
   const lastOutbound = msgs.filter(m => m.direction === 'outbound').sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
   const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
-  let label, cls;
+  const dueToday = o.next_contact && o.next_contact <= today;
   if (lastInbound && lastOutbound && lastInbound.created_at > lastOutbound.sent_at) {
-    if (lastInbound.parsed_status === 'confirmed') { label = 'Healthy'; cls = 'good'; }
-    else if (lastInbound.parsed_status === 'delay') { label = 'Needs Attention'; cls = 'bad'; }
-    else { label = 'Needs Review'; cls = 'watch'; }
-  } else if (lastOutbound) {
-    const daysSinceSent = daysBetween(lastOutbound.sent_at.slice(0, 10), today);
-    label = daysSinceSent >= 3 ? 'Needs Attention' : 'Awaiting Reply';
-    cls = daysSinceSent >= 3 ? 'bad' : 'watch';
-  } else if (o.next_contact && o.next_contact < today) {
-    label = 'Needs Attention'; cls = 'bad';
-  } else if (o.next_contact || o.last_contacted) {
-    label = 'Scheduled'; cls = 'watch';
-  } else {
-    label = 'Not Contacted'; cls = 'watch';
+    if (lastInbound.parsed_status === 'confirmed') return { key: 'healthy', label: 'Healthy', cls: 'good' };
+    if (lastInbound.parsed_status === 'delay') return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
+    return { key: 'needs_attention', label: 'Needs Review', cls: 'watch' };
   }
-  return `<span class="pill clickable-pill ${cls}" onclick="showContactScheduleDetail('${o.ledger_id}')">${label}</span>`;
+  if (lastOutbound) {
+    const daysSinceSent = daysBetween(lastOutbound.sent_at.slice(0, 10), today);
+    if (daysSinceSent >= 3) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
+    return { key: 'awaiting_reply', label: 'Awaiting Reply', cls: 'watch' };
+  }
+  if (o.next_contact && o.next_contact < today) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
+  if (dueToday) return { key: 'due_today', label: 'Due Today', cls: 'watch' };
+  if (o.next_contact || o.last_contacted) return { key: 'scheduled', label: 'Scheduled', cls: 'watch' };
+  return { key: 'not_contacted', label: 'Not Contacted', cls: 'watch' };
+}
+
+function renderContactScheduleCell(o) {
+  // Alex (2026-11-11): "a few options that indicate the order as healthy or needs attention
+  // based on lack of response from vendors." Status is derived from vendor_messages (the real
+  // email thread for this order), not just the raw next_contact date -- a vendor who replied
+  // "confirmed" should read as healthy even if next_contact hasn't been bumped yet, and a vendor
+  // who's gone silent past the 3-day window (Alex, 2026-11-11) should read as needs-attention
+  // even if next_contact is still in the future.
+  const s = contactStatus(o);
+  return `<span class="pill clickable-pill ${s.cls}" onclick="showContactScheduleDetail('${o.ledger_id}')">${s.label}</span>`;
 }
 
 // Alex (2026-11-12): "I should be able to see a top level contextual 2 sentences on the status
@@ -1792,19 +1795,29 @@ async function showContactScheduleDetail(ledgerId) {
 
   const summary = buildContactStatusSummary(o, msgs || []);
 
-  // Chat-bubble style thread (not a table) -- easier to read as a back-and-forth. Outbound
-  // right-aligned/accent, inbound left-aligned/neutral, classified status shown as a small pill.
-  const threadBubbles = (msgs || []).map(m => {
+  // Alex (2026-11-12): "The thread ... can be a summation of the message maybe with a link
+  // which will take them to the full message if they want to read, but it should append when a
+  // response is received." Each bubble shows the AI one-line summary (ai_summary, generated by
+  // vendor_email_sync.py) with a "View full message" toggle revealing the complete body inline
+  // -- no separate page/tab needed. New messages simply append to this same re-fetched list each
+  // time the popup opens, so it's always current as of the last email sync run.
+  const threadBubbles = (msgs || []).map((m, idx) => {
     const isOut = m.direction === 'outbound';
     const dateStr = fmtDate((m.sent_at || m.created_at || '').slice(0, 10));
     const statusPill = (!isOut && m.parsed_status)
       ? `<span class="pill ${m.parsed_status === 'confirmed' ? 'good' : m.parsed_status === 'delay' ? 'bad' : 'watch'}" style="font-size:10px; margin-left:6px;">${m.parsed_status}</span>`
       : '';
+    const summaryText = m.ai_summary || (isOut ? 'Outreach sent — see full message.' : 'Reply received — see full message.');
+    const fullId = `msg-full-${ledgerId}-${idx}`;
     return `
       <div style="display:flex; justify-content:${isOut ? 'flex-end' : 'flex-start'}; margin-bottom:8px;">
         <div style="max-width:80%; padding:8px 12px; border-radius:10px; background:${isOut ? 'var(--accent-soft, #f0e6d8)' : 'var(--card-bg, #f5f5f5)'}; border:1px solid var(--border);">
           <div style="font-size:11px; color:var(--muted); margin-bottom:3px;">${isOut ? 'We sent' : 'They replied'} · ${dateStr}${statusPill}</div>
-          <div style="font-size:13px; white-space:pre-wrap; line-height:1.4;">${(m.body || '').slice(0, 600)}</div>
+          <div style="font-size:13px; line-height:1.4;">${summaryText}</div>
+          <div style="margin-top:4px;">
+            <a href="#" onclick="event.preventDefault(); const el=document.getElementById('${fullId}'); el.style.display = el.style.display === 'none' ? 'block' : 'none'; return false;" style="font-size:11px; color:var(--accent, #8a6d3b); text-decoration:underline;">View full message</a>
+          </div>
+          <div id="${fullId}" style="display:none; margin-top:6px; padding-top:6px; border-top:1px solid var(--border); font-size:12px; white-space:pre-wrap; line-height:1.4;">${(m.body || '').slice(0, 2000)}</div>
         </div>
       </div>
     `;
@@ -1822,9 +1835,8 @@ async function showContactScheduleDetail(ledgerId) {
     `
     : '<div class="muted" style="font-size:13px;">No messages sent or received for this order yet.</div>';
 
-  const scheduleLine = o.next_contact
-    ? `Next scheduled check-in: <strong>${fmtDate(o.next_contact)}</strong>`
-    : (o.last_contacted ? `Last contacted: <strong>${fmtDate(o.last_contacted)}</strong>, nothing else scheduled` : 'No contact schedule set');
+  const scheduleStatus = contactStatus(o);
+  const scheduleLine = `Contact status: <span class="pill ${scheduleStatus.cls}" style="font-size:11px;">${scheduleStatus.label}</span>`;
 
   const body = `
     <div style="font-size:14px; line-height:1.5; margin-bottom:14px; padding:10px 12px; border-radius:8px; background:var(--card-bg, #f5f5f5); border:1px solid var(--border);">${summary}</div>
@@ -7357,19 +7369,18 @@ async function renderVendors() {
     <div class="section-label">Planned Actions &amp; Comms — In-Flight Component Orders</div>
     <div class="card" style="padding:0;">
       <table>
-        <thead><tr><th>Component</th><th>Vendor</th><th>ETA</th><th>Next Contact</th><th>Status</th></tr></thead>
+        <thead><tr><th>Component</th><th>Vendor</th><th>ETA</th><th>Contact Status</th></tr></thead>
         <tbody>
           ${(ledger || []).map(l => {
-            const overdue = l.next_contact && new Date(l.next_contact) < new Date();
+            const s = contactStatus({ ledger_id: l.id, next_contact: l.next_contact, last_contacted: l.last_contacted });
             return `
             <tr>
               <td>${l.components ? l.components.component_name : '—'}</td>
               <td>${l.vendors ? l.vendors.vendor_name : '—'}</td>
               <td>${fmtDate(l.eta)}</td>
-              <td>${fmtDate(l.next_contact)}</td>
-              <td><span class="pill ${overdue ? 'bad' : 'good'}">${overdue ? 'overdue for contact' : 'on track'}</span></td>
+              <td><span class="pill ${s.cls}">${s.label}</span></td>
             </tr>
-          `}).join('') || `<tr><td colspan="5" class="empty-state">No in-flight component orders.</td></tr>`}
+          `}).join('') || `<tr><td colspan="4" class="empty-state">No in-flight component orders.</td></tr>`}
         </tbody>
       </table>
     </div>
