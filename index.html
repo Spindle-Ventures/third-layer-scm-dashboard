@@ -585,6 +585,16 @@ function restoreActiveTab() {
 
 function fmtMoney(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
 function fmtMoney2(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// Days between two 'YYYY-MM-DD' strings (b - a), using UTC midnight parsing so local timezone
+// offsets never shift the day count by one. Bug found 2026-11-12: called from several places
+// (overdue/ETA/contact-status calculations) but was never actually defined anywhere, throwing
+// "daysBetween is not defined" and silently breaking "Show All Orders" + any contact-status
+// chip once a vendor_messages row existed to trigger that code path.
+function daysBetween(a, b) {
+  const da = new Date(a + 'T00:00:00Z');
+  const db = new Date(b + 'T00:00:00Z');
+  return Math.round((db - da) / 86400000);
+}
 function fmtDate(d) {
   if (!d) return '—';
   const [y, m, day] = d.split('-');
