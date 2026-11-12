@@ -604,6 +604,16 @@ function fmtDate(d) {
   // narrow flex/grid cell or a wrapped sentence.
   return `<span style="white-space:nowrap;">${m}/${day}/${y}</span>`;
 }
+// Plain-text counterpart to fmtDate() -- fmtDate()'s <span> wrapper is only safe for text that
+// renders as HTML (the dashboard's own popups/tables). Any text that leaves the dashboard as a
+// real plain-text payload (vendor email bodies/subjects sent via vendor_email_sync.py) must use
+// this instead, or the literal <span ...>...</span> markup leaks straight into the vendor's
+// inbox (found 2026-11-12: Alex flagged a test email to GUINEA-PIG-TEST-003 showing raw HTML).
+function plainDate(d) {
+  if (!d) return '—';
+  const [y, m, day] = d.split('-');
+  return `${m}/${day}/${y}`;
+}
 function fmtDateTime(ts) {
   const dt = new Date(ts);
   const mm = String(dt.getMonth() + 1).padStart(2, '0');
@@ -1574,11 +1584,44 @@ function actionPillClass(action) {
 // send to the vendor." buildActionDetail() explains the situation TO US; this builds the actual
 // outreach text ready to copy and send TO the vendor contact -- a separate, shorter, second-
 // person message rather than our internal explanation.
+// Alex (2026-11-12): fixed two bugs found in a live test send (GUINEA-PIG-TEST-003):
+//   1. fmtDate()'s <span style="white-space:nowrap;">...</span> wrapper is HTML-only and was
+//      leaking literal markup into plain-text email bodies -- use plainDate() here instead.
+//   2. The subject line was built separately (in sendVendorMessageNow/mailto) from
+//      `${o.product_name} update`, so a COMPONENT order's subject named the finished product
+//      while the body correctly talked about the component -- subject and body disagreed.
+//      buildVendorMessageSubject() below is now the single source for both the popup preview
+//      and the actual send, built from the same itemLabel as the body.
+// Natural-language rewrite, still easy to parse for data aggregation: raw identifiers
+// (component_name, internal_ref/vendor_po_number) stay verbatim on their own labeled line so a
+// script/human can grab them exactly, but the surrounding sentence reads like a person wrote it.
+function humanizeItemLabel(name) {
+  if (!name) return name;
+  // Internal test/seed fixtures sometimes use ALL_CAPS_WITH_UNDERSCORES names that read oddly
+  // in prose -- title-case them for the sentence while the raw ref line still shows the exact
+  // original string.
+  if (/^[A-Z0-9_]+$/.test(name)) {
+    return name.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+  }
+  return name;
+}
+
+function buildVendorMessageSubject(o) {
+  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
+  const ref = o.internal_ref || o.vendor_po_number;
+  const token = o.ledger_id ? `TL-${String(o.ledger_id).split('-')[0]}` : null;
+  const refPart = ref ? ` — ${ref}` : '';
+  const tokenPart = token ? ` [${token}]` : '';
+  return `${humanizeItemLabel(itemLabel)} order update${refPart}${tokenPart}`;
+}
+
 function buildVendorMessageDraft(o) {
   const today = new Date().toISOString().slice(0, 10);
   const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
+  const itemPhrase = humanizeItemLabel(itemLabel);
   const qtyFmt = o.qty != null ? `${o.qty.toLocaleString()} units of ` : '';
-  const orderRef = (o.internal_ref || o.vendor_po_number) ? ` (order ${o.internal_ref || o.vendor_po_number})` : '';
+  const ref = o.internal_ref || o.vendor_po_number;
+  const refLine = ref ? `Order ref: ${ref}\n\n` : '';
   const greeting = o.vendor_contact_name ? `Hi ${o.vendor_contact_name.split(' ')[0]},` : 'Hi,';
 
   // Alex (2026-11-12): "Upon order placement, we want to capture the Order number and then in
@@ -1599,22 +1642,23 @@ function buildVendorMessageDraft(o) {
   let ask;
   if (o.eta && o.eta < today && !o.landed) {
     const daysLate = Math.round((new Date(today) - new Date(o.eta)) / 86400000);
-    ask = `Checking in on our order${orderRef} for ${qtyFmt}${itemLabel} — it was expected ${fmtDate(o.eta)} and we haven't seen it land yet (${daysLate} day${daysLate === 1 ? '' : 's'} past the original date). Is it still on the way?`;
+    ask = `Checking in on ${qtyFmt}${itemPhrase} — it was expected ${plainDate(o.eta)} and we haven't seen it land yet (${daysLate} day${daysLate === 1 ? '' : 's'} past the original date). Is it still on the way?`;
   } else if (o.next_contact && o.next_contact < today) {
-    ask = `Following up on our order${orderRef} for ${qtyFmt}${itemLabel}. Is everything still on track?`;
+    ask = `Following up on ${qtyFmt}${itemPhrase}. Is everything still on track?`;
   } else if (o.eta) {
-    ask = `Just checking in ahead of our order${orderRef} for ${qtyFmt}${itemLabel}, expected ${fmtDate(o.eta)}. Is it still on track for that date?`;
+    ask = `Just checking in ahead of ${qtyFmt}${itemPhrase}, expected ${plainDate(o.eta)}. Is it still on track for that date?`;
   } else {
-    ask = `Checking in on our order${orderRef} for ${qtyFmt}${itemLabel}. Is everything on track?`;
+    ask = `Checking in on ${qtyFmt}${itemPhrase}. Is everything on track?`;
   }
 
-  return `${greeting}\n\n${ask}${missingClause}\n\nThanks,\nThird Layer`;
+  return `${greeting}\n\n${refLine}${ask}${missingClause}\n\nThanks,\nThird Layer`;
 }
 
 function showVendorMessagePopup(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
   const message = buildVendorMessageDraft(o);
+  const subject = buildVendorMessageSubject(o);
   const contactLine = o.vendor_contact_email
     ? `<div class="muted" style="font-size:13px; margin-bottom:8px;">To: ${o.vendor_contact_name ? o.vendor_contact_name + ' — ' : ''}${o.vendor_contact_email}</div>`
     : `<div class="muted" style="font-size:13px; margin-bottom:8px;">No contact email on file for ${o.vendor_name || 'this vendor'} — add one on the Components tab's vendor list.</div>`;
@@ -1624,7 +1668,7 @@ function showVendorMessagePopup(ledgerId) {
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
       ${o.vendor_contact_email ? `<button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="sendVendorMessageNow('${ledgerId}')">Send Email</button>` : ''}
       <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="copyVendorMessage()">Copy message</button>
-      ${o.vendor_contact_email ? `<a class="btn btn-ghost" style="padding:6px 12px; font-size:13px; text-decoration:none;" href="mailto:${o.vendor_contact_email}?subject=${encodeURIComponent((o.product_name || 'Order') + ' update')}&body=${encodeURIComponent(message)}">Open in my own email instead</a>` : ''}
+      ${o.vendor_contact_email ? `<a class="btn btn-ghost" style="padding:6px 12px; font-size:13px; text-decoration:none;" href="mailto:${o.vendor_contact_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}">Open in my own email instead</a>` : ''}
       <span id="vendor-message-copied" class="muted" style="font-size:13px; align-self:center; display:none;">Copied ✓</span>
       <span id="vendor-message-sent" class="muted" style="font-size:13px; align-self:center; display:none; color:var(--good-text);">Queued to send ✓ (TLSupplyChain@spindle.ventures)</span>
     </div>
@@ -1641,7 +1685,7 @@ async function sendVendorMessageNow(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o || !o.vendor_contact_email) return;
   const body = document.getElementById('vendor-message-text')?.value || '';
-  const subject = `${o.product_name || 'Order'} update`;
+  const subject = buildVendorMessageSubject(o);
   const { data, error } = await sb.from('vendor_messages').insert({
     vendor_id: o.vendor_id, po_id: o.po_id || null, ledger_id: ledgerId, channel: 'email',
     direction: 'outbound', subject, body, to_email: o.vendor_contact_email, status: 'queued',
