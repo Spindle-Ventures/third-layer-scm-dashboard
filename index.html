@@ -2791,6 +2791,24 @@ function showOrderDetailsPopup(ledgerId) {
       ${editFn && canEdit() ? `<button class="btn btn-ghost" style="padding:2px 8px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); ${editFn}">Edit</button>` : ''}
     </div>
   `;
+  // Alex (2026-11-13, round 38): "For the order number cleanup - the Prod - Componentry Ledger
+  // sheet carries SOT for component order numbers and don't change any of the finished good PO
+  // numbers." Reverted the one-size-fits-all "Order number" merge from the prior round, split
+  // by order_type instead:
+  //  - Componentry: order_number (this IS the PO ref column scripts/sync_componentry_ledger.py
+  //    writes from the sheet every day) is shown read-only, no Edit button -- any manual edit
+  //    here would just get silently overwritten by tomorrow's sync, which is worse than not
+  //    offering it at all. Edit the number in the actual Google Sheet instead.
+  //  - Finished good: restored the original two separate editable fields/labels exactly as they
+  //    were before that round's merge (our internal_ref/vendor_po_number "Order #", and the
+  //    vendor's own vendor_order_number "Vendor's Order #") -- finished-good POs were never
+  //    sheet-synced and don't have the "same thing, pick one" problem componentry has.
+  const orderNumberRowHtml = o.order_type === 'componentry'
+    ? row('Order number', o.internal_ref
+        ? `<strong>${o.internal_ref}</strong> <span class="muted" style="font-size:11px;">(synced from Componentry Ledger sheet)</span>`
+        : '<span class="muted">not set in sheet yet</span>')
+    : row('Order #', o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>', `editPoNumber('${ledgerId}')`)
+      + row("Vendor's Order #", o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`);
   const body = `
     <div style="display:flex; flex-direction:column;">
       ${row('Product', `<strong>${o.product_name}</strong>`)}
@@ -2800,7 +2818,7 @@ function showOrderDetailsPopup(ledgerId) {
       ${row('Landing Destination', o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>', `editLandingDestination('${ledgerId}')`)}
       ${row('ETA', `<strong>${fmtDate(o.eta)}</strong>`, `editOpenOrderRow('${ledgerId}')`)}
       ${row('Quantity', o.qty != null ? o.qty.toLocaleString() : '—', `editOpenOrderRow('${ledgerId}')`)}
-      ${row('Order number', (o.vendor_order_number || o.internal_ref || o.vendor_po_number) ? `<strong>${o.vendor_order_number || o.internal_ref || o.vendor_po_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`)}
+      ${orderNumberRowHtml}
       ${row('Tracking Info', o.tracking_info || '<span class="muted">none on file</span>', `editTracking('${ledgerId}')`)}
       ${row('Status', `<span class="pill clickable-pill ${actionPillClass(o.action_needed)}">${o.action_needed}</span>`)}
       ${row('Order Status', o.order_status === 'paused' ? 'Paused' : 'Open')}
@@ -4186,6 +4204,9 @@ function renderCatalogProductsTable() {
 
     return `
       <tr id="cp-row-${p.id}" style="cursor:pointer;" onclick="toggleCatalogProductExpand('${p.id}')">
+        <td style="padding:6px 6px; border-bottom:1px solid var(--border);" onclick="event.stopPropagation();">
+          ${canAct ? `<input type="checkbox" class="cp-select-checkbox" data-product-id="${p.id}" onchange="updateCatalogProductSelectionUi()" />` : ''}
+        </td>
         <td style="padding:6px 6px; border-bottom:1px solid var(--border);"><span class="muted" id="cp-caret-${p.id}">▸</span></td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);" onclick="event.stopPropagation();">${nameHtml}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${activeCell}</td>
@@ -4193,8 +4214,11 @@ function renderCatalogProductsTable() {
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${pc1Cell}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${pc2Cell}</td>
         <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${pc3Cell}</td>
+        <td style="padding:6px 10px; border-bottom:1px solid var(--border);" onclick="event.stopPropagation();">
+          ${canAct ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:12px;" onclick="showCatalogProductActionsMenu('${p.id}', this)">⋯</button>` : ''}
+        </td>
       </tr>
-      <tr id="cp-detail-${p.id}" style="display:none;"><td colspan="7" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
+      <tr id="cp-detail-${p.id}" style="display:none;"><td colspan="9" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
     `;
   }).join('');
 
@@ -4202,13 +4226,21 @@ function renderCatalogProductsTable() {
     <div class="muted" style="font-size:12px; margin-bottom:6px;">
       Click a name to rename it; click a row to expand SKU, live stock, and components. Click PC1/PC2/PC3 to view or edit the full profit breakdown.
     </div>
+    ${canAct ? `
+      <div id="cp-bulk-bar" style="display:none; align-items:center; gap:8px; margin-bottom:8px; padding:6px 10px; border-radius:8px; background:var(--watch-bg, #fdf2d8);">
+        <span id="cp-bulk-count" class="muted" style="font-size:13px;"></span>
+        <button class="btn btn-ghost" style="padding:3px 9px; font-size:12px; color:var(--bad-text);" onclick="bulkDeleteCatalogProducts()">Delete Selected</button>
+        <button class="btn btn-ghost" style="padding:3px 9px; font-size:12px;" onclick="clearCatalogProductSelection()">Clear</button>
+      </div>
+    ` : ''}
     <div style="overflow-x:auto;">
       <table style="width:100%; font-size:14px; border-collapse:collapse;">
         <thead><tr>
+          <th style="padding:6px 6px; width:22px;"></th>
           <th style="padding:6px 6px; width:18px;"></th>
-          ${['Name', 'Active', 'COGS', 'PC1', 'PC2', 'PC3'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
+          ${['Name', 'Active', 'COGS', 'PC1', 'PC2', 'PC3', 'Actions'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="7" class="muted" style="padding:10px;">No products found.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="9" class="muted" style="padding:10px;">No products found.</td></tr>'}</tbody>
       </table>
     </div>
   `;
@@ -4218,6 +4250,98 @@ function renderCatalogProductsTable() {
   // so products are restored first.
   openProductIds.forEach(id => toggleCatalogProductExpand(id));
   openComponentIds.forEach(id => toggleCatalogComponentExpand(id));
+}
+
+// Alex (2026-11-13, round 38): "I need a way to edit product attributes in the catalog tab.
+// Let's add checkboxes and actions to include the delete product, edit / view the product card
+// which will allow for edits to be made to the product information itself." Row checkboxes +
+// bulk "Delete Selected" bar (same shape as a typical admin table bulk-action pattern -- this
+// dashboard didn't have one yet anywhere, so this is the first of its kind here) alongside a
+// per-row "⋯" Actions menu (reusing showAnchoredMenu(), the same small popup already used for
+// Overview row actions) offering View/Edit Product Card and Delete Product.
+function updateCatalogProductSelectionUi() {
+  const checked = Array.from(document.querySelectorAll('.cp-select-checkbox:checked'));
+  const bar = document.getElementById('cp-bulk-bar');
+  const countEl = document.getElementById('cp-bulk-count');
+  if (!bar || !countEl) return;
+  bar.style.display = checked.length ? 'flex' : 'none';
+  countEl.textContent = `${checked.length} selected`;
+}
+
+function clearCatalogProductSelection() {
+  document.querySelectorAll('.cp-select-checkbox:checked').forEach(cb => { cb.checked = false; });
+  updateCatalogProductSelectionUi();
+}
+
+async function bulkDeleteCatalogProducts() {
+  const ids = Array.from(document.querySelectorAll('.cp-select-checkbox:checked')).map(cb => cb.dataset.productId);
+  if (!ids.length) return;
+  const products = window._catalogAllProducts || [];
+  const names = ids.map(id => products.find(p => p.id === id)?.display_name || id);
+  if (!(await showConfirmModal(
+    `Delete ${ids.length} product${ids.length === 1 ? '' : 's'}?`,
+    `This permanently deletes: <strong>${names.join(', ')}</strong> and everything tied to them (components, bundle memberships, ledger rows, vendor links). This cannot be undone via the Activity Log the way a single delete can.`,
+    { okLabel: 'Delete All', danger: true }
+  ))) return;
+  for (const id of ids) {
+    const p = products.find(x => x.id === id);
+    await cascadeDeleteProduct(id, p?.display_name || id);
+  }
+  clearCatalogProductSelection();
+}
+
+function showCatalogProductActionsMenu(productId, btnEl) {
+  const p = (window._catalogAllProducts || []).find(x => x.id === productId);
+  if (!p) return;
+  const body = `
+    <button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px;" onclick="closeAnchoredMenu(); showProductCardModal('${productId}')">View / Edit Product Card</button>
+    <button class="btn btn-ghost" style="display:block; width:100%; text-align:left; color:var(--bad-text);" onclick="closeAnchoredMenu(); deleteProduct('${productId}', '${(p.display_name || '').replace(/'/g, "\\'")}')">Delete Product</button>
+  `;
+  showAnchoredMenu(btnEl, body);
+}
+
+// Single consolidated read+edit surface for a product's own attributes -- most of these already
+// had their own scattered inline pill-editors elsewhere in this table (name, active, COGS,
+// PC1-3); this is the one-stop "product card" Alex asked for that surfaces all of them together
+// without needing to hunt across the expanded row for each field individually.
+function showProductCardModal(productId) {
+  const p = (window._catalogAllProducts || []).find(x => x.id === productId);
+  if (!p) return;
+  const { invSnapshot, bundleCompositions } = window._catalogProductsCache || { invSnapshot: [], bundleCompositions: [] };
+  const liveQty = invSnapshot.find(s => s.product_id === productId)?.qty;
+  const memberOf = bundleCompositions.filter(bc => bc.root_product_id === productId);
+  const productById = {};
+  (window._catalogAllProducts || []).forEach(x => { productById[x.id] = x; });
+  const canAct = canEdit();
+  const row = (label, value, editFn) => `
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); gap:10px;">
+      <span class="muted" style="font-size:13px;">${label}</span>
+      <span style="font-size:13px; text-align:right; flex:1;">${value}</span>
+      ${editFn && canAct ? `<button class="btn btn-ghost" style="padding:2px 8px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); ${editFn}">Edit</button>` : ''}
+    </div>
+  `;
+  const d = p.cogs_breakdown;
+  const pcLine = (key, pctKey) => (d && d[key] != null) ? `${fmtMoney2(d[key])}${d[pctKey] != null ? ` (${(d[pctKey] * 100).toFixed(0)}%)` : ''}` : '<span class="muted">—</span>';
+  const body = `
+    <div style="display:flex; flex-direction:column;">
+      ${row('Display Name', `<strong>${p.display_name}</strong>`, `editProductNameInline('${productId}')`)}
+      ${row('SKU', `<strong>${p.sku_code}</strong>`)}
+      ${row('Active', canAct
+          ? `<input type="checkbox" id="pc-active-${productId}" ${p.is_active ? 'checked' : ''} onchange="toggleProductCardActive('${productId}')" />`
+          : (p.is_active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Inactive</span>'))}
+      ${row('COGS', p.unit_cogs ? fmtMoney2(p.unit_cogs) : '<span class="muted">Missing</span>', `document.getElementById('detail-modal-backdrop').remove(); showProductCogsModal('${productId}')`)}
+      ${row('PC1', pcLine('PC 1 ($)', 'PC 1 (%)'), `document.getElementById('detail-modal-backdrop').remove(); showProductProfitModal('${productId}')`)}
+      ${row('PC2', pcLine('PC 2 ($)', 'PC 2 (%)'), `document.getElementById('detail-modal-backdrop').remove(); showProductProfitModal('${productId}')`)}
+      ${row('PC3', pcLine('PC 3 ($)', 'PC 3 (%)'), `document.getElementById('detail-modal-backdrop').remove(); showProductProfitModal('${productId}')`)}
+      ${row('Live Stock', liveQty != null ? `${liveQty.toLocaleString()} units` : '<span class="muted">—</span>')}
+      ${row('Safety Stock', p.safety_stock_qty ? `${p.safety_stock_qty.toLocaleString()} units` : '<span class="muted">—</span>')}
+      ${memberOf.length ? row(`In Bundle${memberOf.length > 1 ? 's' : ''}`, memberOf.map(bc => productById[bc.bundle_id]?.display_name || 'Unknown').join(', ')) : ''}
+    </div>
+    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+      ${canAct ? `<button class="btn btn-ghost" style="color:var(--bad-text);" onclick="document.getElementById('detail-modal-backdrop').remove(); deleteProduct('${productId}', '${(p.display_name || '').replace(/'/g, "\\'")}')">Delete Product</button>` : ''}
+    </div>
+  `;
+  showDetail(`${p.display_name} — Product Card`, body);
 }
 
 // Alex (2026-11-10): "when clicking new product... there should be separate screenflows to help
@@ -5146,6 +5270,18 @@ async function saveCatalogProductActive(productId) {
   const { error } = await sb.from('products').update({ is_active: checked }).eq('id', productId);
   if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('products', productId, 'update', `${checked ? 'Activated' : 'Deactivated'} ${before?.display_name || 'product'}`, before, { ...before, is_active: checked });
+}
+
+// Same save as saveCatalogProductActive(), reading the Product Card modal's own checkbox id
+// instead of the Catalog table row's -- the two live in different DOM trees at the same time
+// when the card is opened from the table, so they can't share one id.
+async function toggleProductCardActive(productId) {
+  const checked = document.getElementById(`pc-active-${productId}`)?.checked;
+  const { data: before } = await sb.from('products').select('display_name, is_active').eq('id', productId).single();
+  const { error } = await sb.from('products').update({ is_active: checked }).eq('id', productId);
+  if (error) { await showConfirmModal('Something went wrong', 'Save failed: ' + error.message, { okOnly: true, danger: true }); return; }
+  await logAction('products', productId, 'update', `${checked ? 'Activated' : 'Deactivated'} ${before?.display_name || 'product'}`, before, { ...before, is_active: checked });
+  await renderCatalogProducts();
 }
 
 function showProductNotesModal(productId, productName) {
