@@ -1078,7 +1078,7 @@ async function renderOverview() {
   const outstandingNoReply = (openOrders || []).filter(o => {
     if (o.order_status === 'paused') return false;
     const msgs = (window._vendorMessagesByLedger || {})[o.ledger_id] || [];
-    const lastOutbound = msgs.filter(m => m.direction === 'outbound').sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
+    const lastOutbound = msgs.filter(m => m.direction === 'outbound' && m.status === 'sent' && m.sent_at).sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
     const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
     return lastOutbound && (!lastInbound || lastInbound.created_at <= lastOutbound.sent_at);
   });
@@ -1199,6 +1199,7 @@ async function renderOverview() {
             <option value="">All</option>
             <option value="needs_attention">Needs Attention</option>
             <option value="awaiting_reply">Awaiting Reply</option>
+            <option value="pending_draft">Pending Approval</option>
             <option value="due_today">Due Today</option>
             <option value="scheduled">Scheduled</option>
             <option value="healthy">Healthy</option>
@@ -1728,7 +1729,12 @@ function renderTrackingCell(o, canAct) {
 function contactStatus(o) {
   const today = new Date().toISOString().slice(0, 10);
   const msgs = (window._vendorMessagesByLedger || {})[o.ledger_id] || [];
-  const lastOutbound = msgs.filter(m => m.direction === 'outbound').sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
+  // Bug found 2026-11-12 (Alex's live test): a 'proposed' or 'queued' draft has no sent_at yet
+  // (that's only set once vendor_email_sync.py actually sends it) -- only treat a message as
+  // "sent" for status purposes once it really has gone out, or this crashes on
+  // lastOutbound.sent_at.slice(...) the moment any draft exists but hasn't been approved/sent.
+  const sentOutbound = msgs.filter(m => m.direction === 'outbound' && m.status === 'sent' && m.sent_at);
+  const lastOutbound = sentOutbound.sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
   const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
   const dueToday = o.next_contact && o.next_contact <= today;
   if (lastInbound && lastOutbound && lastInbound.created_at > lastOutbound.sent_at) {
@@ -1741,6 +1747,8 @@ function contactStatus(o) {
     if (daysSinceSent >= 3) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
     return { key: 'awaiting_reply', label: 'Awaiting Reply', cls: 'watch' };
   }
+  const pendingDraft = msgs.filter(m => m.direction === 'outbound' && (m.status === 'proposed' || m.status === 'queued'))[0];
+  if (pendingDraft) return { key: 'pending_draft', label: pendingDraft.status === 'queued' ? 'Approved — Sending' : 'Pending Approval', cls: 'watch' };
   if (o.next_contact && o.next_contact < today) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
   if (dueToday) return { key: 'due_today', label: 'Due Today', cls: 'watch' };
   if (o.next_contact || o.last_contacted) return { key: 'scheduled', label: 'Scheduled', cls: 'watch' };
@@ -1764,8 +1772,9 @@ function buildContactStatusSummary(o, msgs) {
   const today = new Date().toISOString().slice(0, 10);
   const vendorLabel = o.vendor_name || 'the vendor';
   const itemLabel = o.component_name || o.product_name || 'this order';
-  const lastOutbound = msgs.filter(m => m.direction === 'outbound').sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
+  const lastOutbound = msgs.filter(m => m.direction === 'outbound' && m.status === 'sent' && m.sent_at).sort((a, b) => (b.sent_at || '').localeCompare(a.sent_at || ''))[0];
   const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
+  const pendingDraft = msgs.filter(m => m.direction === 'outbound' && (m.status === 'proposed' || m.status === 'queued')).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
 
   if (lastInbound && lastOutbound && lastInbound.created_at > lastOutbound.sent_at) {
     const when = fmtDate((lastInbound.created_at || '').slice(0, 10));
@@ -1784,6 +1793,11 @@ function buildContactStatusSummary(o, msgs) {
       return `We emailed ${vendorLabel} on ${sentDate} about ${itemLabel} and haven't heard back in ${daysSince} days. Worth a follow-up.`;
     }
     return `We emailed ${vendorLabel} on ${sentDate} about ${itemLabel} and are waiting on a reply. No action needed yet.`;
+  }
+  if (pendingDraft) {
+    return pendingDraft.status === 'queued'
+      ? `A message to ${vendorLabel} about ${itemLabel} has been approved and will go out shortly.`
+      : `A draft message to ${vendorLabel} about ${itemLabel} is waiting for approval before anything is sent.`;
   }
   if (o.next_contact) {
     const overdue = o.next_contact < today;
@@ -1813,16 +1827,17 @@ async function showContactScheduleDetail(ledgerId) {
   // time the popup opens, so it's always current as of the last email sync run.
   const threadBubbles = (msgs || []).map((m, idx) => {
     const isOut = m.direction === 'outbound';
+    const isDraft = isOut && m.status !== 'sent';
     const dateStr = fmtDate((m.sent_at || m.created_at || '').slice(0, 10));
     const statusPill = (!isOut && m.parsed_status)
       ? `<span class="pill ${m.parsed_status === 'confirmed' ? 'good' : m.parsed_status === 'delay' ? 'bad' : 'watch'}" style="font-size:10px; margin-left:6px;">${m.parsed_status}</span>`
-      : '';
-    const summaryText = m.ai_summary || (isOut ? 'Outreach sent — see full message.' : 'Reply received — see full message.');
+      : (isDraft ? `<span class="pill watch" style="font-size:10px; margin-left:6px;">${m.status === 'proposed' ? 'pending approval' : m.status}</span>` : '');
+    const summaryText = m.ai_summary || (isDraft ? 'Draft prepared — awaiting approval. See full message.' : (isOut ? 'Outreach sent — see full message.' : 'Reply received — see full message.'));
     const fullId = `msg-full-${ledgerId}-${idx}`;
     return `
       <div style="display:flex; justify-content:${isOut ? 'flex-end' : 'flex-start'}; margin-bottom:8px;">
         <div style="max-width:80%; padding:8px 12px; border-radius:10px; background:${isOut ? 'var(--accent-soft, #f0e6d8)' : 'var(--card-bg, #f5f5f5)'}; border:1px solid var(--border);">
-          <div style="font-size:11px; color:var(--muted); margin-bottom:3px;">${isOut ? 'We sent' : 'They replied'} · ${dateStr}${statusPill}</div>
+          <div style="font-size:11px; color:var(--muted); margin-bottom:3px;">${isOut ? (isDraft ? 'Draft (not sent yet)' : 'We sent') : 'They replied'} · ${dateStr}${statusPill}</div>
           <div style="font-size:13px; line-height:1.4;">${summaryText}</div>
           <div style="margin-top:4px;">
             <a href="#" onclick="event.preventDefault(); const el=document.getElementById('${fullId}'); el.style.display = el.style.display === 'none' ? 'block' : 'none'; return false;" style="font-size:11px; color:var(--accent, #8a6d3b); text-decoration:underline;">View full message</a>
