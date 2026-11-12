@@ -327,6 +327,9 @@
       <div class="subtitle" id="subtitle-date" style="margin-right:4px;"></div>
       <span class="role-badge" id="user-badge"></span>
       <span class="snapshot-pill" id="snapshot-pill">Loading…</span>
+      <button class="btn btn-ghost" id="comms-alert-btn" style="display:none; position:relative;" onclick="showCommsAlertsPopup()" title="Unreviewed vendor replies">
+        ✉️ Comms Alerts <span id="comms-alert-count" class="pill bad" style="margin-left:4px;">0</span>
+      </button>
       <button class="btn btn-primary" id="header-add-order-btn" style="display:none;" onclick="showAddOrderMenu()">+ Add Order</button>
       <button class="btn btn-ghost" onclick="signOut()">Sign out</button>
     </div>
@@ -436,11 +439,102 @@ async function loadApp(session) {
   // the left of 'Sign Out'" -- moved out of the Overview tab's own toolbar (where it only showed
   // while that tab was active) into the header, visible from every tab, same edit-permission gate.
   document.getElementById('header-add-order-btn').style.display = canEdit() ? '' : 'none';
+  // Alex (2026-11-12): "something at the top that'll keep a live tally when responses come in...
+  // just the number of alerts and then once clicked show a popup box with the alerts. Mainly
+  // they should be comms alerts... live each time a comm comes in." Visible to everyone (not
+  // edit-gated) since it's informational, not an edit action.
+  document.getElementById('comms-alert-btn').style.display = '';
+  initCommsAlerts();
 
   await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog(), renderCatalog()]);
   initMannyChat();
   restoreActiveTab();
   applyUrlDeepLink();
+}
+
+let commsAlertChannel = null;
+
+// Alex (2026-11-12): live comms-alert tally -- counts inbound vendor_messages (real replies)
+// that haven't been reviewed yet (reviewed_at is null). Loads the real count on page load, then
+// subscribes to Postgres Realtime INSERTs on vendor_messages so the count ticks up the moment a
+// reply lands (vendor_email_sync.py's poll_inbound() writing the row triggers this immediately,
+// no polling/refresh needed) -- same realtime pattern already used for the Manny chat panel.
+async function refreshCommsAlertCount() {
+  const { count } = await sb.from('vendor_messages').select('id', { count: 'exact', head: true })
+    .eq('direction', 'inbound').is('reviewed_at', null);
+  const n = count || 0;
+  const badge = document.getElementById('comms-alert-count');
+  if (badge) {
+    badge.textContent = n;
+    badge.className = `pill ${n > 0 ? 'bad' : 'good'}`;
+  }
+}
+
+function initCommsAlerts() {
+  refreshCommsAlertCount();
+  if (commsAlertChannel) sb.removeChannel(commsAlertChannel);
+  commsAlertChannel = sb
+    .channel('comms-alerts-realtime')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vendor_messages', filter: 'direction=eq.inbound' }, () => {
+      refreshCommsAlertCount();
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'vendor_messages' }, () => {
+      refreshCommsAlertCount();
+    })
+    .subscribe();
+}
+
+// Popup listing every unreviewed inbound reply -- clicking "Mark Reviewed" on one (or "Mark All
+// Reviewed") sets reviewed_at, which the realtime subscription above picks up immediately and
+// decrements the header count without needing a manual refresh.
+async function showCommsAlertsPopup() {
+  const { data: alerts } = await sb.from('vendor_messages')
+    .select('id, vendor_id, ledger_id, subject, ai_summary, body, created_at, parsed_status, vendors(vendor_name)')
+    .eq('direction', 'inbound').is('reviewed_at', null).order('created_at', { ascending: false });
+  const rows = alerts || [];
+  if (!rows.length) {
+    showDetail('Comms Alerts', '<div class="empty-state" style="padding:14px;">No unreviewed vendor replies right now.</div>');
+    return;
+  }
+  const statusPill = (s) => {
+    const cls = s === 'delay' ? 'bad' : s === 'confirmed' ? 'good' : 'watch';
+    const label = s === 'delay' ? 'Delay' : s === 'confirmed' ? 'Confirmed' : s === 'tracking_update' ? 'Tracking Update' : 'Needs Review';
+    return `<span class="pill ${cls}" style="font-size:11px;">${label}</span>`;
+  };
+  const rowsHtml = rows.map(a => `
+    <div style="padding:10px 0; border-bottom:1px solid var(--border);">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px;">
+        <strong style="font-size:13px;">${a.vendors?.vendor_name || 'Vendor'}</strong>
+        ${statusPill(a.parsed_status)}
+      </div>
+      <div class="muted" style="font-size:12px; margin:2px 0;">${a.subject || ''} · ${fmtDateTime(a.created_at)}</div>
+      <div style="font-size:13px; margin:4px 0;">${a.ai_summary || (a.body || '').slice(0, 200)}</div>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        ${a.ledger_id ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showContactScheduleDetail('${a.ledger_id}')">Open Thread</button>` : ''}
+        <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="markCommsAlertReviewed('${a.id}')">Mark Reviewed</button>
+      </div>
+    </div>
+  `).join('');
+  const body = `
+    <div style="margin-bottom:8px;">
+      <button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="markAllCommsAlertsReviewed()">Mark All Reviewed</button>
+    </div>
+    ${rowsHtml}
+  `;
+  showDetail(`Comms Alerts (${rows.length})`, body, 'wide');
+}
+
+async function markCommsAlertReviewed(id) {
+  await sb.from('vendor_messages').update({ reviewed_at: new Date().toISOString() }).eq('id', id);
+  await refreshCommsAlertCount();
+  document.getElementById('detail-modal-backdrop')?.remove();
+  showCommsAlertsPopup();
+}
+
+async function markAllCommsAlertsReviewed() {
+  await sb.from('vendor_messages').update({ reviewed_at: new Date().toISOString() }).eq('direction', 'inbound').is('reviewed_at', null);
+  await refreshCommsAlertCount();
+  document.getElementById('detail-modal-backdrop')?.remove();
 }
 
 // Alex (2026-10-27): "buttons under each section" -- the daily digest's Landing-section button
@@ -1222,7 +1316,6 @@ async function renderOverview() {
           </select>
         </label>
         <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
-        <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
       </div>
     </div>
     <div id="open-orders-groups"></div>
@@ -1374,7 +1467,7 @@ function applyOpenOrdersFilter() {
       ${group.rows.length === 0
         ? `<div class="empty-state" style="padding:14px;">No open orders right now — everything has landed or been cancelled. Use "+ Add Order" above to place a new one.</div>`
         : `<table style="white-space:nowrap;">
-        <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th></th><th>Order Type</th><th>Component</th><th>Order Health</th><th>ETA</th><th style="${window._revealOrderData ? 'min-width:140px;' : ''}">Order #</th><th>Vendor</th><th>Qty</th><th style="white-space:normal; ${window._revealOrderData ? 'min-width:220px;' : ''}">Tracking</th><th>Contact Schedule</th></tr></thead>
+        <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th>Action</th><th>Order Type</th><th>Component</th><th>Quantity</th><th>Estimated Time of Arrival</th><th>Vendor</th><th>Contact Status</th></tr></thead>
         <tbody>${sortedRows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
       </table>`}
     </div>
@@ -1749,8 +1842,37 @@ async function sendOrderPlacedEmailNow(ledgerId, vendorId) {
   }).select().single();
   if (error) { await showConfirmModal('Something went wrong', 'Could not queue the message: ' + error.message, { okOnly: true, danger: true }); return; }
   await logAction('vendor_messages', data.id, 'create', `Queued initial order-placed email to ${vendor?.vendor_name || toEmail}`, null, data);
-  document.getElementById('detail-modal-backdrop')?.remove();
-  await showConfirmModal('Queued', `Email to ${vendor?.vendor_name || toEmail} is queued — it'll go out on the next send cycle (usually within a few minutes).`, { okOnly: true });
+  // Alex (2026-11-12): "when I hit 'send email', the screen should move towards something that
+  // says the email has been queue'ed to be sent in addition to the email banner notification at
+  // the bottom." Two distinct confirmations, not either/or: the SAME modal transitions in place
+  // to a "Queued" state (not closed-then-reopened as a separate confirm dialog) AND a bottom
+  // toast banner fires at the same moment.
+  const recipientLabel = vendor?.vendor_name || toEmail;
+  const modalEl = document.querySelector('#detail-modal-backdrop .detail-modal');
+  if (modalEl) {
+    modalEl.innerHTML = `
+      <div style="text-align:center; padding:20px 10px;">
+        <div style="font-size:32px; margin-bottom:8px;">✅</div>
+        <div style="font-weight:700; font-family:'Playfair Display'; font-size:17px; margin-bottom:6px;">Queued to send</div>
+        <div style="font-size:14px; color:var(--ink); line-height:1.5; margin-bottom:16px;">Email to <strong>${recipientLabel}</strong> is queued — it'll go out on the next send cycle (usually within a few minutes).</div>
+        <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop')?.remove()">Close</button>
+      </div>
+    `;
+  }
+  showQueuedToast(`Queued email to ${recipientLabel}`);
+}
+
+// Bottom banner notification -- separate from the in-place modal confirmation above, per Alex's
+// "in addition to" wording. Reuses the same bottom-fixed toast position as the undo toasts but
+// with no Undo action (this isn't reversible the same way a DB row create/delete is).
+function showQueuedToast(message) {
+  document.getElementById('queued-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.id = 'queued-toast';
+  toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--good-text, #2f6b3f); color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; display:flex; align-items:center; gap:12px; z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,0.35); max-width:520px;';
+  toast.innerHTML = `<span>✉️ ${message}</span>`;
+  document.body.appendChild(toast);
+  setTimeout(() => { if (document.getElementById('queued-toast') === toast) toast.remove(); }, 5000);
 }
 
 function showVendorMessagePopup(ledgerId) {
@@ -1793,6 +1915,7 @@ async function sendVendorMessageNow(ledgerId) {
   await logAction('vendor_messages', data.id, 'create', `Queued an outbound email to ${o.vendor_name || 'vendor'} for ${o.product_name}`, null, data);
   const note = document.getElementById('vendor-message-sent');
   if (note) { note.style.display = 'inline'; setTimeout(() => { note.style.display = 'none'; }, 4000); }
+  showQueuedToast(`Queued email to ${o.vendor_name || 'vendor'}`);
 }
 
 function copyVendorMessage() {
@@ -1848,31 +1971,12 @@ function buildActionDetail(o) {
   return `${whatOrder} are on track${o.eta ? `, expected ${fmtDate(o.eta)}` : ''}. ${updateClause} Looking ahead, ${nextContactPhrase}`;
 }
 
-function renderPoNumberCell(o, canAct) {
-  const value = o.internal_ref || o.vendor_po_number || null;
-  if (window._revealOrderData) {
-    // Alex (2026-11-10): "whenever Reveal order and tracking is clicked, it should only increase
-    // to 3 rows of text and it should increase the column size to optimize for scrolling." --
-    // clamp to 3 lines (line-clamp) with a scrollbar for anything longer, instead of growing the
-    // row/page height unbounded.
-    const clampStyle = 'display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow-y:auto; max-height:4.2em; white-space:normal; word-break:break-word;';
-    return canAct
-      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px; ${clampStyle} text-align:left;" onclick="editPoNumber('${o.ledger_id}')">${value || '+ Add'}</button>`
-      : `<span style="${clampStyle}">${value || '—'}</span>`;
-  }
-  return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showPoNumberDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
-}
+// Alex (2026-11-12): "the only columns needed are: checkbox, action, order type, component,
+// quantity, estimated time of arrival, vendor, contact status." Order #/Tracking now live only
+// in the View/Edit Details popup (showOrderDetailsPopup) -- renderPoNumberCell/renderTrackingCell
+// and the "Reveal Order # / Tracking" toggle that fed them are gone; they have no remaining
+// table cell to render into.
 
-function renderTrackingCell(o, canAct) {
-  const value = o.tracking_info || null;
-  if (window._revealOrderData) {
-    const clampStyle = 'display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow-y:auto; max-height:4.2em; white-space:normal; word-break:break-word;';
-    return canAct
-      ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px; ${clampStyle} text-align:left;" onclick="editTracking('${o.ledger_id}')">${value || '+ Add'}</button>`
-      : `<span style="${clampStyle}">${value || '—'}</span>`;
-  }
-  return `<span class="pill clickable-pill ${value ? 'good' : 'watch'}" onclick="showTrackingDetail('${o.ledger_id}')">${value ? 'On File' : 'Missing'}</span>`;
-}
 
 // Alex (2026-11-12): "We need to modify all the contact schedule data to transfer into the
 // status values as opposed to dates." Single shared classifier so the Overview filter, the
@@ -2095,13 +2199,6 @@ function showTrackingDetail(ledgerId) {
   showDetail(`${o.product_name} — Tracking`, body);
 }
 
-function toggleRevealOrderData() {
-  window._revealOrderData = !window._revealOrderData;
-  const btn = document.getElementById('reveal-order-data-btn');
-  if (btn) btn.textContent = `👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking`;
-  applyOpenOrdersFilter();
-}
-
 function toggleNeedsActionFilter() {
   window._needsActionFilter = window._needsActionFilter === false ? true : false;
   const btn = document.getElementById('needs-action-toggle-btn');
@@ -2134,12 +2231,9 @@ function renderOpenOrderRow(o, editing) {
         </td>
         <td><span class="pill ${orderTypePillClass}">${orderTypeLabel}</span></td>
         <td>${componentText}</td>
-        <td></td>
-        <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
-        <td></td>
-        <td>${o.vendor_name || '—'}</td>
         <td><input type="number" id="edit-qty-${o.ledger_id}" value="${o.qty ?? ''}" style="width:70px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
-        <td><input type="text" id="edit-tracking-${o.ledger_id}" value="${o.tracking_info || ''}" style="width:110px; padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td><input type="date" id="edit-eta-${o.ledger_id}" value="${o.eta || ''}" style="padding:4px; border-radius:6px; border:1px solid var(--border);" /></td>
+        <td>${o.vendor_name || '—'}</td>
         <td style="white-space:normal;">
           <div style="display:flex; flex-direction:column; gap:3px;">
             <label style="font-size:11px; color:var(--muted);">Last: <input type="date" id="edit-lastcontact-${o.ledger_id}" value="${o.last_contacted || ''}" style="padding:3px; border-radius:6px; border:1px solid var(--border); font-size:12px;" /></label>
@@ -2149,18 +2243,21 @@ function renderOpenOrderRow(o, editing) {
       </tr>
     `;
   }
+  // Alex (2026-11-12): "the only columns needed are: checkbox, action, order type, component,
+  // quantity, estimated time of arrival, vendor, contact status." Order #, Tracking, and the
+  // separate status pill all moved into the View/Edit popup (showOrderDetailsPopup) -- the
+  // table's own "Action" column is now JUST the ⋯ actions menu (whose "View / Edit Details"
+  // entry is where the status pill, Order #, and Tracking now live), not a second status
+  // indicator duplicating what the popup shows.
   return `
     <tr id="row-${o.ledger_id}" style="background:${rowBg};">
       ${selectCell}
       <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}', this)" title="Actions">⋯</button>` : ''}</td>
       <td><span class="pill ${orderTypePillClass}">${orderTypeLabel}</span></td>
       <td>${componentText}</td>
-      <td><span class="pill clickable-pill ${actionPillClass(o.action_needed)}" onclick="showOpenOrderDetail('${o.ledger_id}')">${o.action_needed}</span></td>
-      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
-      <td>${renderPoNumberCell(o, canAct)}</td>
-      <td>${o.vendor_name || '—'}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
-      <td style="white-space:normal; ${window._revealOrderData ? 'min-width:220px;' : 'max-width:160px;'} word-break:break-word;">${renderTrackingCell(o, canAct)}</td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
+      <td>${o.vendor_name || '—'}</td>
       <td>${renderContactScheduleCell(o)}</td>
     </tr>
   `;
