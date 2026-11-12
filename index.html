@@ -5743,7 +5743,7 @@ async function renderRevenue() {
     sb.from('revenue_actuals').select('channel, gross_revenue, shipping_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, revenue_pct_rationale, asp_rationale, product_id, products(sku_code, display_name)').eq('is_active', true),
-    sb.from('open_orders_by_product').select('product_sku, qty, eta, order_type').not('eta', 'is', null).eq('order_type', 'finished_good'),
+    sb.from('open_orders_by_product').select('product_sku, qty, eta, order_type, component_name').not('eta', 'is', null).in('order_type', ['finished_good', 'componentry']),
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
     sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
     sb.from('component_qoh').select('*'),
@@ -5833,8 +5833,16 @@ async function renderRevenue() {
     liveMix[fp.channel] = liveMix[fp.channel] || {};
     liveMix[fp.channel][fp.product_id] = { revenue_pct: Number(fp.revenue_pct), avg_selling_price: Number(fp.avg_selling_price), revenue_pct_rationale: fp.revenue_pct_rationale || null, asp_rationale: fp.asp_rationale || null };
   });
-  // Real receipts for the Inventory Outlook -- FINISHED GOOD production runs only. Alex
-  // (2026-10-22): flagged "Night Oil 415ml showing 132k landing" and "46k of Armpit Mud in
+  // Real receipts for the Inventory Outlook -- FINISHED GOOD production runs, PLUS Socks/Patches
+  // componentry orders (Alex, 2026-11-12): "For patches and socks, any time there's either a
+  // finished good or componentry order it should be considered in the increase in inventory...
+  // I should be seeing silicone socks in the revenue tab specifically inventory outlook with the
+  // PO that's been placed." Socks/Patches componentry = the FINISHED unit itself (not a raw
+  // input like a bottle/lid/jar/cork that still needs a separate production run), so counting it
+  // here is correct and intentional -- every OTHER componentry order type stays excluded, per the
+  // root-caused bug below.
+  //
+  // Alex (2026-10-22): flagged "Night Oil 415ml showing 132k landing" and "46k of Armpit Mud in
   // January" as entirely incorrect, with no real POs placed/in the works for 2027. Root cause:
   // open_orders_by_product mixes finished-good production runs AND raw COMPONENT orders (bottles,
   // lids, jars, corks -- which still need to go through production before becoming finished
@@ -5843,9 +5851,12 @@ async function renderRevenue() {
   // component order) + 23,000 (Glass Jar component order) for the SAME finished-good PO, with
   // ZERO real finished-good quantity -- confirming Alex's "no real 2027 POs" claim for that
   // product. Night Oil's "132k" was 55,000 (bottle) + 55,000 (cork) + the one real 22,000
-  // finished-good run. Now filtered server-side to order_type='finished_good' in the fetch above.
-  const receipts = {}; // { product_sku: { month: qty } }, finished-good only
+  // finished-good run. Filtered server-side to order_type in ('finished_good', 'componentry') in
+  // the fetch above, then client-side here: componentry only counts if it's Socks/Patches.
+  const isSocksPatchesComponent = (name) => /sock|patch/i.test(name || '');
+  const receipts = {}; // { product_sku: { month: qty } }
   (openOrders || []).forEach(o => {
+    if (o.order_type === 'componentry' && !isSocksPatchesComponent(o.component_name)) return;
     const m = o.eta.slice(0, 7);
     if (!receipts[o.product_sku]) receipts[o.product_sku] = {};
     receipts[o.product_sku][m] = (receipts[o.product_sku][m] || 0) + (o.qty || 0);
@@ -6997,9 +7008,17 @@ function renderRevenueBody() {
   // bundles ... we don't create POs per the bundle." Bundles (product_type='bundle', e.g. the
   // Day+Night Set) have no QOH/PO of their own; their inventory depends entirely on the root
   // products they're built from, which already appear in this table on their own rows.
+  //
+  // Alex (2026-11-12): "I also should be seeing silicone socks in the revenue tab specifically
+  // inventory outlook with the PO that's been placed." Root cause: Silicone Socks has no
+  // Shopify/Amazon revenue-mix entry yet (not live in Shopify -- `is_active=false`, placeholder
+  // SKU per its own product notes), so the `S.liveMix` filter below excluded it entirely even
+  // though it has a real PO. Fix: also include any root product that has a real receipt
+  // (open order) landing, even with no live sales mix yet -- it still needs to show up so the PO
+  // is visible and trackable.
   let outlookProducts = S.products
     .filter(p => p.product_type === 'root')
-    .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id]);
+    .filter(p => S.liveMix.shopify?.[p.product_id] || S.liveMix.amazon?.[p.product_id] || S.receipts[p.sku_code]);
   if (mixFilterText) outlookProducts = outlookProducts.filter(p => p.display_name.toLowerCase().includes(mixFilterText) || (p.sku_code || '').toLowerCase().includes(mixFilterText));
   if (selectedSkuIds) outlookProducts = outlookProducts.filter(p => selectedSkuIds.has(p.product_id));
   outlookProducts = outlookProducts
