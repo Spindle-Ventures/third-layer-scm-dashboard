@@ -2175,8 +2175,7 @@ async function createNewOrder(type) {
   const deriveLandingDest = (orderType, componentName) => {
     if (landingDestOverride) return landingDestOverride;
     const dest = window._addOrderLookups?.landingDestVendors || [];
-    const isSocksOrPatches = /patch|sock/i.test(componentName || '');
-    const wantBollweg = orderType === 'finished_good' || isSocksOrPatches;
+    const wantBollweg = orderType === 'finished_good';
     const name = wantBollweg ? 'Bollweg Logistics' : 'Private Label';
     return dest.find(v => v.vendor_name === name)?.id || null;
   };
@@ -5743,7 +5742,7 @@ async function renderRevenue() {
     sb.from('revenue_actuals').select('channel, gross_revenue, shipping_revenue, revenue_date').gte('revenue_date', histStartIso),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, revenue_pct_rationale, asp_rationale, product_id, products(sku_code, display_name)').eq('is_active', true),
-    sb.from('open_orders_by_product').select('product_sku, qty, eta, order_type, component_name').not('eta', 'is', null).in('order_type', ['finished_good', 'componentry']),
+    sb.from('open_orders_by_product').select('product_sku, qty, eta, order_type').not('eta', 'is', null).eq('order_type', 'finished_good'),
     sb.from('revenue_scenarios').select('*').order('created_at', { ascending: false }),
     sb.from('vendors').select('*').eq('is_active', true).order('vendor_name'),
     sb.from('component_qoh').select('*'),
@@ -5834,29 +5833,12 @@ async function renderRevenue() {
     liveMix[fp.channel][fp.product_id] = { revenue_pct: Number(fp.revenue_pct), avg_selling_price: Number(fp.avg_selling_price), revenue_pct_rationale: fp.revenue_pct_rationale || null, asp_rationale: fp.asp_rationale || null };
   });
   // Real receipts for the Inventory Outlook -- FINISHED GOOD production runs, PLUS Socks/Patches
-  // componentry orders (Alex, 2026-11-12): "For patches and socks, any time there's either a
-  // finished good or componentry order it should be considered in the increase in inventory...
-  // I should be seeing silicone socks in the revenue tab specifically inventory outlook with the
-  // PO that's been placed." Socks/Patches componentry = the FINISHED unit itself (not a raw
-  // input like a bottle/lid/jar/cork that still needs a separate production run), so counting it
-  // here is correct and intentional -- every OTHER componentry order type stays excluded, per the
-  // root-caused bug below.
-  //
-  // Alex (2026-10-22): flagged "Night Oil 415ml showing 132k landing" and "46k of Armpit Mud in
-  // January" as entirely incorrect, with no real POs placed/in the works for 2027. Root cause:
-  // open_orders_by_product mixes finished-good production runs AND raw COMPONENT orders (bottles,
-  // lids, jars, corks -- which still need to go through production before becoming finished
-  // units) in one view with an order_type column, and this fetch was pulling ALL rows regardless
-  // of type. Verified against live data: Armpit Mud's "46k" was exactly 23,000 (Black Lid
-  // component order) + 23,000 (Glass Jar component order) for the SAME finished-good PO, with
-  // ZERO real finished-good quantity -- confirming Alex's "no real 2027 POs" claim for that
-  // product. Night Oil's "132k" was 55,000 (bottle) + 55,000 (cork) + the one real 22,000
-  // finished-good run. Filtered server-side to order_type in ('finished_good', 'componentry') in
-  // the fetch above, then client-side here: componentry only counts if it's Socks/Patches.
-  const isSocksPatchesComponent = (name) => /sock|patch/i.test(name || '');
+  // Alex (2026-11-12): "I think we want to manage patches & socks as finished goods throughout
+  // the solution" -- both are now real finished-good products (no more componentry special-case
+  // needed; the migration moved their one live PO to a production_run and deleted their old
+  // component records entirely), so receipts simply count all finished_good order_type rows.
   const receipts = {}; // { product_sku: { month: qty } }
   (openOrders || []).forEach(o => {
-    if (o.order_type === 'componentry' && !isSocksPatchesComponent(o.component_name)) return;
     const m = o.eta.slice(0, 7);
     if (!receipts[o.product_sku]) receipts[o.product_sku] = {};
     receipts[o.product_sku][m] = (receipts[o.product_sku][m] || 0) + (o.qty || 0);
