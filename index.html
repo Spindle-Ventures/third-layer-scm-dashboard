@@ -2332,7 +2332,7 @@ function showOrderDetailsPopup(ledgerId) {
       <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); showContactScheduleDetail('${ledgerId}')">Open Contact Schedule / Email Thread</button>
     </div>
   `;
-  showDetail(`${o.product_name} — Order Details`, body, 'wide');
+  showDetail(`${o.product_name} — Order Details`, body);
 }
 
 async function editLandingDestination(ledgerId) {
@@ -7020,7 +7020,7 @@ function renderRevenueBody() {
     const series = projections[p.sku_code] || [];
     const urgency = S.activeRecByProduct[p.product_id];
     const nameCell = `<strong>${p.display_name}</strong>${urgency ? ` <span class="urgency-badge urgency-${urgency}" style="margin-left:4px; font-size:10px; padding:1px 5px;">${urgency}</span>` : ''}`;
-    const todayCell = `<div style="text-align:center; font-size:12px;"><strong>${Math.round(p.qty_on_hand || 0).toLocaleString()}</strong><br><span class="muted" style="font-size:10px;">live, today</span></div>`;
+    const todayCell = `<div style="text-align:center; font-size:12px;"><strong style="font-size:15px;">${Math.round(p.qty_on_hand || 0).toLocaleString()}</strong><br><span class="muted" style="font-size:10px;">live, today</span></div>`;
     const cells = months.map((m, i) => {
       const eom = series[i];
       const hasDraft = (S.draftPOs || []).some(po => po.product_id === p.product_id && po.eta_month.slice(0, 7) === m);
@@ -7046,13 +7046,17 @@ function renderRevenueBody() {
       // clickable but its real onclick never actually ran; a click fell through to the parent
       // button's showThroughputDetail instead. Fixed by using single-quoted onclick attributes
       // and a package-icon-specific helper (packageIconHtml) that escapes its own string args.
-      const packageIconHtml = (color, label, productId, month, wantFinishedGood) =>
-        `<span title="${label} — click for details" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:${color}; font-size:12px; line-height:1; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.3);" onclick='event.stopPropagation(); showLandingIconDetail(${JSON.stringify(productId)}, ${JSON.stringify(month)}, ${wantFinishedGood})'>📦</span>`;
+      const finishedGoodCount = landingOrders.filter(isFinishedGoodDisplay).length;
+      const componentCount = landingOrders.length - finishedGoodCount;
+      // Alex (2026-11-12): "when hovering over the icon - let's have it show how many component
+      // orders and how many finished good orders and then when you click you see the details."
+      const packageIconHtml = (color, label, productId, month, wantFinishedGood, count) =>
+        `<span title="${label}: ${count} order${count === 1 ? '' : 's'} — click for details" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:${color}; font-size:12px; line-height:1; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.3);" onclick='event.stopPropagation(); showLandingIconDetail(${JSON.stringify(productId)}, ${JSON.stringify(month)}, ${wantFinishedGood})'>📦</span>`;
       const packageIcons = landingOrders.length
-        ? `<span style="position:absolute; bottom:-8px; right:-8px; display:flex; gap:2px; z-index:2;">${hasFinishedGoodLanding ? packageIconHtml('var(--good-text)', 'Finished-good PO landing this month', p.product_id, m, true) : ''}${hasComponentLanding ? packageIconHtml('var(--accent-light)', 'Componentry PO landing this month', p.product_id, m, false) : ''}</span>`
+        ? `<span style="position:absolute; bottom:-8px; right:-8px; display:flex; gap:2px; z-index:2;">${hasFinishedGoodLanding ? packageIconHtml('var(--good-text)', 'Finished-good PO landing this month', p.product_id, m, true, finishedGoodCount) : ''}${hasComponentLanding ? packageIconHtml('var(--accent-light)', 'Componentry PO landing this month', p.product_id, m, false, componentCount) : ''}</span>`
         : '';
       return `<button class="btn btn-ghost" style="position:relative; padding:4px 12px 12px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent; overflow:visible;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
-        <span><strong>${Math.round(eom).toLocaleString()}</strong></span>
+        <span style="font-size:15px;"><strong>${Math.round(eom).toLocaleString()}</strong></span>
         ${i === 0 ? '<span style="font-size:10px;">in progress</span>' : ''}
         ${hasDraft ? '<span style="font-size:10px;">+draft</span>' : ''}
         ${packageIcons}
