@@ -2270,6 +2270,7 @@ function showOrderActionsMenu(ledgerId, btnEl) {
   if (!o) return;
   const btn = (label, action, danger) => `<button class="btn btn-ghost" style="display:block; width:100%; text-align:left; margin-bottom:6px; ${danger ? 'color:var(--bad-text);' : ''}" onclick="closeAnchoredMenu(); handleOrderAction('${ledgerId}', '${action}')">${label}</button>`;
   const body = `
+    ${btn('View / Edit Details', 'view')}
     ${btn('Split', 'split')}
     ${btn('Delay', 'delay')}
     ${btn(o.order_status === 'paused' ? 'Resume' : 'Pause', o.order_status === 'paused' ? 'resume' : 'pause')}
@@ -2282,6 +2283,7 @@ function showOrderActionsMenu(ledgerId, btnEl) {
 
 function handleOrderAction(ledgerId, action) {
   if (!action) return;
+  if (action === 'view') return showOrderDetailsPopup(ledgerId);
   if (action === 'edit') return editOpenOrderRow(ledgerId);
   if (action === 'split') return splitOrder(ledgerId);
   if (action === 'delay') return delayOrder(ledgerId);
@@ -2290,6 +2292,71 @@ function handleOrderAction(ledgerId, action) {
   if (action === 'cancel') return cancelOrder(ledgerId);
   if (action === 'land') return markLanded(ledgerId);
   if (action === 'delete') return deleteOrderRow(ledgerId);
+}
+
+// Alex (2026-11-12): "I think there should be a 'view' action in the picklist of the three dot
+// buttons that allows me to see all details of an order so I can look at and modify information
+// on the order and thus see the landing destination." Single read + edit surface for every field
+// on the order, including landing_destination_name which otherwise has no visible home anywhere
+// on the Overview tab.
+function showOrderDetailsPopup(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const row = (label, value, editFn) => `
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); gap:10px;">
+      <span class="muted" style="font-size:13px;">${label}</span>
+      <span style="font-size:13px; text-align:right; flex:1;">${value}</span>
+      ${editFn && canEdit() ? `<button class="btn btn-ghost" style="padding:2px 8px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); ${editFn}">Edit</button>` : ''}
+    </div>
+  `;
+  const body = `
+    <div style="display:flex; flex-direction:column;">
+      ${row('Product', `<strong>${o.product_name}</strong>`)}
+      ${row('Order Type', o.order_type === 'componentry' ? 'Component' : 'Finished Good')}
+      ${o.order_type === 'componentry' ? row('Component', componentShortLabel(o.component_name)) : ''}
+      ${row('Vendor (accountable)', o.vendor_name || '<span class="muted">—</span>')}
+      ${row('Landing Destination', o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>', `editLandingDestination('${ledgerId}')`)}
+      ${row('ETA', `<strong>${fmtDate(o.eta)}</strong>`, `editOpenOrderRow('${ledgerId}')`)}
+      ${row('Quantity', o.qty != null ? o.qty.toLocaleString() : '—', `editOpenOrderRow('${ledgerId}')`)}
+      ${row('Order #', o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>', `editPoNumber('${ledgerId}')`)}
+      ${row("Vendor's Order #", o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`)}
+      ${row('Tracking Info', o.tracking_info || '<span class="muted">none on file</span>', `editTracking('${ledgerId}')`)}
+      ${row('Status', `<span class="pill clickable-pill ${actionPillClass(o.action_needed)}">${o.action_needed}</span>`)}
+      ${row('Order Status', o.order_status === 'paused' ? 'Paused' : 'Open')}
+      ${row('Contact Status', renderContactScheduleCell(o))}
+      ${row('Last Contacted', o.last_contacted ? fmtDate(o.last_contacted) : '<span class="muted">never</span>', `editLastContact('${ledgerId}')`)}
+      ${row('Next Contact', o.next_contact ? fmtDate(o.next_contact) : '<span class="muted">not scheduled</span>', `editNextContact('${ledgerId}')`)}
+      ${row('Notes', o.notes || '<span class="muted">none</span>')}
+    </div>
+    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); showContactScheduleDetail('${ledgerId}')">Open Contact Schedule / Email Thread</button>
+    </div>
+  `;
+  showDetail(`${o.product_name} — Order Details`, body, 'wide');
+}
+
+async function editLandingDestination(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const { data: vendors } = await sb.from('vendors').select('id, vendor_name').in('vendor_name', ['Private Label', 'Bollweg Logistics']);
+  const options = (vendors || []).map(v => `<option value="${v.id}" ${v.id === o.landing_destination_vendor_id ? 'selected' : ''}>${v.vendor_name}</option>`).join('');
+  const body = `
+    <label>Landing Destination<br>
+      <select id="edit-landing-dest-select" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);">
+        <option value="">— none —</option>
+        ${options}
+      </select>
+    </label>
+    <button class="btn btn-primary" style="margin-top:10px;" onclick="saveLandingDestination('${ledgerId}')">Save</button>
+  `;
+  showDetail('Set Landing Destination', body);
+}
+
+async function saveLandingDestination(ledgerId) {
+  const newVal = document.getElementById('edit-landing-dest-select').value || null;
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  const ok = await mutateLedgerRow(ledgerId, { landing_destination_vendor_id: newVal }, `Set landing destination for ${o?.product_name || ledgerId}`);
+  if (ok) { document.getElementById('detail-modal-backdrop')?.remove(); await renderOverview(); }
 }
 
 async function deleteOrderRow(ledgerId) {
@@ -6974,9 +7041,9 @@ function renderRevenueBody() {
       const hasFinishedGoodLanding = landingOrders.some(isFinishedGoodDisplay);
       const hasComponentLanding = landingOrders.some(o => !isFinishedGoodDisplay(o));
       const packageIcons = landingOrders.length
-        ? `<span style="position:absolute; bottom:1px; right:2px; font-size:9px; line-height:1;">${hasFinishedGoodLanding ? '<span title="Finished-good PO landing this month" style="color:var(--good-text);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',true)">📦</span>' : ''}${hasComponentLanding ? '<span title="Componentry PO landing this month" style="color:var(--accent-light);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',false)">📦</span>' : ''}</span>`
+        ? `<span style="position:absolute; bottom:-8px; right:-8px; display:flex; gap:2px; z-index:2;">${hasFinishedGoodLanding ? '<span title="Finished-good PO landing this month — click for details" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--good-text); font-size:12px; line-height:1; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.3);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',true)">📦</span>' : ''}${hasComponentLanding ? '<span title="Componentry PO landing this month — click for details" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--accent-light); font-size:12px; line-height:1; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.3);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',false)">📦</span>' : ''}</span>`
         : '';
-      return `<button class="btn btn-ghost" style="position:relative; padding:4px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
+      return `<button class="btn btn-ghost" style="position:relative; padding:4px 12px 12px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent; overflow:visible;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
         <span><strong>${Math.round(eom).toLocaleString()}</strong></span>
         ${i === 0 ? '<span style="font-size:10px;">in progress</span>' : ''}
         ${hasDraft ? '<span style="font-size:10px;">+draft</span>' : ''}
