@@ -4053,9 +4053,18 @@ function toggleCatalogProductExpand(productId) {
   if (caret) caret.textContent = nowOpen ? '▾' : '▸';
 }
 
-function toggleCatalogComponentExpand(componentId) {
-  const row = document.getElementById(`cc-vendors-${componentId}`);
-  const caret = document.getElementById(`cc-caret-${componentId}`);
+// Bug found in the round-38 architecture review: this used to be named the same as (and define
+// the EXACT SAME global function name as) the standalone Components tab's toggle function below
+// -- in a single flat <script> block with no module scoping, JS lets a later `function` statement
+// silently overwrite an earlier one with the same name. Whichever was defined lower in the file
+// won; clicking a component's expand arrow INSIDE the Products tab's nested component list
+// (this one) silently called the Components-tab version instead, which looks for a different
+// element id and finds nothing -- a dead click with no visible error. Renamed (function + both
+// element ids) to be unambiguous; see also toggleCatalogComponentExpand() for the real standalone
+// Components-tab version lower in this file.
+function toggleProductComponentVendorsExpand(componentId) {
+  const row = document.getElementById(`pc-comp-vendors-${componentId}`);
+  const caret = document.getElementById(`pc-comp-caret-${componentId}`);
   if (!row) return;
   const nowOpen = row.style.display === 'none';
   row.style.display = nowOpen ? '' : 'none';
@@ -4083,7 +4092,7 @@ function renderCatalogProductsTable() {
   // rows are currently expanded before rebuilding, then restore them below, so this re-render
   // behaves like the accordion fix (state changes don't touch state the user isn't editing).
   const openProductIds = Array.from(el.querySelectorAll('[id^="cp-detail-"]')).filter(r => r.style.display !== 'none').map(r => r.id.replace('cp-detail-', ''));
-  const openComponentIds = Array.from(el.querySelectorAll('[id^="cc-vendors-"]')).filter(r => r.style.display !== 'none').map(r => r.id.replace('cc-vendors-', ''));
+  const openComponentIds = Array.from(el.querySelectorAll('[id^="pc-comp-vendors-"]')).filter(r => r.style.display !== 'none').map(r => r.id.replace('pc-comp-vendors-', ''));
 
   // Alex (2026-11-04): "Bundles should maybe have their own container instead of being lumped
   // into the products container." -- this table is root products only now; bundle-type products
@@ -4142,14 +4151,14 @@ function renderCatalogProductsTable() {
         : `<span class="muted" style="font-size:13px;">${c.qty_per_unit ?? 1} ${c.unit_of_measure || 'each'}</span>`;
       return `
         <div style="border-bottom:1px solid var(--border); padding:5px 0;">
-          <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex-wrap:wrap;" onclick="toggleCatalogComponentExpand('${c.id}')">
-            <span class="muted" id="cc-caret-${c.id}" style="width:12px; display:inline-block;">▸</span>
+          <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex-wrap:wrap;" onclick="toggleProductComponentVendorsExpand('${c.id}')">
+            <span class="muted" id="pc-comp-caret-${c.id}" style="width:12px; display:inline-block;">▸</span>
             <span style="flex:1; min-width:110px;" onclick="event.stopPropagation();">${nameHtml}</span>
             <span onclick="event.stopPropagation();">${uomHtml}</span>
             <span class="muted" style="font-size:13px; min-width:120px; text-align:right;">${vendorNames.length ? vendorNames.join(', ') : 'No vendors'}</span>
             ${canAct ? `<button class="btn btn-ghost" style="padding:2px 7px; font-size:12px;" onclick="event.stopPropagation(); showComponentVendorsModal('${c.id}', '${(c.component_name || '').replace(/'/g, "\\'")}')">Manage vendors</button>` : ''}
           </div>
-          <div id="cc-vendors-${c.id}" style="display:none;">${renderComponentVendorsBlock(c)}</div>
+          <div id="pc-comp-vendors-${c.id}" style="display:none;">${renderComponentVendorsBlock(c)}</div>
         </div>
       `;
     }).join('');
@@ -4249,7 +4258,7 @@ function renderCatalogProductsTable() {
   // above the snapshot. Component-vendor rows only exist once their parent product row is open,
   // so products are restored first.
   openProductIds.forEach(id => toggleCatalogProductExpand(id));
-  openComponentIds.forEach(id => toggleCatalogComponentExpand(id));
+  openComponentIds.forEach(id => toggleProductComponentVendorsExpand(id));
 }
 
 // Alex (2026-11-13, round 38): "I need a way to edit product attributes in the catalog tab.
