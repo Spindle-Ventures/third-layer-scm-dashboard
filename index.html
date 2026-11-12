@@ -327,6 +327,7 @@
       <div class="subtitle" id="subtitle-date" style="margin-right:4px;"></div>
       <span class="role-badge" id="user-badge"></span>
       <span class="snapshot-pill" id="snapshot-pill">Loading…</span>
+      <button class="btn btn-primary" id="header-add-order-btn" style="display:none;" onclick="showAddOrderMenu()">+ Add Order</button>
       <button class="btn btn-ghost" onclick="signOut()">Sign out</button>
     </div>
   </div>
@@ -431,6 +432,10 @@ async function loadApp(session) {
   document.getElementById('user-badge').textContent = `${userRow.display_name || userRow.email} · ${userRow.role}`;
   document.getElementById('subtitle-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   document.getElementById('snapshot-pill').textContent = 'Snapshot · updated on page load';
+  // Alex (2026-11-12): "Placing an order should be a universal action that should be up and to
+  // the left of 'Sign Out'" -- moved out of the Overview tab's own toolbar (where it only showed
+  // while that tab was active) into the header, visible from every tab, same edit-permission gate.
+  document.getElementById('header-add-order-btn').style.display = canEdit() ? '' : 'none';
 
   await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog(), renderCatalog()]);
   initMannyChat();
@@ -1218,7 +1223,6 @@ async function renderOverview() {
         </label>
         <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
         <button class="btn btn-ghost" id="reveal-order-data-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleRevealOrderData()" title="Show/hide Order # and Tracking values inline">👁 ${window._revealOrderData ? 'Hide' : 'Reveal'} Order # / Tracking</button>
-        ${canEdit() ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="showAddOrderMenu()">+ Add Order</button>` : ''}
       </div>
     </div>
     <div id="open-orders-groups"></div>
@@ -1654,13 +1658,20 @@ function buildVendorMessageDraft(o) {
   return `${greeting}\n\n${refLine}${ask}${missingClause}\n\nThanks,\nThird Layer`;
 }
 
-// Alex (2026-11-12): "I want to be prompted to send the initial email to the component vendor
-// right from the dashboard when I generate an order" -- this is the SAME "Order placed" message
-// vendor_message_triggers.py would propose automatically on its next cron run, just offered
-// immediately at creation time instead of waiting for the next scheduled pass. Mirrors
+// Alex (2026-11-12): "It should be a second screen within the screenflow any time a new order
+// is placed, with the optionality of sending or bypassing the email sending. Usually on the
+// initial it'll be an email send and then for the checking in cadences it'll be Slack messages."
+// This is the SAME "Order placed" message vendor_message_triggers.py would propose
+// automatically on its next cron run, just offered immediately at creation time as a mandatory
+// second screen in the Add Order flow -- for BOTH component and finished-good orders, always
+// shown (even with no contact email on file, in which case the recipient field is editable so
+// Alex can type one in on the spot rather than the screen being skipped). Mirrors
 // build_subject('Order placed', ...) / build_order_placed_body() in vendor_message_triggers.py
-// exactly (same prefix, same ref-line/greeting/body shape) so a dashboard-sent initial email and
-// a cron-proposed one for the same order type read identically.
+// (same prefix/ref-line/greeting shape) so a dashboard-sent initial email and a cron-proposed
+// one for the same order type read identically. Deliberately DIFFERENT tone/wording from
+// buildVendorMessageDraft() above, which is the check-in/follow-up message (Slack-cadence,
+// "is this still on track?") -- this is a first-contact "we just placed this, please confirm"
+// message, not a check-in.
 function buildOrderPlacedSubject(o) {
   const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
   const ref = o.internal_ref || o.vendor_po_number;
@@ -1686,14 +1697,11 @@ function buildOrderPlacedBody(o) {
   );
 }
 
-// Shown right after a component order is successfully created, only when the order's vendor has
-// a contact email on file -- offers to send the SAME initial "order placed" message
-// vendor_message_triggers.py would otherwise propose on its next cron pass, but lets Alex send
-// it (or just preview/skip it) immediately from the dashboard instead of waiting or going
-// through Slack. Alex alone decides when a vendor-facing email actually goes out (standing
-// rule) -- this writes status='queued' only on an explicit "Send" click here, never automatically.
-async function offerSendOrderPlacedEmail(ledgerRow, vendor, itemLabel) {
-  if (!vendor?.contact_email) return;
+// Mandatory second screen of the Add Order flow (every order, both types) -- lets Alex send the
+// initial order-placed email, edit it first, type in a recipient if none is on file yet, or skip
+// it entirely. Never auto-sends: a real send only happens on an explicit "Send Email" click here
+// (Alex alone decides when a vendor-facing message actually goes out -- standing rule).
+function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
   const o = {
     order_type: 'componentry',
     component_name: itemLabel,
@@ -1702,37 +1710,47 @@ async function offerSendOrderPlacedEmail(ledgerRow, vendor, itemLabel) {
     eta: ledgerRow.eta,
     internal_ref: ledgerRow.order_number,
     ledger_id: ledgerRow.id,
-    vendor_contact_name: vendor.contact_name,
+    vendor_contact_name: vendor?.contact_name,
   };
   const subject = buildOrderPlacedSubject(o);
   const body = buildOrderPlacedBody(o);
+  const hasEmail = !!vendor?.contact_email;
+  const recipientHtml = hasEmail
+    ? `<div class="muted" style="font-size:13px; margin-bottom:8px;">To: ${vendor.contact_name ? vendor.contact_name + ' — ' : ''}${vendor.contact_email}</div>`
+    : `<label style="display:block; margin-bottom:8px; font-size:13px;">To (no contact email on file for ${vendor?.vendor_name || 'this vendor'} yet)<br>
+        <input id="order-placed-email-to" type="email" placeholder="vendor@example.com" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
+      </label>`;
   const bodyHtml = `
-    <div class="muted" style="font-size:13px; margin-bottom:8px;">To: ${vendor.contact_name ? vendor.contact_name + ' — ' : ''}${vendor.contact_email}</div>
-    <textarea id="order-placed-email-text" style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical;">${body}</textarea>
+    ${recipientHtml}
+    <label style="display:block; font-size:13px; margin-bottom:4px;">Subject<br>
+      <input id="order-placed-email-subject" type="text" value="${subject.replace(/"/g, '&quot;')}" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border); box-sizing:border-box;" />
+    </label>
+    <textarea id="order-placed-email-text" style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical; margin-top:8px;">${body}</textarea>
+    <div class="muted" style="font-size:12px; margin-top:6px;">Future check-ins on this order will go out as Slack messages, not email.</div>
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-      <button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="sendOrderPlacedEmailNow('${ledgerRow.id}', '${vendor.id}')">Send Email</button>
+      <button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="sendOrderPlacedEmailNow('${ledgerRow.id}', ${vendor ? `'${vendor.id}'` : 'null'})">Send Email</button>
       <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="document.getElementById('detail-modal-backdrop')?.remove()">Skip for now</button>
     </div>
   `;
-  showDetail(`Send initial order email to ${vendor.vendor_name || 'vendor'}?`, bodyHtml);
-  window._pendingOrderPlacedEmail = { ledgerId: ledgerRow.id, vendorId: vendor.id, subject };
+  showDetail(`Send initial order email${vendor?.vendor_name ? ` to ${vendor.vendor_name}` : ''}?`, bodyHtml);
 }
 
 async function sendOrderPlacedEmailNow(ledgerId, vendorId) {
-  const pending = window._pendingOrderPlacedEmail;
-  const subject = (pending && pending.ledgerId === ledgerId) ? pending.subject : 'Order update';
+  const toEmail = (document.getElementById('order-placed-email-to')?.value || '').trim() ||
+    (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId)?.contact_email || null;
+  if (!toEmail) { await showConfirmModal('Check your input', 'Enter a recipient email address before sending.', { okOnly: true }); return; }
+  const subject = document.getElementById('order-placed-email-subject')?.value || 'Order update';
   const body = document.getElementById('order-placed-email-text')?.value || '';
   const vendor = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
-  if (!vendor?.contact_email) return;
   const { data, error } = await sb.from('vendor_messages').insert({
     vendor_id: vendorId, ledger_id: ledgerId, channel: 'email',
-    direction: 'outbound', subject, body, to_email: vendor.contact_email, status: 'queued',
+    direction: 'outbound', subject, body, to_email: toEmail, status: 'queued',
     trigger_type: 'order_placed', proposed_by: 'dashboard',
   }).select().single();
   if (error) { await showConfirmModal('Something went wrong', 'Could not queue the message: ' + error.message, { okOnly: true, danger: true }); return; }
-  await logAction('vendor_messages', data.id, 'create', `Queued initial order-placed email to ${vendor.vendor_name || 'vendor'}`, null, data);
+  await logAction('vendor_messages', data.id, 'create', `Queued initial order-placed email to ${vendor?.vendor_name || toEmail}`, null, data);
   document.getElementById('detail-modal-backdrop')?.remove();
-  await showConfirmModal('Queued', `Email to ${vendor.vendor_name || 'the vendor'} is queued — it'll go out on the next send cycle (usually within a few minutes).`, { okOnly: true });
+  await showConfirmModal('Queued', `Email to ${vendor?.vendor_name || toEmail} is queued — it'll go out on the next send cycle (usually within a few minutes).`, { okOnly: true });
 }
 
 function showVendorMessagePopup(ledgerId) {
@@ -2341,6 +2359,16 @@ async function createNewOrder(type) {
       showBulkUndoToast(logIds, `Created ${inserted.length} linked order${inserted.length === 1 ? '' : 's'}${orderNumber ? ` (Order # ${orderNumber})` : ''}`);
     }
     await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
+
+    // Alex (2026-11-12): "It should be a second screen within the screenflow any time a new
+    // order is placed... with the optionality of sending or bypassing the email sending."
+    // Applies to finished-good orders too, not just componentry. One PO can cover several
+    // products sharing the same vendor/order number -- show ONE email screen for the order as a
+    // whole (first inserted row), not one per product line.
+    const vendorFg = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
+    const firstProduct = products.find(p => p.id === inserted[0].product_id);
+    const itemLabelFg = inserted.length > 1 ? `${inserted.length} products (${orderNumber || 'this order'})` : (firstProduct?.display_name || 'this order');
+    if (vendorId) showOrderPlacedEmailScreen(inserted[0], vendorFg, itemLabelFg);
     return;
   }
 
@@ -2376,15 +2404,12 @@ async function createNewOrder(type) {
   await logAction('inventory_ledger', inserted.id, 'create', `Added new component order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
   await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
 
-  // Alex (2026-11-12): "I'd like for all necessary test data to be set up so that when I generate
-  // an order it will prompt me for if I want to send the initial email to the component vendor
-  // and I do it from the dashboard itself." Only prompts when the vendor actually has a contact
-  // email on file -- no dead-end popup for a vendor with nothing to send to. Never auto-sends;
-  // this only queues the email on an explicit "Send Email" click in the popup it opens.
+  // Alex (2026-11-12): "It should be a second screen within the screenflow any time a new order
+  // is placed, with the optionality of sending or bypassing the email sending." Always shown
+  // now, even with no contact email on file (the screen itself offers a recipient field in that
+  // case) -- never auto-sends; only queues the email on an explicit "Send Email" click there.
   const vendor = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
-  if (vendor?.contact_email) {
-    await offerSendOrderPlacedEmail(inserted, vendor, componentName);
-  }
+  if (vendorId) showOrderPlacedEmailScreen(inserted, vendor, componentName);
 }
 
 function showRecActionsMenu(recId, btnEl) {
