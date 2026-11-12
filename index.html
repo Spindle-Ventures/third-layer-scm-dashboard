@@ -513,7 +513,14 @@ async function showCommsAlertsPopup() {
       .select('id, vendor_id, ledger_id, subject, ai_summary, body, created_at, parsed_status, vendors(vendor_name)')
       .eq('direction', 'inbound').is('reviewed_at', null).order('created_at', { ascending: false }),
     sb.from('pending_field_updates')
-      .select('id, ledger_id, field_name, proposed_value, previous_value, created_at, inventory_ledger(vendor_id, vendors(vendor_name))')
+      // Alex (2026-11-12, round 37 follow-up): "the dashboard's solution to reviewing and
+      // approving the data change isn't working" -- root cause: inventory_ledger has TWO FKs to
+      // vendors (vendor_id AND landing_destination_vendor_id), so an unqualified
+      // `vendors(vendor_name)` embed is ambiguous and PostgREST returns a 300 error instead of
+      // data. The header badge still counted correctly (that query has no embed), which is why
+      // it showed 1 pending item while the popup itself silently rendered zero. Fixed by
+      // explicitly naming the FK to disambiguate (`vendors!inventory_ledger_vendor_id_fkey`).
+      .select('id, ledger_id, field_name, proposed_value, previous_value, created_at, inventory_ledger(vendor_id, vendors!inventory_ledger_vendor_id_fkey(vendor_name))')
       .eq('status', 'pending').order('created_at', { ascending: false }),
   ]);
   const rows = alerts || [];
@@ -2251,6 +2258,15 @@ async function showContactScheduleDetail(ledgerId) {
   // section near the bottom.
   const lastContactedLine = o.last_contacted ? fmtDate(o.last_contacted) : '<span class="muted">Never</span>';
   const nextContactLine = o.next_contact ? fmtDate(o.next_contact) : '<span class="muted">Not scheduled</span>';
+  // Alex (2026-11-12, round 37 follow-up): "we don't need the 'Set vendor order number' button
+  // in the contact status popup. remove the Vendor Order # and place the 'Landing Destination'
+  // to the right of next contact." Vendor's order # is still visible/editable elsewhere (the
+  // View/Edit Details popup, showPoNumberDetail()) -- just not duplicated here anymore. Landing
+  // Destination moves up into the same Last Contacted/Next Contact row instead of its own line
+  // further down.
+  const landingDestLine = o.landing_destination_name
+    ? `<strong style="color:var(--ink);">${o.landing_destination_name}</strong>`
+    : '<span class="muted">not set</span>';
 
   const body = `
     <div style="margin-bottom:14px;">
@@ -2258,17 +2274,15 @@ async function showContactScheduleDetail(ledgerId) {
       <div style="display:flex; gap:24px; margin-top:8px; font-size:13px; color:var(--muted);">
         <div>Last Contacted: <strong style="color:var(--ink);">${lastContactedLine}</strong></div>
         <div>Next Contact: <strong style="color:var(--ink);">${nextContactLine}</strong></div>
+        <div>Landing Destination: ${landingDestLine}</div>
       </div>
     </div>
     <div style="font-size:14px; line-height:1.5; margin-bottom:14px; padding:10px 12px; border-radius:8px; background:var(--card-bg, #f5f5f5); border:1px solid var(--border);">${summary}</div>
-    <div style="font-size:13px; margin-bottom:4px;">Vendor's order #: ${o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>'}</div>
-    <div style="font-size:13px; margin-bottom:14px;">Landing destination: ${o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>'} <span class="muted" style="font-size:11px;">(set at order creation)</span></div>
     <div class="section-label" style="margin-bottom:6px;">Email Thread</div>
     ${threadSection}
     ${canEdit() ? `
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn btn-primary" style="font-size:13px;" onclick="showVendorMessagePopup('${ledgerId}')">Compose / Send Email</button>
-        <button class="btn btn-ghost" style="font-size:13px;" onclick="document.getElementById('detail-modal-backdrop').remove(); editVendorOrderNumber('${ledgerId}')">Set vendor's order #</button>
       </div>
     ` : ''}
   `;
