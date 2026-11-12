@@ -1895,6 +1895,7 @@ async function showContactScheduleDetail(ledgerId) {
     <div class="section-label" style="margin:16px 0 6px;">Contact Schedule</div>
     <div style="font-size:13px; margin-bottom:8px;">${scheduleLine}${o.notes ? ` — last note: "${o.notes}"` : ''}</div>
     <div style="font-size:13px; margin-bottom:8px;">Vendor's order #: ${o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>'}</div>
+    <div style="font-size:13px; margin-bottom:8px;">Landing destination: ${o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>'} <span class="muted" style="font-size:11px;">(set at order creation)</span></div>
     ${canEdit() ? `
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); editLastContact('${ledgerId}')">Log a contact</button>
@@ -2030,11 +2031,18 @@ async function showAddOrderMenu() {
   // ones are visibly tagged "(inactive)" in the picker rather than silently hidden.
   const [{ data: products }, { data: vendors }] = await Promise.all([
     sb.from('products').select('id, sku_code, display_name, is_active'),
-    sb.from('vendors').select('id, vendor_name').order('vendor_name'),
+    sb.from('vendors').select('id, vendor_name, vendor_type').order('vendor_name'),
   ]);
   window._addOrderLookups = {
     products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
     vendors: vendors || [],
+    // Alex (2026-11-12): "upon creating an order let's establish where the order will land for
+    // comms purposes... Private Label could be in both positions because they are accountable
+    // for finished good PO's and are the landing place for Component PO's... [patches/socks] go
+    // straight to Bollweg." Landing destination is a distinct concept from the "Vendor" field
+    // above (who's accountable for the order) -- restricted to just these two for now since
+    // they're the only two landing destinations Alex has described.
+    landingDestVendors: (vendors || []).filter(v => v.vendor_name === 'Private Label' || v.vendor_name === 'Bollweg Logistics'),
   };
   const body = `
     <div style="display:flex; gap:10px;">
@@ -2106,6 +2114,12 @@ async function showAddOrderForm(type) {
       <label>Notes (optional)<br>
         <input id="add-order-notes" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
       </label>
+      <label>Landing Destination <span class="muted" style="font-weight:400;">— where this lands for comms purposes, separate from who's accountable for the order</span><br>
+        <select id="add-order-landing-dest" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);">
+          <option value="">— auto (see rule below) —</option>
+          ${(window._addOrderLookups?.landingDestVendors || []).map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('')}
+        </select>
+      </label>
       <button class="btn btn-primary" onclick="createNewOrder('${type}')">Create Order${type === 'finished_good' ? '(s)' : ''}</button>
     </div>
   `;
@@ -2149,6 +2163,23 @@ async function createNewOrder(type) {
   const orderNumber = document.getElementById('add-order-number').value || null;
   const tracking = document.getElementById('add-order-tracking').value || null;
   const notes = document.getElementById('add-order-notes').value || null;
+  const landingDestOverride = document.getElementById('add-order-landing-dest')?.value || null;
+
+  // Alex (2026-11-12): "the current vendors are where the orders are being initiated and who's
+  // accountable for delays, timelines, etc. and then 'where's it going' could be either Bollweg
+  // or Private Label... Private Label [is the landing place] for Component PO's outside of
+  // silicone socks and patches which go straight to Bollweg." Auto-derived default, with the
+  // manual override above taking priority when set (clarify: "auto-derive as the default, but
+  // let me override it per order if needed"). componentName is passed in for the componentry
+  // path below since socks/patches are an exception keyed off the component, not the order type.
+  const deriveLandingDest = (orderType, componentName) => {
+    if (landingDestOverride) return landingDestOverride;
+    const dest = window._addOrderLookups?.landingDestVendors || [];
+    const isSocksOrPatches = /patch|sock/i.test(componentName || '');
+    const wantBollweg = orderType === 'finished_good' || isSocksOrPatches;
+    const name = wantBollweg ? 'Bollweg Logistics' : 'Private Label';
+    return dest.find(v => v.vendor_name === name)?.id || null;
+  };
 
   // Finished-good orders: one or more products, each with its own qty, sharing vendor/ETA/order
   // number/tracking/notes -- this is the "one PO, multiple products" flow.
@@ -2167,6 +2198,7 @@ async function createNewOrder(type) {
         event_date: new Date().toISOString().slice(0, 10), event_type: 'production_run',
         product_id: productId, component_id: null, vendor_id: vendorId, qty_in: qty, eta,
         landed: false, order_status: 'open', order_number: orderNumber, tracking_info: tracking, notes,
+        landing_destination_vendor_id: deriveLandingDest('finished_good', null),
       };
       const { data: row, error } = await sb.from('inventory_ledger').insert(payload).select().single();
       if (error) { await showConfirmModal('Something went wrong', `Created ${inserted.length} of ${lineItems.length} order(s), then failed: ${error.message}`, { okOnly: true, danger: true }); break; }
@@ -2196,6 +2228,8 @@ async function createNewOrder(type) {
   if (!qty || qty <= 0) { await showConfirmModal('Check your input', 'Enter a quantity greater than 0.', { okOnly: true }); return; }
   if (!componentId) { await showConfirmModal('Check your input', 'Select a component.', { okOnly: true }); return; }
 
+  const componentName = (window._addOrderLookups?.components || []).find(c => c.id === componentId)?.component_name;
+
   const payload = {
     event_date: new Date().toISOString().slice(0, 10),
     event_type: 'component_order',
@@ -2209,6 +2243,7 @@ async function createNewOrder(type) {
     order_number: orderNumber,
     tracking_info: tracking,
     notes,
+    landing_destination_vendor_id: deriveLandingDest('componentry', componentName),
   };
   const { data: inserted, error } = await sb.from('inventory_ledger').insert(payload).select().single();
   if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
@@ -2807,6 +2842,7 @@ async function orderComponentFromComponentsTab(componentId, productId) {
     window._addOrderLookups = {
       products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
       vendors: vendors || [],
+      landingDestVendors: (vendors || []).filter(v => v.vendor_name === 'Private Label' || v.vendor_name === 'Bollweg Logistics'),
     };
   }
   await showAddOrderForm('componentry');
@@ -2835,6 +2871,7 @@ async function initiateLivePoFromOutlook(productId, recommendedQty, recommendedM
     window._addOrderLookups = {
       products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
       vendors: vendors || [],
+      landingDestVendors: (vendors || []).filter(v => v.vendor_name === 'Private Label' || v.vendor_name === 'Bollweg Logistics'),
     };
   }
   await showAddOrderForm('finished_good');
@@ -6188,6 +6225,30 @@ function computeProjection(channelData, mixData) {
   });
 }
 
+// Alex (2026-11-12): "they should have popups that say the product title, number of units,
+// exact land date, and contact status" -- clicking a package icon (not the EOM cell itself,
+// which still opens showThroughputDetail) shows just the landing order(s) matching that
+// type (finished-good vs componentry) for that product+month, each as its own card with the
+// contact status chip (reusing contactStatus/renderContactScheduleCell so it can never drift
+// from what the Overview tab shows for the same order).
+function showLandingIconDetail(productId, month, wantFinishedGood) {
+  const p = (window._revState?.products || []).find(pr => pr.product_id === productId);
+  const productName = p ? p.display_name : 'Product';
+  const isFinishedGoodDisplay = (o) => o.order_type !== 'componentry' || /patch|sock/i.test(o.component_name || '');
+  const orders = (window._openOrdersCache || []).filter(o =>
+    o.product_id === productId && o.eta && o.eta.slice(0, 7) === month && isFinishedGoodDisplay(o) === wantFinishedGood
+  );
+  const cards = orders.map(o => `
+    <div style="padding:10px 12px; border-radius:8px; border:1px solid var(--border); margin-bottom:8px;">
+      <div style="font-weight:600; margin-bottom:4px;">${productName}</div>
+      <div style="font-size:13px; margin-bottom:2px;">Units: <strong>${o.qty != null ? o.qty.toLocaleString() : '—'}</strong></div>
+      <div style="font-size:13px; margin-bottom:6px;">Land date: <strong>${fmtDate(o.eta)}</strong></div>
+      <div style="font-size:13px;">${renderContactScheduleCell(o)}</div>
+    </div>
+  `).join('') || '<div class="muted" style="font-size:13px;">No matching orders found — the underlying data may have changed since this view was rendered.</div>';
+  showDetail(`${productName} — ${wantFinishedGood ? 'Finished-Good' : 'Componentry'} PO landing ${monthLabelLong(month)}`, cards);
+}
+
 function showThroughputDetail(productId, month) {
   const S = window._revState;
   const p = S.products.find(pr => pr.product_id === productId);
@@ -6900,10 +6961,26 @@ function renderRevenueBody() {
       const safety = p.safety_stock_qty || 0;
       const bg = eom < 0 ? 'var(--bad-bg)' : (eom < safety ? '#EFEAE2' : 'transparent');
       const color = eom < 0 ? 'var(--bad-text)' : (eom < safety ? 'var(--accent-light)' : 'inherit');
-      return `<button class="btn btn-ghost" style="padding:4px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
+      // Alex (2026-11-12): "two icons if PO's land in those months. a small green package for
+      // finished good PO's and a small yellow package if componentry lands... ensure the colors
+      // of the icons match the fill of the rows on the overview tab" -- same --good-bg/--watch-bg
+      // distinction renderOpenOrderRow already uses, so a green/yellow dot here always means the
+      // same thing it means as a row-fill color on the Overview tab. Socks & Patches are
+      // order_type='componentry' in the DB but Alex wants them treated as finished goods here.
+      const landingOrders = (window._openOrdersCache || []).filter(o =>
+        o.product_id === p.product_id && o.eta && o.eta.slice(0, 7) === m
+      );
+      const isFinishedGoodDisplay = (o) => o.order_type !== 'componentry' || /patch|sock/i.test(o.component_name || '');
+      const hasFinishedGoodLanding = landingOrders.some(isFinishedGoodDisplay);
+      const hasComponentLanding = landingOrders.some(o => !isFinishedGoodDisplay(o));
+      const packageIcons = landingOrders.length
+        ? `<span style="position:absolute; bottom:1px; right:2px; font-size:9px; line-height:1;">${hasFinishedGoodLanding ? '<span title="Finished-good PO landing this month" style="color:var(--good-text);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',true)">📦</span>' : ''}${hasComponentLanding ? '<span title="Componentry PO landing this month" style="color:var(--accent-light);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',false)">📦</span>' : ''}</span>`
+        : '';
+      return `<button class="btn btn-ghost" style="position:relative; padding:4px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
         <span><strong>${Math.round(eom).toLocaleString()}</strong></span>
         ${i === 0 ? '<span style="font-size:10px;">in progress</span>' : ''}
         ${hasDraft ? '<span style="font-size:10px;">+draft</span>' : ''}
+        ${packageIcons}
       </button>`;
     });
     // Alex (2026-10-22): "to the right of EOM Mar 27 let's have a Status where it'll show healthy
