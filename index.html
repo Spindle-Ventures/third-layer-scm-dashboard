@@ -1654,6 +1654,87 @@ function buildVendorMessageDraft(o) {
   return `${greeting}\n\n${refLine}${ask}${missingClause}\n\nThanks,\nThird Layer`;
 }
 
+// Alex (2026-11-12): "I want to be prompted to send the initial email to the component vendor
+// right from the dashboard when I generate an order" -- this is the SAME "Order placed" message
+// vendor_message_triggers.py would propose automatically on its next cron run, just offered
+// immediately at creation time instead of waiting for the next scheduled pass. Mirrors
+// build_subject('Order placed', ...) / build_order_placed_body() in vendor_message_triggers.py
+// exactly (same prefix, same ref-line/greeting/body shape) so a dashboard-sent initial email and
+// a cron-proposed one for the same order type read identically.
+function buildOrderPlacedSubject(o) {
+  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
+  const ref = o.internal_ref || o.vendor_po_number;
+  const token = o.ledger_id ? `TL-${String(o.ledger_id).split('-')[0]}` : null;
+  const refPart = ref ? ` — ${ref}` : '';
+  const tokenPart = token ? ` [${token}]` : '';
+  return `Order placed — ${humanizeItemLabel(itemLabel)}${refPart}${tokenPart}`;
+}
+
+function buildOrderPlacedBody(o) {
+  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
+  const itemPhrase = humanizeItemLabel(itemLabel);
+  const qtyFmt = o.qty != null ? `${o.qty.toLocaleString()} units of ` : '';
+  const ref = o.internal_ref || o.vendor_po_number;
+  const refLine = ref ? `Order ref: ${ref}\n\n` : '';
+  const greeting = o.vendor_contact_name ? `Hi ${o.vendor_contact_name.split(' ')[0]},` : 'Hi,';
+  const etaStr = o.eta ? plainDate(o.eta) : 'no ETA set yet';
+  return (
+    `${greeting}\n\n${refLine}` +
+    `We've just placed an order for ${qtyFmt}${itemPhrase}, targeting ${etaStr}.\n\n` +
+    `Can you confirm you've received this and that date works? Let us know if anything's off.\n\n` +
+    `Thanks,\nThird Layer`
+  );
+}
+
+// Shown right after a component order is successfully created, only when the order's vendor has
+// a contact email on file -- offers to send the SAME initial "order placed" message
+// vendor_message_triggers.py would otherwise propose on its next cron pass, but lets Alex send
+// it (or just preview/skip it) immediately from the dashboard instead of waiting or going
+// through Slack. Alex alone decides when a vendor-facing email actually goes out (standing
+// rule) -- this writes status='queued' only on an explicit "Send" click here, never automatically.
+async function offerSendOrderPlacedEmail(ledgerRow, vendor, itemLabel) {
+  if (!vendor?.contact_email) return;
+  const o = {
+    order_type: 'componentry',
+    component_name: itemLabel,
+    product_name: itemLabel,
+    qty: ledgerRow.qty_in,
+    eta: ledgerRow.eta,
+    internal_ref: ledgerRow.order_number,
+    ledger_id: ledgerRow.id,
+    vendor_contact_name: vendor.contact_name,
+  };
+  const subject = buildOrderPlacedSubject(o);
+  const body = buildOrderPlacedBody(o);
+  const bodyHtml = `
+    <div class="muted" style="font-size:13px; margin-bottom:8px;">To: ${vendor.contact_name ? vendor.contact_name + ' — ' : ''}${vendor.contact_email}</div>
+    <textarea id="order-placed-email-text" style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical;">${body}</textarea>
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+      <button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="sendOrderPlacedEmailNow('${ledgerRow.id}', '${vendor.id}')">Send Email</button>
+      <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="document.getElementById('detail-modal-backdrop')?.remove()">Skip for now</button>
+    </div>
+  `;
+  showDetail(`Send initial order email to ${vendor.vendor_name || 'vendor'}?`, bodyHtml);
+  window._pendingOrderPlacedEmail = { ledgerId: ledgerRow.id, vendorId: vendor.id, subject };
+}
+
+async function sendOrderPlacedEmailNow(ledgerId, vendorId) {
+  const pending = window._pendingOrderPlacedEmail;
+  const subject = (pending && pending.ledgerId === ledgerId) ? pending.subject : 'Order update';
+  const body = document.getElementById('order-placed-email-text')?.value || '';
+  const vendor = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
+  if (!vendor?.contact_email) return;
+  const { data, error } = await sb.from('vendor_messages').insert({
+    vendor_id: vendorId, ledger_id: ledgerId, channel: 'email',
+    direction: 'outbound', subject, body, to_email: vendor.contact_email, status: 'queued',
+    trigger_type: 'order_placed', proposed_by: 'dashboard',
+  }).select().single();
+  if (error) { await showConfirmModal('Something went wrong', 'Could not queue the message: ' + error.message, { okOnly: true, danger: true }); return; }
+  await logAction('vendor_messages', data.id, 'create', `Queued initial order-placed email to ${vendor.vendor_name || 'vendor'}`, null, data);
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await showConfirmModal('Queued', `Email to ${vendor.vendor_name || 'the vendor'} is queued — it'll go out on the next send cycle (usually within a few minutes).`, { okOnly: true });
+}
+
 function showVendorMessagePopup(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
@@ -2075,7 +2156,7 @@ async function showAddOrderMenu() {
   // ones are visibly tagged "(inactive)" in the picker rather than silently hidden.
   const [{ data: products }, { data: vendors }] = await Promise.all([
     sb.from('products').select('id, sku_code, display_name, is_active'),
-    sb.from('vendors').select('id, vendor_name, vendor_type').order('vendor_name'),
+    sb.from('vendors').select('id, vendor_name, vendor_type, contact_email, contact_name').order('vendor_name'),
   ]);
   window._addOrderLookups = {
     products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
@@ -2294,6 +2375,16 @@ async function createNewOrder(type) {
   const product = (window._addOrderLookups.products || []).find(p => p.id === productId);
   await logAction('inventory_ledger', inserted.id, 'create', `Added new component order: ${product?.display_name || 'order'}, ${qty.toLocaleString()} units`, null, inserted);
   await Promise.all([renderOverview(), renderComponents(), window._revState ? renderRevenue() : null]);
+
+  // Alex (2026-11-12): "I'd like for all necessary test data to be set up so that when I generate
+  // an order it will prompt me for if I want to send the initial email to the component vendor
+  // and I do it from the dashboard itself." Only prompts when the vendor actually has a contact
+  // email on file -- no dead-end popup for a vendor with nothing to send to. Never auto-sends;
+  // this only queues the email on an explicit "Send Email" click in the popup it opens.
+  const vendor = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
+  if (vendor?.contact_email) {
+    await offerSendOrderPlacedEmail(inserted, vendor, componentName);
+  }
 }
 
 function showRecActionsMenu(recId, btnEl) {
@@ -2947,7 +3038,7 @@ async function orderComponentFromComponentsTab(componentId, productId) {
   if (!window._addOrderLookups) {
     const [{ data: products }, { data: vendors }] = await Promise.all([
       sb.from('products').select('id, sku_code, display_name, is_active'),
-      sb.from('vendors').select('id, vendor_name').order('vendor_name'),
+      sb.from('vendors').select('id, vendor_name, contact_email, contact_name').order('vendor_name'),
     ]);
     window._addOrderLookups = {
       products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
