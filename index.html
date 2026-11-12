@@ -7040,8 +7040,16 @@ function renderRevenueBody() {
       const isFinishedGoodDisplay = (o) => o.order_type !== 'componentry' || /patch|sock/i.test(o.component_name || '');
       const hasFinishedGoodLanding = landingOrders.some(isFinishedGoodDisplay);
       const hasComponentLanding = landingOrders.some(o => !isFinishedGoodDisplay(o));
+      // Bug found 2026-11-12 (Alex's live click test): the onclick attribute was built with
+      // JSON.stringify() producing double quotes INSIDE a double-quoted HTML attribute, which
+      // silently truncated the handler at the first stray quote -- the badge rendered and looked
+      // clickable but its real onclick never actually ran; a click fell through to the parent
+      // button's showThroughputDetail instead. Fixed by using single-quoted onclick attributes
+      // and a package-icon-specific helper (packageIconHtml) that escapes its own string args.
+      const packageIconHtml = (color, label, productId, month, wantFinishedGood) =>
+        `<span title="${label} — click for details" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:${color}; font-size:12px; line-height:1; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.3);" onclick='event.stopPropagation(); showLandingIconDetail(${JSON.stringify(productId)}, ${JSON.stringify(month)}, ${wantFinishedGood})'>📦</span>`;
       const packageIcons = landingOrders.length
-        ? `<span style="position:absolute; bottom:-8px; right:-8px; display:flex; gap:2px; z-index:2;">${hasFinishedGoodLanding ? '<span title="Finished-good PO landing this month — click for details" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--good-text); font-size:12px; line-height:1; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.3);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',true)">📦</span>' : ''}${hasComponentLanding ? '<span title="Componentry PO landing this month — click for details" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--accent-light); font-size:12px; line-height:1; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.3);" onclick="event.stopPropagation(); showLandingIconDetail(' + JSON.stringify(p.product_id) + ',' + JSON.stringify(m) + ',false)">📦</span>' : ''}</span>`
+        ? `<span style="position:absolute; bottom:-8px; right:-8px; display:flex; gap:2px; z-index:2;">${hasFinishedGoodLanding ? packageIconHtml('var(--good-text)', 'Finished-good PO landing this month', p.product_id, m, true) : ''}${hasComponentLanding ? packageIconHtml('var(--accent-light)', 'Componentry PO landing this month', p.product_id, m, false) : ''}</span>`
         : '';
       return `<button class="btn btn-ghost" style="position:relative; padding:4px 12px 12px 6px; font-size:12px; display:flex; flex-direction:column; align-items:center; line-height:1.25; background:${bg}; color:${color}; border-color:transparent; overflow:visible;" onclick="showThroughputDetail('${p.product_id}','${m}')" title="${monthLabelLong(m)}${i === 0 ? ' — month in progress, projected from today' : ' — projected end-of-month'}">
         <span><strong>${Math.round(eom).toLocaleString()}</strong></span>
