@@ -898,8 +898,6 @@ function scrollToOrderRow(ledgerId) {
   if (overviewTabBtn && !overviewTabBtn.classList.contains('active')) overviewTabBtn.click();
   document.getElementById('filter-product').value = 'all';
   document.getElementById('filter-type').value = 'all';
-  document.getElementById('filter-order-status').value = 'all';
-  document.getElementById('filter-contact-date').value = '';
   window._needsActionFilter = false;
   const toggleBtn = document.getElementById('needs-action-toggle-btn');
   if (toggleBtn) { toggleBtn.textContent = '⚑ Show Needs-Attention Only'; toggleBtn.className = 'btn btn-ghost'; }
@@ -1296,25 +1294,6 @@ async function renderOverview() {
             <option value="componentry">Component</option>
           </select>
         </label>
-        <label style="font-size:14px; font-weight:500;">Status:
-          <select id="filter-order-status" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
-            <option value="all">All</option>
-            <option value="committed">Committed</option>
-            <option value="paused">Paused</option>
-          </select>
-        </label>
-        <label style="font-size:14px; font-weight:500;">Contact Status:
-          <select id="filter-contact-date" onchange="applyOpenOrdersFilter()" style="margin-left:6px; padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-family:'Inter';">
-            <option value="">All</option>
-            <option value="needs_attention">Needs Attention</option>
-            <option value="awaiting_reply">Awaiting Reply</option>
-            <option value="pending_draft">Pending Approval</option>
-            <option value="due_today">Due Today</option>
-            <option value="scheduled">Scheduled</option>
-            <option value="healthy">Healthy</option>
-            <option value="not_contacted">Not Contacted</option>
-          </select>
-        </label>
         <button class="btn ${window._needsActionFilter !== false ? 'btn-primary' : 'btn-ghost'}" id="needs-action-toggle-btn" style="padding:5px 10px; font-size:13px;" onclick="toggleNeedsActionFilter()" title="${window._needsActionFilter !== false ? 'Currently filtered to items needing attention' : 'Currently showing every open order'}">⚑ ${window._needsActionFilter !== false ? 'Show All Orders' : 'Show Needs-Attention Only'}</button>
       </div>
     </div>
@@ -1332,12 +1311,8 @@ async function renderOverview() {
   // Preserve filter selections across re-renders (e.g. after an action) instead of resetting them.
   const prevProduct = window._filterState?.product || 'all';
   const prevType = window._filterState?.type || 'all';
-  const prevStatus = window._filterState?.status || 'all';
-  const prevContactDate = window._filterState?.contactDate || ''; // default null/empty per Alex's request
   productSelect.innerHTML = '<option value="all">All products</option>' + uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${sku === prevProduct ? 'selected' : ''}>${name} (${sku})</option>`).join('');
   document.getElementById('filter-type').value = prevType;
-  document.getElementById('filter-order-status').value = prevStatus;
-  document.getElementById('filter-contact-date').value = prevContactDate;
   if (window._needsActionFilter === undefined) window._needsActionFilter = true;
 
   applyOpenOrdersFilter();
@@ -1393,16 +1368,12 @@ function applyOpenOrdersFilter() {
   const all = window._openOrdersCache || [];
   const productFilter = document.getElementById('filter-product').value;
   const typeFilter = document.getElementById('filter-type').value;
-  const statusFilter = document.getElementById('filter-order-status').value; // per Alex: moved off the table into a filter, like Product/Order Type
-  const contactDateFilter = document.getElementById('filter-contact-date').value; // '' = no filter (default null, per Alex's request)
   const onlyAction = window._needsActionFilter !== false;
-  window._filterState = { product: productFilter, type: typeFilter, status: statusFilter, contactDate: contactDateFilter };
+  window._filterState = { product: productFilter, type: typeFilter };
 
   const filtered = all.filter(o => {
     if (productFilter !== 'all' && o.product_sku !== productFilter) return false;
     if (typeFilter !== 'all' && o.order_type !== typeFilter) return false;
-    if (statusFilter !== 'all' && (statusFilter === 'paused') !== (o.order_status === 'paused')) return false;
-    if (contactDateFilter && contactStatus(o).key !== contactDateFilter) return false;
     if (onlyAction && o.action_needed === 'On Track') return false;
     return true;
   });
@@ -1774,6 +1745,13 @@ function buildOrderPlacedSubject(o) {
   return `Order placed — ${humanizeItemLabel(itemLabel)}${refPart}${tokenPart}`;
 }
 
+// Alex (2026-11-12): "The email itself if it's an order being initiated should be requesting
+// that the order be initiated and ask for confirmation of specifically the landing date, order
+// number, requesting proactive communication if any delays occur, ask to validate the price,
+// payment terms, and ask for the invoice to be sent to TLAccounting@spindle.ventures." Replaces
+// the shorter round-32/33 wording with this explicit checklist -- still ends on the "let us know
+// if anything's off" open door, but every specific ask Alex named is now its own line so nothing
+// gets missed in the vendor's reply, and each stays easy to find/grep in the thread later.
 function buildOrderPlacedBody(o) {
   const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
   const itemPhrase = humanizeItemLabel(itemLabel);
@@ -1784,8 +1762,12 @@ function buildOrderPlacedBody(o) {
   const etaStr = o.eta ? plainDate(o.eta) : 'no ETA set yet';
   return (
     `${greeting}\n\n${refLine}` +
-    `We've just placed an order for ${qtyFmt}${itemPhrase}, targeting ${etaStr}.\n\n` +
-    `Can you confirm you've received this and that date works? Let us know if anything's off.\n\n` +
+    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}. Could you confirm the following?\n\n` +
+    `- Landing date: is ${etaStr} still accurate?\n` +
+    `- Your order/confirmation number for this order\n` +
+    `- Price and payment terms for this order\n\n` +
+    `Please let us know proactively if anything changes or a delay comes up on your end -- the earlier we hear about it, the better we can plan around it.\n\n` +
+    `Once invoicing is ready, please send it to TLAccounting@spindle.ventures.\n\n` +
     `Thanks,\nThird Layer`
   );
 }
@@ -1795,6 +1777,7 @@ function buildOrderPlacedBody(o) {
 // it entirely. Never auto-sends: a real send only happens on an explicit "Send Email" click here
 // (Alex alone decides when a vendor-facing message actually goes out -- standing rule).
 function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
+  window._addOrderWizard = { step: 3 };
   const o = {
     order_type: 'componentry',
     component_name: itemLabel,
@@ -1814,6 +1797,7 @@ function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
         <input id="order-placed-email-to" type="email" placeholder="vendor@example.com" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
       </label>`;
   const bodyHtml = `
+    ${addOrderStepperHtml()}
     ${recipientHtml}
     <label style="display:block; font-size:13px; margin-bottom:4px;">Subject<br>
       <input id="order-placed-email-subject" type="text" value="${subject.replace(/"/g, '&quot;')}" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border); box-sizing:border-box;" />
@@ -1841,7 +1825,12 @@ async function sendOrderPlacedEmailNow(ledgerId, vendorId) {
     trigger_type: 'order_placed', proposed_by: 'dashboard',
   }).select().single();
   if (error) { await showConfirmModal('Something went wrong', 'Could not queue the message: ' + error.message, { okOnly: true, danger: true }); return; }
-  await logAction('vendor_messages', data.id, 'create', `Queued initial order-placed email to ${vendor?.vendor_name || toEmail}`, null, data);
+  // Alex (2026-11-12): "There are duplicative alerts at the bottom of the screen. I like the
+  // green one better." Root cause: logAction()'s default showUndoToast() (brown, with an Undo
+  // button) was firing at the same moment as showQueuedToast() (green) below -- two banners for
+  // one action. Silenced here (opts.silent) since queuing an email isn't an "undo a DB row"
+  // action anyway; showQueuedToast() is the one and only bottom banner for this action now.
+  await logAction('vendor_messages', data.id, 'create', `Queued initial order-placed email to ${vendor?.vendor_name || toEmail}`, null, data, { silent: true });
   // Alex (2026-11-12): "when I hit 'send email', the screen should move towards something that
   // says the email has been queue'ed to be sent in addition to the email banner notification at
   // the bottom." Two distinct confirmations, not either/or: the SAME modal transitions in place
@@ -1865,11 +1854,14 @@ async function sendOrderPlacedEmailNow(ledgerId, vendorId) {
 // Bottom banner notification -- separate from the in-place modal confirmation above, per Alex's
 // "in addition to" wording. Reuses the same bottom-fixed toast position as the undo toasts but
 // with no Undo action (this isn't reversible the same way a DB row create/delete is).
+// Alex (2026-11-12): "I like the green one better, just adjust the shape" -- switched from a
+// rectangular banner (border-radius:8px) to the same fully-rounded pill shape (border-radius:
+// 999px) every other status indicator in this dashboard already uses (see .pill in <style>).
 function showQueuedToast(message) {
   document.getElementById('queued-toast')?.remove();
   const toast = document.createElement('div');
   toast.id = 'queued-toast';
-  toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--good-text, #2f6b3f); color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; display:flex; align-items:center; gap:12px; z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,0.35); max-width:520px;';
+  toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--good-bg, #e4f3e6); color:var(--good-text, #2f6b3f); padding:8px 18px; border-radius:999px; font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px; z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,0.2); max-width:520px; border:1px solid var(--good-text, #2f6b3f);';
   toast.innerHTML = `<span>✉️ ${message}</span>`;
   document.body.appendChild(toast);
   setTimeout(() => { if (document.getElementById('queued-toast') === toast) toast.remove(); }, 5000);
@@ -1891,7 +1883,6 @@ function showVendorMessagePopup(ledgerId) {
       <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="copyVendorMessage()">Copy message</button>
       ${o.vendor_contact_email ? `<a class="btn btn-ghost" style="padding:6px 12px; font-size:13px; text-decoration:none;" href="mailto:${o.vendor_contact_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}">Open in my own email instead</a>` : ''}
       <span id="vendor-message-copied" class="muted" style="font-size:13px; align-self:center; display:none;">Copied ✓</span>
-      <span id="vendor-message-sent" class="muted" style="font-size:13px; align-self:center; display:none; color:var(--good-text);">Queued to send ✓ (TLSupplyChain@spindle.ventures)</span>
     </div>
   `;
   showDetail(`Message for ${o.vendor_name || 'vendor'}`, body);
@@ -1912,9 +1903,11 @@ async function sendVendorMessageNow(ledgerId) {
     direction: 'outbound', subject, body, to_email: o.vendor_contact_email, status: 'queued',
   }).select().single();
   if (error) { await showConfirmModal('Something went wrong', 'Could not queue the message: ' + error.message, { okOnly: true, danger: true }); return; }
-  await logAction('vendor_messages', data.id, 'create', `Queued an outbound email to ${o.vendor_name || 'vendor'} for ${o.product_name}`, null, data);
-  const note = document.getElementById('vendor-message-sent');
-  if (note) { note.style.display = 'inline'; setTimeout(() => { note.style.display = 'none'; }, 4000); }
+  // Alex (2026-11-12): "duplicative alerts at the bottom... I like the green one better." This
+  // path had THREE separate "it's queued" indicators firing at once (an inline <span> note,
+  // logAction()'s default brown undo-toast, and the green showQueuedToast()) -- down to just the
+  // one green toast now, same as the order-placed email screen.
+  await logAction('vendor_messages', data.id, 'create', `Queued an outbound email to ${o.vendor_name || 'vendor'} for ${o.product_name}`, null, data, { silent: true });
   showQueuedToast(`Queued email to ${o.vendor_name || 'vendor'}`);
 }
 
@@ -2265,6 +2258,12 @@ function renderOpenOrderRow(o, editing) {
 
 async function showAddOrderMenu() {
   if (!canEdit()) return;
+  // Alex (2026-11-12): "the screenflow feel when you add a product should be the same
+  // progressing to the email from the order placement." Reuses the SAME generic
+  // wizardStepLabel() stepper the New Product/Bundle/Vendor/Component wizards already use, so
+  // Add Order reads as one continuous 3-step screenflow (Order Type -> Details -> Email) rather
+  // than a sequence of separate, visually-disconnected popups.
+  window._addOrderWizard = { step: 1 };
   // Alex (2026-11-11): "the dropdown should contain all products (right now it's missing the
   // deodorant)" -- root cause: this lookup only loaded `is_active=true` products, and the
   // Deodorant SKUs (+ Silicone Socks) are marked inactive. Now loads every product; inactive
@@ -2284,13 +2283,27 @@ async function showAddOrderMenu() {
     // they're the only two landing destinations Alex has described.
     landingDestVendors: (vendors || []).filter(v => v.vendor_name === 'Private Label' || v.vendor_name === 'Bollweg Logistics'),
   };
+  const stepperHtml = addOrderStepperHtml();
   const body = `
+    ${stepperHtml}
     <div style="display:flex; gap:10px;">
-      <button class="btn btn-primary" style="flex:1; padding:14px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showAddOrderForm('finished_good')">Finished Good</button>
-      <button class="btn btn-primary" style="flex:1; padding:14px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showAddOrderForm('componentry')">Component Order</button>
+      <button class="btn btn-primary" style="flex:1; padding:14px;" onclick="showAddOrderForm('finished_good')">Finished Good</button>
+      <button class="btn btn-primary" style="flex:1; padding:14px;" onclick="showAddOrderForm('componentry')">Component Order</button>
     </div>
   `;
   showDetail('Add Order — Which type?', body);
+}
+
+// Shared 3-step stepper bar (Order Type -> Details -> Email) shown atop every Add Order screen,
+// built from the same wizardStepLabel() helper the New Product/Bundle/Vendor/Component wizards
+// use so the whole screenflow reads as one continuous experience, not disconnected popups.
+function addOrderStepperHtml() {
+  const w = window._addOrderWizard || { step: 1 };
+  return `
+    <div style="display:flex; justify-content:space-between; gap:6px; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+      ${wizardStepLabel(w, 1, 'Order Type')}${wizardStepLabel(w, 2, 'Details')}${wizardStepLabel(w, 3, 'Email')}
+    </div>
+  `;
 }
 
 // Alex (2026-11-11): "I should be able to create one PO for multiple products so the picklist
@@ -2302,6 +2315,7 @@ async function showAddOrderMenu() {
 // identifier: selecting N products and submitting creates N separate inventory_ledger rows, all
 // carrying the same order number/vendor/ETA/tracking/notes, one row per product with its own qty.
 async function showAddOrderForm(type) {
+  window._addOrderWizard = { step: 2 };
   const { products, vendors } = window._addOrderLookups || { products: [], vendors: [] };
   let components = [];
   if (type === 'componentry') {
@@ -2337,6 +2351,7 @@ async function showAddOrderForm(type) {
     `;
 
   const body = `
+    ${addOrderStepperHtml()}
     <div style="display:flex; flex-direction:column; gap:10px; font-size:14px;">
       ${productFieldHtml}
       <label>Vendor<br>
