@@ -328,8 +328,9 @@
       <span class="role-badge" id="user-badge"></span>
       <span class="snapshot-pill" id="snapshot-pill">Loading…</span>
       <button class="btn btn-ghost" id="comms-alert-btn" style="display:none; position:relative;" onclick="showCommsAlertsPopup()" title="Unreviewed vendor replies">
-        ✉️ Comms Alerts <span id="comms-alert-count" class="pill bad" style="margin-left:4px;">0</span>
+        ✉️ Alerts <span id="comms-alert-count" class="pill bad" style="margin-left:4px;">0</span>
       </button>
+      <button class="btn btn-ghost" id="refresh-data-btn" onclick="refreshAllData()" title="Reload all data without a full page refresh">⟳ Refresh</button>
       <button class="btn btn-primary" id="header-add-order-btn" style="display:none;" onclick="showAddOrderMenu()">+ Add Order</button>
       <button class="btn btn-ghost" onclick="signOut()">Sign out</button>
     </div>
@@ -460,9 +461,11 @@ let commsAlertChannel = null;
 // reply lands (vendor_email_sync.py's poll_inbound() writing the row triggers this immediately,
 // no polling/refresh needed) -- same realtime pattern already used for the Manny chat panel.
 async function refreshCommsAlertCount() {
-  const { count } = await sb.from('vendor_messages').select('id', { count: 'exact', head: true })
-    .eq('direction', 'inbound').is('reviewed_at', null);
-  const n = count || 0;
+  const [{ count: replyCount }, { count: pendingCount }] = await Promise.all([
+    sb.from('vendor_messages').select('id', { count: 'exact', head: true }).eq('direction', 'inbound').is('reviewed_at', null),
+    sb.from('pending_field_updates').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+  ]);
+  const n = (replyCount || 0) + (pendingCount || 0);
   const badge = document.getElementById('comms-alert-count');
   if (badge) {
     badge.textContent = n;
@@ -481,19 +484,42 @@ function initCommsAlerts() {
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'vendor_messages' }, () => {
       refreshCommsAlertCount();
     })
+    // Alex (2026-11-12, round 37): "There should probably be some approval flow for data
+    // confirmation... both Slack and/or the platform." Pending field updates (PO#/tracking/ETA
+    // extracted from a reply) count toward the SAME header tally and show in the SAME Alerts
+    // popup as unreviewed replies -- one combined "things needing your attention" surface.
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pending_field_updates' }, () => {
+      refreshCommsAlertCount();
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'pending_field_updates' }, () => {
+      refreshCommsAlertCount();
+    })
     .subscribe();
 }
 
-// Popup listing every unreviewed inbound reply -- clicking "Mark Reviewed" on one (or "Mark All
-// Reviewed") sets reviewed_at, which the realtime subscription above picks up immediately and
-// decrements the header count without needing a manual refresh.
+const PENDING_FIELD_LABELS = {
+  vendor_order_number: "Vendor's Order #",
+  tracking_info: 'Tracking Info',
+  eta: 'ETA',
+};
+
+// Popup listing every unreviewed inbound reply AND every pending field update (PO#/tracking/ETA
+// extracted from a reply, awaiting approval) -- clicking "Mark Reviewed"/"Approve"/"Reject" on
+// one (or the bulk actions) updates the relevant row, which the realtime subscriptions above
+// pick up immediately and decrement the header count without needing a manual refresh.
 async function showCommsAlertsPopup() {
-  const { data: alerts } = await sb.from('vendor_messages')
-    .select('id, vendor_id, ledger_id, subject, ai_summary, body, created_at, parsed_status, vendors(vendor_name)')
-    .eq('direction', 'inbound').is('reviewed_at', null).order('created_at', { ascending: false });
+  const [{ data: alerts }, { data: pendingFields }] = await Promise.all([
+    sb.from('vendor_messages')
+      .select('id, vendor_id, ledger_id, subject, ai_summary, body, created_at, parsed_status, vendors(vendor_name)')
+      .eq('direction', 'inbound').is('reviewed_at', null).order('created_at', { ascending: false }),
+    sb.from('pending_field_updates')
+      .select('id, ledger_id, field_name, proposed_value, previous_value, created_at, inventory_ledger(vendor_id, vendors(vendor_name))')
+      .eq('status', 'pending').order('created_at', { ascending: false }),
+  ]);
   const rows = alerts || [];
-  if (!rows.length) {
-    showDetail('Comms Alerts', '<div class="empty-state" style="padding:14px;">No unreviewed vendor replies right now.</div>');
+  const pending = pendingFields || [];
+  if (!rows.length && !pending.length) {
+    showDetail('Alerts', '<div class="empty-state" style="padding:14px;">No unreviewed vendor replies or pending data updates right now.</div>');
     return;
   }
   const statusPill = (s) => {
@@ -515,13 +541,34 @@ async function showCommsAlertsPopup() {
       </div>
     </div>
   `).join('');
+  const pendingHtml = pending.map(p => {
+    const vendorName = p.inventory_ledger?.vendors?.vendor_name || 'Vendor';
+    const label = PENDING_FIELD_LABELS[p.field_name] || p.field_name;
+    const prevStr = p.previous_value || '(none on file)';
+    return `
+      <div style="padding:10px 0; border-bottom:1px solid var(--border);">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px;">
+          <strong style="font-size:13px;">${vendorName}</strong>
+          <span class="pill watch" style="font-size:11px;">Data Update</span>
+        </div>
+        <div class="muted" style="font-size:12px; margin:2px 0;">${fmtDateTime(p.created_at)}</div>
+        <div style="font-size:13px; margin:4px 0;">${label}: <span style="text-decoration:line-through; color:var(--muted);">${prevStr}</span> → <strong>${p.proposed_value}</strong></div>
+        <div style="display:flex; gap:6px; margin-top:6px;">
+          <button class="btn btn-primary" style="padding:3px 8px; font-size:12px;" onclick="decidePendingFieldUpdate('${p.id}', 'approved')">Approve</button>
+          <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="decidePendingFieldUpdate('${p.id}', 'rejected')">Reject</button>
+          ${p.ledger_id ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showContactScheduleDetail('${p.ledger_id}')">Open Thread</button>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
   const body = `
-    <div style="margin-bottom:8px;">
-      <button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="markAllCommsAlertsReviewed()">Mark All Reviewed</button>
+    <div style="margin-bottom:8px; display:flex; gap:8px;">
+      ${rows.length ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:13px;" onclick="markAllCommsAlertsReviewed()">Mark All Replies Reviewed</button>` : ''}
     </div>
-    ${rowsHtml}
+    ${rows.length ? `<div class="section-label" style="margin-bottom:4px;">Unreviewed Replies (${rows.length})</div>${rowsHtml}` : ''}
+    ${pending.length ? `<div class="section-label" style="margin:14px 0 4px;">Pending Data Updates (${pending.length})</div>${pendingHtml}` : ''}
   `;
-  showDetail(`Comms Alerts (${rows.length})`, body, 'wide');
+  showDetail(`Alerts (${rows.length + pending.length})`, body, 'wide');
 }
 
 async function markCommsAlertReviewed(id) {
@@ -535,6 +582,28 @@ async function markAllCommsAlertsReviewed() {
   await sb.from('vendor_messages').update({ reviewed_at: new Date().toISOString() }).eq('direction', 'inbound').is('reviewed_at', null);
   await refreshCommsAlertCount();
   document.getElementById('detail-modal-backdrop')?.remove();
+}
+
+// Alex (2026-11-12, round 37): dashboard side of the pending-field-update approval flow (the
+// Slack card posted by vendor_email_sync.py's post_pending_field_update_card() is the other
+// surface for the same decision). Approving writes the proposed value to the real
+// inventory_ledger row; rejecting just marks the row decided with nothing written.
+const PENDING_FIELD_COLUMN = { vendor_order_number: 'vendor_order_number', tracking_info: 'tracking_info', eta: 'eta' };
+async function decidePendingFieldUpdate(id, decision) {
+  const { data: rows } = await sb.from('pending_field_updates').select('*').eq('id', id).limit(1);
+  const row = rows?.[0];
+  if (!row || row.status !== 'pending') { await showConfirmModal('Already handled', 'This data update is no longer pending.', { okOnly: true }); showCommsAlertsPopup(); return; }
+  if (decision === 'approved') {
+    const column = PENDING_FIELD_COLUMN[row.field_name];
+    if (column) {
+      const { error } = await sb.from('inventory_ledger').update({ [column]: row.proposed_value }).eq('id', row.ledger_id);
+      if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
+    }
+  }
+  await sb.from('pending_field_updates').update({ status: decision, decided_by: currentUserRow?.email || 'dashboard', decided_at: new Date().toISOString() }).eq('id', id);
+  await Promise.all([refreshCommsAlertCount(), renderOverview()]);
+  document.getElementById('detail-modal-backdrop')?.remove();
+  showCommsAlertsPopup();
 }
 
 // Alex (2026-10-27): "buttons under each section" -- the daily digest's Landing-section button
@@ -680,6 +749,31 @@ function restoreActiveTab() {
   btn.classList.add('active');
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
   document.getElementById('tab-' + saved).classList.remove('hidden');
+}
+
+// Alex (2026-11-12): "I'd like a refresh data button, and I'd like ideally if the screen didn't
+// have to totally refresh." Re-runs the same render calls loadApp() does on initial load (each
+// one re-queries Supabase and replaces its own tab's DOM in place) instead of window.location.
+// reload() -- no full page reload, no lost scroll position/open popups on OTHER tabs, and the
+// currently active tab is preserved throughout.
+async function refreshAllData() {
+  const btn = document.getElementById('refresh-data-btn');
+  const savedTab = (() => { try { return sessionStorage.getItem('tl_active_tab'); } catch (e) { return null; } })();
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Refreshing…'; }
+  try {
+    await Promise.all([renderOverview(), renderRevenue(), renderLandedOrders(), renderComponents(), renderActivityLog(), renderCatalog()]);
+    await refreshCommsAlertCount();
+    document.getElementById('snapshot-pill').textContent = `Refreshed ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⟳ Refresh'; }
+    // renderOverview()/renderCatalog() etc. rebuild their own tab's DOM but don't touch which
+    // tab panel is visible -- re-apply the saved active tab so a refresh never silently jumps
+    // the user back to Overview.
+    if (savedTab) {
+      const tabBtn = document.querySelector(`.tab-btn[data-tab="${savedTab}"]`);
+      if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.click();
+    }
+  }
 }
 
 function fmtMoney(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
@@ -1763,7 +1857,7 @@ function buildOrderPlacedBody(o) {
   return (
     `${greeting}\n\n${refLine}` +
     `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}. Could you confirm the following?\n\n` +
-    `- Landing date: is ${etaStr} still accurate?\n` +
+    `- Is a landing date of ${etaStr} doable on your end?\n` +
     `- Your order/confirmation number for this order\n` +
     `- Price and payment terms for this order\n\n` +
     `Please let us know proactively if anything changes or a delay comes up on your end -- the earlier we hear about it, the better we can plan around it.\n\n` +
@@ -1875,7 +1969,12 @@ function showVendorMessagePopup(ledgerId) {
   const contactLine = o.vendor_contact_email
     ? `<div class="muted" style="font-size:13px; margin-bottom:8px;">To: ${o.vendor_contact_name ? o.vendor_contact_name + ' — ' : ''}${o.vendor_contact_email}</div>`
     : `<div class="muted" style="font-size:13px; margin-bottom:8px;">No contact email on file for ${o.vendor_name || 'this vendor'} — add one on the Components tab's vendor list.</div>`;
+  // Alex (2026-11-12): "If I hit compose/send email I should be able to get back to the
+  // previous popup screen." Compose is always reached FROM the Contact Schedule popup now (the
+  // standalone "Thread" button that opened this directly was removed in round 35) -- a "← Back"
+  // link returns there instead of leaving a dead end once this modal closes.
   const body = `
+    <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px; margin-bottom:10px;" onclick="showContactScheduleDetail('${ledgerId}')">← Back</button>
     ${contactLine}
     <textarea id="vendor-message-text" style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical;">${message}</textarea>
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
@@ -1996,7 +2095,16 @@ function contactStatus(o) {
     if (daysSinceSent >= 3) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
     return { key: 'awaiting_reply', label: 'Awaiting Reply', cls: 'watch' };
   }
-  const pendingDraft = msgs.filter(m => m.direction === 'outbound' && (m.status === 'proposed' || m.status === 'queued'))[0];
+  const pendingDraft = msgs.filter(m => m.direction === 'outbound' && (m.status === 'proposed' || m.status === 'queued'))
+    // Alex (2026-11-12): "When I click send email from the order creation that should serve as
+    // the approval. I'm not sure why it's sitting in 'Pending Approval'." Root cause: the
+    // automated order_placed cron trigger can propose its OWN 'proposed' draft for the same
+    // order in the same window before a human clicks Send on the dashboard's own screen (which
+    // inserts straight to 'queued' -- already-approved). Whichever row this filter found FIRST
+    // (array order, not relevance) used to win -- prefer 'queued' over 'proposed' explicitly so
+    // an already-approved send is never shown as still pending just because an older proposed
+    // row happens to sort first.
+    .sort((a, b) => (a.status === 'queued' ? -1 : 1) - (b.status === 'queued' ? -1 : 1))[0];
   if (pendingDraft) return { key: 'pending_draft', label: pendingDraft.status === 'queued' ? 'Approved — Sending' : 'Pending Approval', cls: 'watch' };
   if (o.next_contact && o.next_contact < today) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
   if (dueToday) return { key: 'due_today', label: 'Due Today', cls: 'watch' };
@@ -2112,62 +2220,39 @@ async function showContactScheduleDetail(ledgerId) {
   const scheduleStatus = contactStatus(o);
   // Alex (2026-11-12): "Contact status should be more prominent and first" + "it should have
   // something about the last date which was contacted on." Large status pill + last-contacted
-  // date now form the header of the popup, above the 2-sentence summary (previously the status
-  // was buried in a small line near the bottom under "Contact Schedule").
-  const lastContactedLine = o.last_contacted
-    ? `Last contacted: <strong>${fmtDate(o.last_contacted)}</strong>`
-    : `<span class="muted">Never contacted yet</span>`;
-  const scheduleLine = `Contact status: <span class="pill ${scheduleStatus.cls}" style="font-size:11px;">${scheduleStatus.label}</span>`;
+  // date form the header of the popup, above the 2-sentence summary.
+  // Alex (2026-11-12, round 37): "The 'Log a Contact' and 'Set Next Contact' functions should
+  // go away and be automatically logged within the email correspondence. The Next Contact
+  // should be auto calculated and to the right of 'Last Contacted'. Let's reorganize the contact
+  // popup to be status information towards the top but then the summarized threads below."
+  // next_contact is now set automatically by vendor_email_sync.py on every inbound reply
+  // (today + this component/vendor's contact cadence) -- no manual editor needed, and the two
+  // dates sit side by side here instead of Next Contact living in a separate "Contact Schedule"
+  // section near the bottom.
+  const lastContactedLine = o.last_contacted ? fmtDate(o.last_contacted) : '<span class="muted">Never</span>';
+  const nextContactLine = o.next_contact ? fmtDate(o.next_contact) : '<span class="muted">Not scheduled</span>';
 
   const body = `
     <div style="margin-bottom:14px;">
       <span class="pill ${scheduleStatus.cls}" style="font-size:16px; padding:6px 14px; font-weight:600;">${scheduleStatus.label}</span>
-      <div style="font-size:13px; color:var(--muted); margin-top:6px;">${lastContactedLine}</div>
+      <div style="display:flex; gap:24px; margin-top:8px; font-size:13px; color:var(--muted);">
+        <div>Last Contacted: <strong style="color:var(--ink);">${lastContactedLine}</strong></div>
+        <div>Next Contact: <strong style="color:var(--ink);">${nextContactLine}</strong></div>
+      </div>
     </div>
     <div style="font-size:14px; line-height:1.5; margin-bottom:14px; padding:10px 12px; border-radius:8px; background:var(--card-bg, #f5f5f5); border:1px solid var(--border);">${summary}</div>
+    <div style="font-size:13px; margin-bottom:4px;">Vendor's order #: ${o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>'}</div>
+    <div style="font-size:13px; margin-bottom:14px;">Landing destination: ${o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>'} <span class="muted" style="font-size:11px;">(set at order creation)</span></div>
     <div class="section-label" style="margin-bottom:6px;">Email Thread</div>
     ${threadSection}
     ${canEdit() ? `
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn btn-primary" style="font-size:13px;" onclick="document.getElementById('detail-modal-backdrop').remove(); showVendorMessagePopup('${ledgerId}')">Compose / Send Email</button>
-      </div>
-    ` : ''}
-    <div class="section-label" style="margin:16px 0 6px;">Contact Schedule</div>
-    <div style="font-size:13px; margin-bottom:8px;">${scheduleLine}${o.notes ? ` — last note: "${o.notes}"` : ''}</div>
-    <div style="font-size:13px; margin-bottom:8px;">Vendor's order #: ${o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>'}</div>
-    <div style="font-size:13px; margin-bottom:8px;">Landing destination: ${o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>'} <span class="muted" style="font-size:11px;">(set at order creation)</span></div>
-    ${canEdit() ? `
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); editLastContact('${ledgerId}')">Log a contact</button>
-        <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); editNextContact('${ledgerId}')">Set next contact</button>
-        <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop').remove(); editVendorOrderNumber('${ledgerId}')">Set vendor's order #</button>
+        <button class="btn btn-primary" style="font-size:13px;" onclick="showVendorMessagePopup('${ledgerId}')">Compose / Send Email</button>
+        <button class="btn btn-ghost" style="font-size:13px;" onclick="document.getElementById('detail-modal-backdrop').remove(); editVendorOrderNumber('${ledgerId}')">Set vendor's order #</button>
       </div>
     ` : ''}
   `;
   showDetail(`${o.product_name} — Contact Schedule with ${vendorLabel}`, body, 'wide');
-}
-
-async function editLastContact(ledgerId) {
-  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
-  if (!o) return;
-  const dateVal = await promptDateMMDDYYYY('Date of this contact', o.last_contacted);
-  if (dateVal === null) return;
-  const resultVal = await showPromptModal('Result of this contact', 'What did they say?', o.notes || '', 'textarea');
-  if (resultVal === null) return;
-  const ok = await mutateLedgerRow(ledgerId, { last_contacted: dateVal, notes: resultVal || null }, `Logged a contact for ${o.product_name}`);
-  if (ok) await renderOverview();
-}
-
-async function editNextContact(ledgerId) {
-  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
-  if (!o) return;
-  // Alex (2026-10-22): "when I hit 'Set next Contact' it should default the calendar to today."
-  // If a contact date is already scheduled, keep showing it (editing); otherwise default to today
-  // instead of a blank picker, since today is the natural starting point for a new schedule.
-  const dateVal = await promptDateMMDDYYYY('Next contact date', o.next_contact || todayIso());
-  if (dateVal === null) return;
-  const ok = await mutateLedgerRow(ledgerId, { next_contact: dateVal }, `Set next contact date for ${o.product_name}`);
-  if (ok) await renderOverview();
 }
 
 function showPoNumberDetail(ledgerId) {
@@ -2595,8 +2680,8 @@ function showOrderDetailsPopup(ledgerId) {
       ${row('Status', `<span class="pill clickable-pill ${actionPillClass(o.action_needed)}">${o.action_needed}</span>`)}
       ${row('Order Status', o.order_status === 'paused' ? 'Paused' : 'Open')}
       ${row('Contact Status', renderContactScheduleCell(o))}
-      ${row('Last Contacted', o.last_contacted ? fmtDate(o.last_contacted) : '<span class="muted">never</span>', `editLastContact('${ledgerId}')`)}
-      ${row('Next Contact', o.next_contact ? fmtDate(o.next_contact) : '<span class="muted">not scheduled</span>', `editNextContact('${ledgerId}')`)}
+      ${row('Last Contacted', o.last_contacted ? fmtDate(o.last_contacted) : '<span class="muted">never</span>')}
+      ${row('Next Contact', o.next_contact ? fmtDate(o.next_contact) : '<span class="muted">not scheduled</span>')}
       ${row('Notes', o.notes || '<span class="muted">none</span>')}
     </div>
     <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
