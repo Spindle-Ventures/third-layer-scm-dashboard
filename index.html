@@ -3188,13 +3188,24 @@ async function renderComponents() {
   el.innerHTML = `<div class="card empty-state">Loading component levels…</div>`;
 
   const months = nextSixMonths();
-  const [{ data: componentQoh }, { data: componentVendors }, { data: products }, { data: revForecasts }, { data: forecastParams }, { data: activeRecs }] = await Promise.all([
+  const [{ data: componentQoh }, { data: componentVendors }, { data: products }, { data: revForecasts }, { data: forecastParams }, { data: activeRecs }, { data: inFlightOrders }, { data: landedOrders }, { data: openFgOrders }] = await Promise.all([
     sb.from('component_qoh').select('*'),
     sb.from('component_vendors').select('*, vendors(vendor_name, default_lead_days, default_cadence_days)'),
     sb.from('products').select('id, sku_code, display_name, product_type'),
     sb.from('revenue_forecasts').select('channel, forecast_month, forecast_revenue').gte('forecast_month', months[0] + '-01'),
     sb.from('forecast_params').select('channel, revenue_pct, avg_selling_price, product_id').eq('is_active', true),
     sb.from('agent_recommendations').select('product_id, urgency, last_responsible_date, recommended_order_qty, component_recs').neq('decision', 'dismissed').eq('is_test', false),
+    // Alex (2026-11-15): "How much do we have in flight? I'd like to click into this and have a
+    // box appear that shows when they land." -- per-order ETA/qty detail, not just the qty_in_flight
+    // total component_qoh already gives.
+    sb.from('inventory_ledger').select('id, component_id, qty_in, eta, order_number, vendor_order_number, vendor_id, vendors(vendor_name)').eq('event_type', 'component_order').eq('landed', false),
+    // "average of last 3 POs" -- real landed component-order history, most recent first, to
+    // compute a dynamic trailing-N average client-side (N is user-adjustable, not baked into a query).
+    sb.from('inventory_ledger').select('component_id, qty_in, event_date, order_number').eq('event_type', 'component_order').eq('landed', true).order('event_date', { ascending: false }),
+    // "are there any finished good PO's in progress or planned that will use this up" -- every
+    // open finished-good order, by product, so each component row (already 1:1 with a product in
+    // this tab's model) can show exactly which real open orders would consume it.
+    sb.from('open_orders_by_product').select('product_sku, product_name, qty, eta, internal_ref, order_status').eq('order_type', 'finished_good'),
   ]);
 
   const productBySku = {};
@@ -3237,6 +3248,17 @@ async function renderComponents() {
     });
   });
 
+  // Alex (2026-11-15): "How much do we have in flight? ... Are there any finished good PO's in
+  // progress or planned that will use this up?" each real per-order grouping, keyed by component.
+  const inFlightByComponentId = {};
+  (inFlightOrders || []).forEach(o => { (inFlightByComponentId[o.component_id] = inFlightByComponentId[o.component_id] || []).push(o); });
+  const landedByComponentId = {};
+  (landedOrders || []).forEach(o => { (landedByComponentId[o.component_id] = landedByComponentId[o.component_id] || []).push(o); });
+  // "any finished good PO's in progress or planned" -- keyed by the FG product SKU this
+  // component feeds (componentQoh already carries product_sku 1:1 per component row).
+  const openFgOrdersBySku = {};
+  (openFgOrders || []).forEach(o => { (openFgOrdersBySku[o.product_sku] = openFgOrdersBySku[o.product_sku] || []).push(o); });
+
   const rows = (componentQoh || []).map(c => {
     const product = productBySku[c.product_sku];
     const demandUnits = product
@@ -3251,7 +3273,10 @@ async function renderComponents() {
     const cadenceDays = preferred?.contact_cadence_days ?? preferred?.vendors?.default_cadence_days ?? 14;
     const status = window.RevenueLogic.componentOrderStatus({ runOutMonthIndex, leadDays, cadenceDays });
     const backendRec = product ? backendRecByProductAndComponent[`${product.id}::${c.component_name}`] : null;
-    return { c, product, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, demandUnits, consumption, startQty, backendRec };
+    const inFlightDetail = (inFlightByComponentId[c.component_id] || []).slice().sort((a, b) => (a.eta || '').localeCompare(b.eta || ''));
+    const landedHistory = (landedByComponentId[c.component_id] || []).slice(); // already event_date desc from the query
+    const openFgOrdersForProduct = openFgOrdersBySku[c.product_sku] || [];
+    return { c, product, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, demandUnits, consumption, startQty, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct };
   });
 
   // Alex (2026-11-03): this tab is built entirely by iterating raw components, so a product with
@@ -3277,6 +3302,10 @@ function renderComponentsTable() {
   const { rows, months, singleComponentNotice } = window._componentsCache || { rows: [], months: [], singleComponentNotice: '' };
   const el = document.getElementById('tab-components');
   const productFilter = window._componentsProductFilter || 'all';
+  // Alex (2026-11-15): "average of last 3 PO's and allow for us to change this number dynamically"
+  // -- one shared, adjustable N for the whole tab (not per-row), applied client-side against the
+  // real landed component_order history already in each row's landedHistory.
+  const lastNPos = window._componentsLastNPos || 3;
 
   const uniqueProducts = [...new Map(rows.filter(r => r.product).map(r => [r.product.sku_code, r.product.display_name])).entries()]
     .sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
@@ -3290,48 +3319,159 @@ function renderComponentsTable() {
   const statusPill = { ORDER_NOW: 'bad', ORDER_SOON: 'watch', OK: 'good' };
   const statusLabel = { ORDER_NOW: 'Order Now', ORDER_SOON: 'Order Soon', OK: 'OK' };
   const tableRows = filtered.map(r => {
-    const { c, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, backendRec } = r;
+    const { c, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct } = r;
     const hasShortfallSignal = backendRec && backendRec.net_need > 0;
+    const trailing = landedHistory.slice(0, lastNPos);
+    const avgPoQty = trailing.length ? Math.round(trailing.reduce((s, o) => s + (o.qty_in || 0), 0) / trailing.length) : null;
+    const fgCount = openFgOrdersForProduct.length;
     return [
+      // a. How much on hand + is a real FG PO going to use it up
       `<strong>${c.component_name}</strong>`,
-      `${c.product_name}<br><span class="muted" style="font-size:11px;">${c.product_sku}</span>`,
-      (c.qty_on_hand || 0).toLocaleString(),
-      (c.qty_in_flight || 0).toLocaleString(),
-      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px;" onclick="manageComponentVendors('${c.component_id}')">
+      `${c.product_name}<br><span class="muted" style="font-size:12px;">${c.product_sku}</span>`,
+      `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentOnHandDetail('${c.component_id}')">
+        ${(c.qty_on_hand || 0).toLocaleString()}${fgCount ? ` <span class="muted" style="font-size:12px;">(${fgCount} FG PO${fgCount === 1 ? '' : 's'})</span>` : ''}
+      </button>`,
+      // b. How much in flight, click to see when they land + same FG-PO cross-reference
+      `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentInFlightDetail('${c.component_id}')">
+        ${(c.qty_in_flight || 0).toLocaleString()}${inFlightDetail.length ? ` <span class="muted" style="font-size:12px;">(${inFlightDetail.length} order${inFlightDetail.length === 1 ? '' : 's'})</span>` : ''}
+      </button>`,
+      // c. Size of a potential PO at current levels -- trailing-N average of real landed orders
+      avgPoQty != null
+        ? `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentOnHandDetail('${c.component_id}')" title="Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'} for this component">${avgPoQty.toLocaleString()}</button>`
+        : '<span class="muted">no history</span>',
+      `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="manageComponentVendors('${c.component_id}')">
         ${preferred?.vendors?.vendor_name || '<span class="muted">none set</span>'}${allVendorLinks.length > 1 ? ` <span class="muted">(+${allVendorLinks.length - 1})</span>` : ''}
       </button>`,
-      `<button class="btn btn-ghost" style="padding:3px 6px; font-size:12px;" onclick="manageComponentVendors('${c.component_id}')">${leadDays}d</button>`,
-      `${cadenceDays}d`,
+      // d. When should we order more -- status + runout, unchanged logic, click for full rationale
       `<button class="btn btn-ghost" style="padding:0;" onclick="showComponentStatusDetail('${c.component_id}')">
         <span class="pill ${statusPill[status]}">${statusLabel[status]}</span>${hasShortfallSignal && status === 'OK' ? ' <span class="pill watch" title="The full PO-recommendation engine flags a real component shortfall — click for detail">⚠</span>' : ''}
       </button>`,
-      runOutMonthIndex == null ? '<span class="muted">beyond 6 months</span>' : `~${monthLabelLong(months[runOutMonthIndex])}`,
-      canEdit() ? `<button class="btn btn-ghost" style="padding:3px 8px; font-size:12px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
+      runOutMonthIndex == null ? '<span class="muted">beyond 6 months</span>' : `<strong>~${monthLabelLong(months[runOutMonthIndex])}</strong>`,
+      canEdit() ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
     ];
   });
 
   el.innerHTML = `
-    <div class="card" style="padding:14px 16px;">
-      <div class="section-label" style="margin:0 0 2px;">Active Component Levels</div>
-      <div class="muted" style="font-size:12px; margin-bottom:10px;">
-        One row per raw component. Status is a simplified estimate: it projects each component's
-        on-hand + in-flight quantity against the root product's current revenue forecast (live
-        forecast only — not scenario-aware) and compares the runout date to the vendor's lead time
-        + contact cadence. Click Status for the full rationale, including what the real
+    <div class="card" style="padding:16px 18px;">
+      <div style="font-family:'Playfair Display'; font-weight:700; font-size:20px; margin:0 0 3px; color:var(--ink);">Components</div>
+      <div class="muted" style="font-size:13px; margin-bottom:12px;">
+        One row per raw component, organized to answer: how much is on hand (and will a real finished-good PO
+        use it up), how much is in flight (click to see when it lands), how big a PO we could place right
+        now with current levels (click Vendor for lead time, click On Hand/Avg PO for landed-order history),
+        and when to order more next. Status click shows the full rationale, including what the real
         PO-recommendation engine (Overview tab) separately says. Sorted Order Now / Order Soon / OK.
       </div>
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-        <select id="components-product-filter" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="setComponentsProductFilter(this.value)">
+      <div style="display:flex; align-items:center; gap:14px; margin-bottom:12px; flex-wrap:wrap;">
+        <select id="components-product-filter" style="padding:6px 9px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="setComponentsProductFilter(this.value)">
           <option value="all" ${productFilter === 'all' ? 'selected' : ''}>All products</option>
           ${uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${productFilter === sku ? 'selected' : ''}>${name}</option>`).join('')}
         </select>
+        <label style="display:flex; align-items:center; gap:6px; font-size:14px;">
+          Avg of last
+          <input type="number" id="components-last-n-pos" value="${lastNPos}" min="1" max="20" style="width:52px; padding:5px 7px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="setComponentsLastNPos(this.value)">
+          POs
+        </label>
       </div>
       ${tableRows.length
-        ? kpiTable(['Component', 'Product', 'QOH', 'In-Flight', 'Vendor', 'Lead Time', 'Cadence', 'Status', 'Runs Out', ''], tableRows, null, null, [2, 3, 4, 5, 6, 7, 8, 9])
+        ? kpiTable(['Component', 'Product', 'On Hand', 'In-Flight', `Avg Last ${lastNPos} PO${lastNPos === 1 ? '' : 's'}`, 'Vendor', 'Status', 'Order By', ''],
+            tableRows, null,
+            ['140px', '150px', '115px', '115px', '130px', '150px', '130px', '100px', '95px'],
+            [2, 3, 4, 5, 6, 7, 8])
         : '<div class="empty-state">No components match this filter.</div>'}
     </div>
     ${singleComponentNotice}
   `;
+}
+
+function setComponentsLastNPos(n) {
+  const parsed = Math.max(1, Math.min(20, parseInt(n, 10) || 3));
+  window._componentsLastNPos = parsed;
+  renderComponentsTable();
+}
+
+// Alex (2026-11-15): "How much do we have on hand of each component? Are there any finished
+// good PO's in progress or planned that will use this up?" -- the on-hand-click detail.
+function showComponentOnHandDetail(componentId) {
+  const { rows } = window._componentsCache || { rows: [] };
+  const r = rows.find(row => row.c.component_id === componentId);
+  if (!r) return;
+  const { c, landedHistory, openFgOrdersForProduct } = r;
+  const lastNPos = window._componentsLastNPos || 3;
+  const trailing = landedHistory.slice(0, lastNPos);
+  const avgPoQty = trailing.length ? Math.round(trailing.reduce((s, o) => s + (o.qty_in || 0), 0) / trailing.length) : null;
+
+  const historyRows = landedHistory.slice(0, 10).map(o => [
+    o.order_number || '<span class="muted">—</span>',
+    `<strong>${(o.qty_in || 0).toLocaleString()}</strong>`,
+    `<span style="white-space:nowrap;">${fmtDate(o.event_date)}</span>`,
+  ]);
+  const fgRows = openFgOrdersForProduct.map(o => [
+    o.internal_ref || '<span class="muted">none on file</span>',
+    `${(o.qty || 0).toLocaleString()}`,
+    `<span style="white-space:nowrap;">${o.eta ? fmtDate(o.eta) : '<span class="muted">no ETA</span>'}</span>`,
+  ]);
+
+  const body = `
+    <div style="font-size:15px; line-height:1.5;">
+      <div style="padding:8px 0; border-bottom:1px solid var(--border); margin-bottom:10px;">
+        <strong>${(c.qty_on_hand || 0).toLocaleString()}</strong> units of <strong>${c.component_name}</strong> on hand for ${c.product_name}
+        (1:1 consumption per finished unit${c.qty_per_unit && c.qty_per_unit !== 1 ? `, ${c.qty_per_unit} per unit` : ''}).
+      </div>
+
+      <div style="font-weight:700; font-size:15px; margin:0 0 7px;">Finished-good PO's that will use this up</div>
+      ${fgRows.length
+        ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
+        : `<div class="muted" style="font-size:14px; margin-bottom:10px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
+
+      <div style="font-weight:700; font-size:15px; margin:14px 0 7px;">Recent landed orders (for the trailing-average below)</div>
+      ${historyRows.length
+        ? kpiTable(['Order #', 'Qty', 'Landed'], historyRows, null, ['110px', '90px', '110px'], [1, 2])
+        : '<div class="muted" style="font-size:14px;">No landed order history for this component yet.</div>'}
+      ${avgPoQty != null ? `<div class="muted" style="font-size:13px; margin-top:8px;">Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'}: <strong>${avgPoQty.toLocaleString()}</strong> units. Change the "Avg of last N POs" control on the Components tab to adjust.</div>` : ''}
+    </div>
+  `;
+  showDetail(`${c.component_name} — On Hand`, body, 'wide');
+}
+
+// Alex (2026-11-15): "How much do we have in flight? I'd like to be able to click into this and
+// have a box appear that show's when they land. Are there any finished good PO's in progress or
+// planned that will use this up?"
+function showComponentInFlightDetail(componentId) {
+  const { rows } = window._componentsCache || { rows: [] };
+  const r = rows.find(row => row.c.component_id === componentId);
+  if (!r) return;
+  const { c, inFlightDetail, openFgOrdersForProduct } = r;
+
+  const inFlightRows = inFlightDetail.map(o => [
+    o.order_number || o.vendor_order_number || '<span class="muted">none on file</span>',
+    `<strong>${(o.qty_in || 0).toLocaleString()}</strong>`,
+    o.vendors?.vendor_name || '<span class="muted">—</span>',
+    `<span style="white-space:nowrap;">${o.eta ? fmtDate(o.eta) : '<span class="muted">no ETA set</span>'}</span>`,
+  ]);
+  const fgRows = openFgOrdersForProduct.map(o => [
+    o.internal_ref || '<span class="muted">none on file</span>',
+    `${(o.qty || 0).toLocaleString()}`,
+    `<span style="white-space:nowrap;">${o.eta ? fmtDate(o.eta) : '<span class="muted">no ETA</span>'}</span>`,
+  ]);
+
+  const body = `
+    <div style="font-size:15px; line-height:1.5;">
+      <div style="padding:8px 0; border-bottom:1px solid var(--border); margin-bottom:10px;">
+        <strong>${(c.qty_in_flight || 0).toLocaleString()}</strong> units of <strong>${c.component_name}</strong> currently in flight (ordered, not yet landed).
+      </div>
+
+      <div style="font-weight:700; font-size:15px; margin:0 0 7px;">When they land</div>
+      ${inFlightRows.length
+        ? kpiTable(['Order #', 'Qty', 'Vendor', 'ETA'], inFlightRows, null, ['110px', '90px', '140px', '110px'], [1, 2, 3])
+        : '<div class="muted" style="font-size:14px; margin-bottom:10px;">Nothing currently in flight for this component.</div>'}
+
+      <div style="font-weight:700; font-size:15px; margin:14px 0 7px;">Finished-good PO's that will use this up</div>
+      ${fgRows.length
+        ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
+        : `<div class="muted" style="font-size:14px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
+    </div>
+  `;
+  showDetail(`${c.component_name} — In Flight`, body, 'wide');
 }
 
 function setComponentsProductFilter(sku) {
@@ -3640,10 +3780,10 @@ async function renderCatalog() {
   const newVendorBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:13px;" onclick="event.stopPropagation(); showNewVendorModal()">+ New Vendor</button>` : '';
   const newComponentBtn = canEdit() ? `<button class="btn btn-primary" style="padding:5px 12px; font-size:13px;" onclick="event.stopPropagation(); showNewComponentModal()">+ New Component</button>` : '';
   el.innerHTML = `
-    ${catalogAccordion('products', 'Catalog — Products', 'Click a product name to rename it; click the row to expand SKU, live stock, and components.', true, newProductBtn)}
-    ${catalogAccordion('bundles', 'Catalog — Bundles', 'Click a bundle to expand and edit which root products it contains.', false, newBundleBtn)}
-    ${catalogAccordion('vendors', 'Catalog — Vendors', 'Click a vendor to expand lead time, contacts, components supplied, and notes.', false, newVendorBtn)}
-    ${catalogAccordion('components', 'Catalog — Components', "Click a component to expand notes and vendors. Same underlying rows as the ones nested under Products above.", false, newComponentBtn)}
+    ${catalogAccordion('products', 'Products', 'Click a product name to rename it; click the row to expand SKU, live stock, and components.', true, newProductBtn)}
+    ${catalogAccordion('bundles', 'Bundles', 'Click a bundle to expand and edit which root products it contains.', false, newBundleBtn)}
+    ${catalogAccordion('vendors', 'Vendors', 'Click a vendor to expand lead time, contacts, components supplied, and notes.', false, newVendorBtn)}
+    ${catalogAccordion('components', 'Components', "Click a component to expand notes and vendors. Same underlying rows as the ones nested under Products above.", false, newComponentBtn)}
   `;
   await Promise.all([renderCatalogVendors(), renderCatalogProducts(), renderCatalogBundles(), renderCatalogComponents()]);
 }
@@ -3656,7 +3796,7 @@ function catalogAccordion(id, title, subtitle, openDefault, headerActionHtml) {
     <div class="card" style="padding:0; margin-bottom:12px;">
       <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; gap:10px;">
         <div style="flex:1; padding-right:10px; cursor:pointer;" onclick="toggleCatalogAccordion('${id}')">
-          <div class="section-label" style="margin:0;">${title}</div>
+          <div style="margin:0; font-family:'Playfair Display'; font-weight:700; font-size:20px; color:var(--ink);">${title}</div>
           ${subtitle ? `<div class="muted" style="font-size:13px; margin-top:3px; font-weight:400; text-transform:none; letter-spacing:normal;">${subtitle}</div>` : ''}
         </div>
         ${headerActionHtml || ''}
@@ -3750,8 +3890,8 @@ function renderCatalogVendorsTable() {
     const suppliedComponents = componentsByVendor[v.id] || [];
 
     const nameHtml = canAct
-      ? `<span class="pill clickable-pill good" style="font-size:14px;" onclick="event.stopPropagation(); editVendorNameInline('${v.id}')">${v.vendor_name}</span>`
-      : `<span style="font-size:14px;">${v.vendor_name}</span>`;
+      ? `<span class="pill clickable-pill good" style="font-size:16px;" onclick="event.stopPropagation(); editVendorNameInline('${v.id}')">${v.vendor_name}</span>`
+      : `<span style="font-size:16px;">${v.vendor_name}</span>`;
     const typeCell = VENDOR_TYPE_LABELS[v.vendor_type] || VENDOR_TYPE_LABELS.component_supplier;
     const activeCell = canAct
       ? `<input type="checkbox" id="cat-vendor-active-${v.id}" ${v.is_active ? 'checked' : ''} onchange="saveCatalogVendor('${v.id}')" onclick="event.stopPropagation();" />`
@@ -3762,7 +3902,7 @@ function renderCatalogVendorsTable() {
     // lead/cadence, contacts, components managed, notes) only appears once expanded, matching
     // Products' "SKU/stock strip on expand" pattern.
     const typeSelectHtml = canAct
-      ? `<select id="cat-vendor-type-${v.id}" onchange="saveCatalogVendor('${v.id}')" style="padding:4px 6px; border-radius:6px; border:1px solid var(--border); font-size:13px;">
+      ? `<select id="cat-vendor-type-${v.id}" onchange="saveCatalogVendor('${v.id}')" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border); font-size:14px;">
           <option value="component_supplier" ${isComponentSupplier ? 'selected' : ''}>${VENDOR_TYPE_LABELS.component_supplier}</option>
           <option value="finished_good_manufacturer" ${(!isComponentSupplier && !is3pl) ? 'selected' : ''}>${VENDOR_TYPE_LABELS.finished_good_manufacturer}</option>
           <option value="logistics_3pl" ${is3pl ? 'selected' : ''}>${VENDOR_TYPE_LABELS.logistics_3pl}</option>
@@ -3782,40 +3922,40 @@ function renderCatalogVendorsTable() {
       ? `<span class="pill clickable-pill ${v.address ? 'good' : 'watch'}" onclick="showVendorAddressModal('${v.id}', '${vendorNameSafe}')">${addressPillLabel}</span>`
       : (v.address || '—');
     const componentsManageHtml = isComponentSupplier
-      ? (canAct ? `<button class="btn btn-ghost" style="padding:3px 9px; font-size:12px;" onclick="showManageComponentsModal('${v.id}', '${vendorNameSafe}')">Manage Components</button>` : suppliedComponents.map(cv => cv.components?.component_name).filter(Boolean).join(', ') || '—')
+      ? (canAct ? `<button class="btn btn-ghost" style="padding:4px 11px; font-size:13px;" onclick="showManageComponentsModal('${v.id}', '${vendorNameSafe}')">Manage Components</button>` : suppliedComponents.map(cv => cv.components?.component_name).filter(Boolean).join(', ') || '—')
       : '<span class="muted">Not a component supplier</span>';
 
     const nestedHtml = `
-      <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:baseline; padding:6px 0 10px; border-bottom:1px solid var(--border); margin-bottom:8px;">
-        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Type</span><br>${typeSelectHtml}</div>
-        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Lead / Cadence</span><br>${leadHtml}</div>
-        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Contacts</span><br>${contactHtml}</div>
-        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Address</span><br>${addressHtml}</div>
-        <div><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Notes</span><br>${notesHtml}</div>
+      <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:baseline; padding:8px 0 12px; border-bottom:1px solid var(--border); margin-bottom:10px;">
+        <div><span class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Type</span><br>${typeSelectHtml}</div>
+        <div><span class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Lead / Cadence</span><br>${leadHtml}</div>
+        <div><span class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Contacts</span><br>${contactHtml}</div>
+        <div><span class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Address</span><br>${addressHtml}</div>
+        <div><span class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Notes</span><br>${notesHtml}</div>
       </div>
-      <div class="section-label" style="margin:0 0 6px;">Components Supplied</div>
-      <div style="font-size:14px;">${componentsManageHtml}</div>
-      ${canAct ? `<button class="btn btn-ghost" style="font-size:12px; color:var(--bad-text); margin-top:10px;" onclick="cascadeDeleteVendor('${v.id}', '${vendorNameSafe}')">Delete Vendor</button>` : ''}
+      <div style="font-weight:700; font-size:15px; margin:0 0 7px;">Components Supplied</div>
+      <div style="font-size:15px;">${componentsManageHtml}</div>
+      ${canAct ? `<button class="btn btn-ghost" style="font-size:13px; color:var(--bad-text); margin-top:10px;" onclick="cascadeDeleteVendor('${v.id}', '${vendorNameSafe}')">Delete Vendor</button>` : ''}
     `;
 
     return `
       <tr id="cv-row-${v.id}" style="cursor:pointer;" onclick="toggleCatalogVendorExpand('${v.id}')">
-        <td style="padding:6px 6px; border-bottom:1px solid var(--border);"><span class="muted" id="cv-caret-${v.id}">▸</span></td>
-        <td style="padding:6px 10px; border-bottom:1px solid var(--border);" onclick="event.stopPropagation();">${nameHtml}</td>
-        <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${typeCell}</td>
-        <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${activeCell}</td>
-        <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${componentCountCell}</td>
+        <td style="padding:8px 7px; border-bottom:1px solid var(--border);"><span class="muted" id="cv-caret-${v.id}">▸</span></td>
+        <td style="padding:8px 11px; border-bottom:1px solid var(--border);" onclick="event.stopPropagation();">${nameHtml}</td>
+        <td style="padding:8px 11px; border-bottom:1px solid var(--border);">${typeCell}</td>
+        <td style="padding:8px 11px; border-bottom:1px solid var(--border);">${activeCell}</td>
+        <td style="padding:8px 11px; border-bottom:1px solid var(--border);">${componentCountCell}</td>
       </tr>
-      <tr id="cv-detail-${v.id}" style="display:none;"><td colspan="5" style="padding:2px 10px 14px 32px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
+      <tr id="cv-detail-${v.id}" style="display:none;"><td colspan="5" style="padding:3px 11px 16px 34px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.015);" onclick="event.stopPropagation();">${nestedHtml}</td></tr>
     `;
   }).join('');
 
   el.innerHTML = `
-    <div class="muted" style="font-size:12px; margin-bottom:6px;">
+    <div class="muted" style="font-size:13px; margin-bottom:7px;">
       Click a name to rename it; click a row to expand lead time, contacts, components, and notes.
     </div>
     <div style="overflow-x:auto;">
-      <table style="width:100%; font-size:14px; border-collapse:collapse;">
+      <table style="width:100%; font-size:16px; border-collapse:collapse;">
         <colgroup>
           <col style="width:28px;" />
           <col style="width:34%;" />
@@ -3824,10 +3964,10 @@ function renderCatalogVendorsTable() {
           <col style="width:26%;" />
         </colgroup>
         <thead><tr>
-          <th style="padding:6px 6px;"></th>
-          ${['Name', 'Type', 'Active', 'Components'].map(h => `<th style="padding:6px 10px; text-align:left; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
+          <th style="padding:8px 7px;"></th>
+          ${['Name', 'Type', 'Active', 'Components'].map(h => `<th style="padding:8px 11px; text-align:left; font-size:14px; border-bottom:2px solid var(--border);">${h}</th>`).join('')}
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:10px;">No vendors found.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:12px;">No vendors found.</td></tr>'}</tbody>
       </table>
     </div>
   `;
