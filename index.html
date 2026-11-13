@@ -2824,6 +2824,7 @@ function showOrderDetailsPopup(ledgerId) {
       ${o.order_type === 'componentry' ? row('Component', componentShortLabel(o.component_name)) : ''}
       ${row('Vendor (accountable)', o.vendor_name || '<span class="muted">—</span>')}
       ${row('Landing Destination', o.landing_destination_name ? `<strong>${o.landing_destination_name}</strong>` : '<span class="muted">not set</span>', `editLandingDestination('${ledgerId}')`)}
+      ${o.landing_destination_name && o.landing_destination_address ? row('Landing Address', `<span style="font-size:13px;">${o.landing_destination_address}</span>`) : ''}
       ${row('ETA', `<strong>${fmtDate(o.eta)}</strong>`, `editOpenOrderRow('${ledgerId}')`)}
       ${row('Quantity', o.qty != null ? o.qty.toLocaleString() : '—', `editOpenOrderRow('${ledgerId}')`)}
       ${orderNumberRowHtml}
