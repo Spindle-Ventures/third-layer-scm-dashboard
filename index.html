@@ -2803,10 +2803,18 @@ function showOrderDetailsPopup(ledgerId) {
   //    were before that round's merge (our internal_ref/vendor_po_number "Order #", and the
   //    vendor's own vendor_order_number "Vendor's Order #") -- finished-good POs were never
   //    sheet-synced and don't have the "same thing, pick one" problem componentry has.
+  // Bug (Alex, 2026-11-13): "I acted upon the dashboard alert and the database didn't update
+  // with the value." -- the approval DID write correctly to inventory_ledger.vendor_order_number,
+  // but this split (above) stopped showing that field for componentry orders entirely, so the
+  // only thing visible was the unrelated sheet-synced "Order number" field, which looked
+  // unchanged. Vendor's Order # is a real, separate, dashboard-editable field independent of
+  // order_type -- only the sheet-synced "Order number" needed to stay componentry-read-only.
+  // Show both for componentry orders now.
   const orderNumberRowHtml = o.order_type === 'componentry'
     ? row('Order number', o.internal_ref
         ? `<strong>${o.internal_ref}</strong> <span class="muted" style="font-size:11px;">(synced from Componentry Ledger sheet)</span>`
         : '<span class="muted">not set in sheet yet</span>')
+      + row("Vendor's Order #", o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`)
     : row('Order #', o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>', `editPoNumber('${ledgerId}')`)
       + row("Vendor's Order #", o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`);
   const body = `
