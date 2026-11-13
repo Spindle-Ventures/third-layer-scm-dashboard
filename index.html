@@ -1910,17 +1910,28 @@ function buildOrderPlacedBody(o) {
   const itemPhrase = humanizeItemLabel(itemLabel);
   const qtyFmt = o.qty != null ? `${o.qty.toLocaleString()} units of ` : '';
   const ref = o.internal_ref || o.vendor_po_number;
-  const refLine = ref ? `Order ref: ${ref}\n\n` : '';
+  const refLine = ref ? `Order #: ${ref}\n\n` : '';
   const greeting = o.vendor_contact_name ? `Hi ${o.vendor_contact_name.split(' ')[0]},` : 'Hi,';
   const etaStr = o.eta ? plainDate(o.eta) : 'no ETA set yet';
   const destPhrase = o.landing_destination_name ? ` at ${o.landing_destination_name}` : '';
+  // Alex (2026-11-14): "it should also be a part of the validation email" (the landing
+  // destination's address). Only appended when we actually have an address on file -- no
+  // "address not set" filler text in a vendor-facing email.
+  const destAddressLine = (o.landing_destination_name && o.landing_destination_address)
+    ? `Landing address: ${o.landing_destination_address}\n\n`
+    : '';
   return (
-    `${greeting}\n\n${refLine}` +
-    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}${destPhrase}. Could you confirm the following?\n\n` +
-    `- Your order/confirmation number for this order\n` +
-    `- Price and payment terms for this order\n\n` +
+    `${greeting}\n\n${refLine}${destAddressLine}` +
+    // Alex (2026-11-14): "In the email we don't need a confirmation number, just the order
+    // number." -- the order number is already stated above (refLine); dropped the old
+    // "your order/confirmation number" ask entirely, kept price/terms.
+    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}${destPhrase}. Could you confirm price and payment terms for this order?\n\n` +
+    // Alex (2026-11-14): "When asking for pricing & terms let's have them send anything that
+    // requires signature to Alex@spindle.ventures and then request invoicing be sent to
+    // tlaccounting@spindle.ventures." Two distinct asks, two distinct addresses -- do not
+    // collapse them into one line/address.
+    `If anything needs a signature, please send it to Alex@spindle.ventures. Once invoicing is ready, please send it to TLAccounting@spindle.ventures.\n\n` +
     `Please let us know proactively if anything changes or a delay comes up on your end -- the earlier we hear about it, the better we can plan around it.\n\n` +
-    `Once invoicing is ready, please send it to TLAccounting@spindle.ventures.\n\n` +
     `Thanks,\nManny`
   );
 }
@@ -1938,6 +1949,9 @@ function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
   const landingDestName = ledgerRow.landing_destination_vendor_id
     ? (window._addOrderLookups?.landingDestVendors || []).find(v => v.id === ledgerRow.landing_destination_vendor_id)?.vendor_name
     : null;
+  const landingDestAddress = ledgerRow.landing_destination_vendor_id
+    ? (window._addOrderLookups?.landingDestVendors || []).find(v => v.id === ledgerRow.landing_destination_vendor_id)?.address
+    : null;
   const o = {
     order_type: 'componentry',
     component_name: itemLabel,
@@ -1948,6 +1962,7 @@ function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
     ledger_id: ledgerRow.id,
     vendor_contact_name: vendor?.contact_name,
     landing_destination_name: landingDestName,
+    landing_destination_address: landingDestAddress,
   };
   const subject = buildOrderPlacedSubject(o);
   const body = buildOrderPlacedBody(o);
@@ -1998,13 +2013,15 @@ async function sendOrderPlacedEmailNow(ledgerId, vendorId) {
   // to a "Queued" state (not closed-then-reopened as a separate confirm dialog) AND a bottom
   // toast banner fires at the same moment.
   const recipientLabel = vendor?.vendor_name || toEmail;
+  window._addOrderWizard = { step: 4 };
   const modalEl = document.querySelector('#detail-modal-backdrop .detail-modal');
   if (modalEl) {
     modalEl.innerHTML = `
+      ${addOrderStepperHtml()}
       <div style="text-align:center; padding:20px 10px;">
-        <div style="font-size:32px; margin-bottom:8px;">✅</div>
-        <div style="font-weight:700; font-family:'Playfair Display'; font-size:17px; margin-bottom:6px;">Queued to send</div>
-        <div style="font-size:14px; color:var(--ink); line-height:1.5; margin-bottom:16px;">Email to <strong>${recipientLabel}</strong> is queued — it'll go out on the next send cycle (usually within a few minutes).</div>
+        <div style="font-size:40px; margin-bottom:10px;">✅</div>
+        <div style="font-weight:700; font-family:'Playfair Display'; font-size:22px; margin-bottom:8px;">Queued to send</div>
+        <div style="font-size:16px; color:var(--ink); line-height:1.5; margin-bottom:20px;">Email to <strong>${recipientLabel}</strong> is queued — it'll go out on the next send cycle (usually within a few minutes).</div>
         <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop')?.remove()">Close</button>
       </div>
     `;
@@ -2084,9 +2101,9 @@ async function sendVendorMessageNow(ledgerId) {
   if (modalEl) {
     modalEl.innerHTML = `
       <div style="text-align:center; padding:20px 10px;">
-        <div style="font-size:32px; margin-bottom:8px;">✅</div>
-        <div style="font-weight:700; font-family:'Playfair Display'; font-size:17px; margin-bottom:6px;">Queued to send</div>
-        <div style="font-size:14px; color:var(--ink); line-height:1.5; margin-bottom:16px;">Email to <strong>${recipientLabel}</strong> is queued — it'll go out on the next send cycle (usually within a few minutes).</div>
+        <div style="font-size:40px; margin-bottom:10px;">✅</div>
+        <div style="font-weight:700; font-family:'Playfair Display'; font-size:22px; margin-bottom:8px;">Queued to send</div>
+        <div style="font-size:16px; color:var(--ink); line-height:1.5; margin-bottom:20px;">Email to <strong>${recipientLabel}</strong> is queued — it'll go out on the next send cycle (usually within a few minutes).</div>
         <div style="display:flex; gap:8px; justify-content:center;">
           <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop')?.remove(); showContactScheduleDetail('${ledgerId}')">Back to order</button>
           <button class="btn btn-ghost" onclick="document.getElementById('detail-modal-backdrop')?.remove()">Close</button>
@@ -2469,7 +2486,7 @@ async function showAddOrderMenu() {
   // ones are visibly tagged "(inactive)" in the picker rather than silently hidden.
   const [{ data: products }, { data: vendors }] = await Promise.all([
     sb.from('products').select('id, sku_code, display_name, is_active'),
-    sb.from('vendors').select('id, vendor_name, vendor_type, contact_email, contact_name').order('vendor_name'),
+    sb.from('vendors').select('id, vendor_name, vendor_type, contact_email, contact_name, address').order('vendor_name'),
   ]);
   window._addOrderLookups = {
     products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
@@ -2500,7 +2517,7 @@ function addOrderStepperHtml() {
   const w = window._addOrderWizard || { step: 1 };
   return `
     <div style="display:flex; justify-content:space-between; gap:6px; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid var(--border);">
-      ${wizardStepLabel(w, 1, 'Order Type')}${wizardStepLabel(w, 2, 'Details')}${wizardStepLabel(w, 3, 'Email')}
+      ${wizardStepLabel(w, 1, 'Order Type')}${wizardStepLabel(w, 2, 'Details')}${wizardStepLabel(w, 3, 'Email')}${wizardStepLabel(w, 4, 'Confirmation')}
     </div>
   `;
 }
@@ -2569,17 +2586,18 @@ async function showAddOrderForm(type) {
         <input id="add-order-notes" type="text" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
       </label>
       <label>Landing Destination <span class="muted" style="font-weight:400;">— where this lands for comms purposes, separate from who's accountable for the order</span><br>
-        <select id="add-order-landing-dest" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);">
+        <select id="add-order-landing-dest" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" onchange="refreshAddOrderLandingAddress('${type}')">
           <option value="">— auto (see rule below) —</option>
           ${(window._addOrderLookups?.landingDestVendors || []).map(v => `<option value="${v.id}">${v.vendor_name}</option>`).join('')}
         </select>
       </label>
+      <div id="add-order-landing-address" class="muted" style="font-size:12px; margin-top:-4px;"></div>
       <button class="btn btn-primary" onclick="createNewOrder('${type}')">Create Order${type === 'finished_good' ? '(s)' : ''}</button>
     </div>
   `;
   showDetail(`Add ${type === 'componentry' ? 'Component' : 'Finished Good'} Order`, body);
   if (type === 'componentry') refreshAddOrderComponents();
-  if (type === 'finished_good') refreshAddOrderQtyRows();
+  if (type === 'finished_good') { refreshAddOrderQtyRows(); refreshAddOrderLandingAddress('finished_good'); }
 }
 
 // Builds one quantity input per currently-selected product in the multi-select, preserving any
@@ -2609,6 +2627,40 @@ function refreshAddOrderComponents() {
   const productId = document.getElementById('add-order-product').value;
   const comps = (window._addOrderLookups.components || []).filter(c => c.product_id === productId);
   sel.innerHTML = comps.map(c => `<option value="${c.id}">${c.component_name}</option>`).join('') || '<option value="">(no components defined for this product)</option>';
+  refreshAddOrderLandingAddress('componentry');
+}
+
+// Alex (2026-11-12): "upon creating an order let's establish where the order will land for
+// comms purposes... Private Label could be in both positions because they are accountable
+// for finished good PO's and are the landing place for Component PO's... [patches/socks] go
+// straight to Bollweg." Auto-derived default, with the manual override taking priority when
+// set. Pulled out of createNewOrder() (2026-11-15) so refreshAddOrderLandingAddress() can share
+// the exact same derivation logic for the live address preview, instead of duplicating it.
+function deriveLandingDestId(orderType, componentName, override) {
+  if (override) return override;
+  const dest = window._addOrderLookups?.landingDestVendors || [];
+  const wantBollweg = orderType === 'finished_good';
+  const name = wantBollweg ? 'Bollweg Logistics' : 'Private Label';
+  return dest.find(v => v.vendor_name === name)?.id || null;
+}
+
+// Alex (2026-11-14): "as soon as the landing destination is established in the picklist value
+// it should populate the destination address in the screen." Fires on the Landing Destination
+// select's own onchange AND on product/component selection changes (since the auto-derived
+// default can depend on which component is picked, e.g. socks/patches route to Bollweg) --
+// looks up the resolved vendor's address and shows it live under the picklist.
+function refreshAddOrderLandingAddress(type) {
+  const el = document.getElementById('add-order-landing-address');
+  if (!el) return;
+  const override = document.getElementById('add-order-landing-dest')?.value || null;
+  let componentName = null;
+  if (type === 'componentry') {
+    const componentId = document.getElementById('add-order-component')?.value;
+    componentName = (window._addOrderLookups?.components || []).find(c => c.id === componentId)?.component_name || null;
+  }
+  const destId = deriveLandingDestId(type, componentName, override);
+  const vendor = (window._addOrderLookups?.landingDestVendors || []).find(v => v.id === destId);
+  el.textContent = vendor?.address ? `Landing address: ${vendor.address}` : (vendor ? `Landing: ${vendor.vendor_name} (no address on file)` : '');
 }
 
 async function createNewOrder(type) {
@@ -2627,17 +2679,11 @@ async function createNewOrder(type) {
   // Alex (2026-11-12): "the current vendors are where the orders are being initiated and who's
   // accountable for delays, timelines, etc. and then 'where's it going' could be either Bollweg
   // or Private Label... Private Label [is the landing place] for Component PO's outside of
-  // silicone socks and patches which go straight to Bollweg." Auto-derived default, with the
-  // manual override above taking priority when set (clarify: "auto-derive as the default, but
-  // let me override it per order if needed"). componentName is passed in for the componentry
-  // path below since socks/patches are an exception keyed off the component, not the order type.
-  const deriveLandingDest = (orderType, componentName) => {
-    if (landingDestOverride) return landingDestOverride;
-    const dest = window._addOrderLookups?.landingDestVendors || [];
-    const wantBollweg = orderType === 'finished_good';
-    const name = wantBollweg ? 'Bollweg Logistics' : 'Private Label';
-    return dest.find(v => v.vendor_name === name)?.id || null;
-  };
+  // silicone socks and patches which go straight to Bollweg." Uses the shared
+  // deriveLandingDestId() (lifted out 2026-11-15 so the live address preview above reuses the
+  // exact same logic) -- componentName is passed in for the componentry path below since
+  // socks/patches are an exception keyed off the component, not the order type.
+  const deriveLandingDest = (orderType, componentName) => deriveLandingDestId(orderType, componentName, landingDestOverride);
 
   // Finished-good orders: one or more products, each with its own qty, sharing vendor/ETA/order
   // number/tracking/notes -- this is the "one PO, multiple products" flow.
