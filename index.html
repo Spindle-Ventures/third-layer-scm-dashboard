@@ -3301,84 +3301,97 @@ async function renderComponents() {
 function renderComponentsTable() {
   const { rows, months, singleComponentNotice } = window._componentsCache || { rows: [], months: [], singleComponentNotice: '' };
   const el = document.getElementById('tab-components');
-  const productFilter = window._componentsProductFilter || 'all';
-  // Alex (2026-11-15): "average of last 3 PO's and allow for us to change this number dynamically"
-  // -- one shared, adjustable N for the whole tab (not per-row), applied client-side against the
-  // real landed component_order history already in each row's landedHistory.
+  // Alex (2026-11-16): "Let's build containers by product to organize this better. Similar to
+  // the overview tab." Replaced the single flat table + product-filter dropdown with one card
+  // per product (same shape as applyOpenOrdersFilter() on the Overview tab) -- the dropdown is
+  // gone entirely since grouping by product IS the new navigation.
   const lastNPos = window._componentsLastNPos || 3;
 
-  const uniqueProducts = [...new Map(rows.filter(r => r.product).map(r => [r.product.sku_code, r.product.display_name])).entries()]
-    .sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
-
-  let filtered = productFilter === 'all' ? rows : rows.filter(r => r.c.product_sku === productFilter);
-  filtered = filtered.slice().sort((a, b) =>
-    window.RevenueLogic.componentStatusRank(a.status) - window.RevenueLogic.componentStatusRank(b.status)
-    || a.c.component_name.localeCompare(b.c.component_name)
-  );
+  const byProduct = new Map();
+  rows.forEach(r => {
+    const key = r.c.product_sku;
+    if (!byProduct.has(key)) byProduct.set(key, { name: r.c.product_name, rows: [] });
+    byProduct.get(key).rows.push(r);
+  });
 
   const statusPill = { ORDER_NOW: 'bad', ORDER_SOON: 'watch', OK: 'good' };
   const statusLabel = { ORDER_NOW: 'Order Now', ORDER_SOON: 'Order Soon', OK: 'OK' };
-  const tableRows = filtered.map(r => {
-    const { c, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct } = r;
-    const hasShortfallSignal = backendRec && backendRec.net_need > 0;
-    const trailing = landedHistory.slice(0, lastNPos);
-    const avgPoQty = trailing.length ? Math.round(trailing.reduce((s, o) => s + (o.qty_in || 0), 0) / trailing.length) : null;
-    const fgCount = openFgOrdersForProduct.length;
-    return [
-      // a. How much on hand + is a real FG PO going to use it up
-      `<strong>${c.component_name}</strong>`,
-      `${c.product_name}<br><span class="muted" style="font-size:12px;">${c.product_sku}</span>`,
-      `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentOnHandDetail('${c.component_id}')">
-        ${(c.qty_on_hand || 0).toLocaleString()}${fgCount ? ` <span class="muted" style="font-size:12px;">(${fgCount} FG PO${fgCount === 1 ? '' : 's'})</span>` : ''}
-      </button>`,
-      // b. How much in flight, click to see when they land + same FG-PO cross-reference
-      `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentInFlightDetail('${c.component_id}')">
-        ${(c.qty_in_flight || 0).toLocaleString()}${inFlightDetail.length ? ` <span class="muted" style="font-size:12px;">(${inFlightDetail.length} order${inFlightDetail.length === 1 ? '' : 's'})</span>` : ''}
-      </button>`,
-      // c. Size of a potential PO at current levels -- trailing-N average of real landed orders
-      avgPoQty != null
-        ? `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentOnHandDetail('${c.component_id}')" title="Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'} for this component">${avgPoQty.toLocaleString()}</button>`
-        : '<span class="muted">no history</span>',
-      `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="manageComponentVendors('${c.component_id}')">
-        ${preferred?.vendors?.vendor_name || '<span class="muted">none set</span>'}${allVendorLinks.length > 1 ? ` <span class="muted">(+${allVendorLinks.length - 1})</span>` : ''}
-      </button>`,
-      // d. When should we order more -- status + runout, unchanged logic, click for full rationale
-      `<button class="btn btn-ghost" style="padding:0;" onclick="showComponentStatusDetail('${c.component_id}')">
-        <span class="pill ${statusPill[status]}">${statusLabel[status]}</span>${hasShortfallSignal && status === 'OK' ? ' <span class="pill watch" title="The full PO-recommendation engine flags a real component shortfall — click for detail">⚠</span>' : ''}
-      </button>`,
-      runOutMonthIndex == null ? '<span class="muted">beyond 6 months</span>' : `<strong>~${monthLabelLong(months[runOutMonthIndex])}</strong>`,
-      canEdit() ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
-    ];
-  });
+
+  const groupsHtml = [...byProduct.entries()]
+    .sort((a, b) => productSortRank(a[1].name) - productSortRank(b[1].name) || a[1].name.localeCompare(b[1].name))
+    .map(([sku, group]) => {
+      const sortedRows = group.rows.slice().sort((a, b) =>
+        window.RevenueLogic.componentStatusRank(a.status) - window.RevenueLogic.componentStatusRank(b.status)
+        || a.c.component_name.localeCompare(b.c.component_name)
+      );
+      const needsActionCount = sortedRows.filter(r => r.status !== 'OK').length;
+
+      const tableRows = sortedRows.map(r => {
+        const { c, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct } = r;
+        const hasShortfallSignal = backendRec && backendRec.net_need > 0;
+        const trailing = landedHistory.slice(0, lastNPos);
+        const avgPoQty = trailing.length ? Math.round(trailing.reduce((s, o) => s + (o.qty_in || 0), 0) / trailing.length) : null;
+        const fgCount = openFgOrdersForProduct.length;
+        return [
+          `<strong>${c.component_name}</strong>`,
+          // Alex (2026-11-16): "there's overlap in the UI" -- the fix was giving this column a
+          // real two-line-safe height (noWrapCols removed from this index) instead of forcing a
+          // qty + a muted count badge onto one nowrap line, which is what was colliding/clipping.
+          `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px; white-space:normal; text-align:left;" onclick="showComponentOnHandDetail('${c.component_id}')">
+            <div>${(c.qty_on_hand || 0).toLocaleString()}</div>${fgCount ? `<div class="muted" style="font-size:11px;">${fgCount} FG PO${fgCount === 1 ? '' : 's'}</div>` : ''}
+          </button>`,
+          `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px; white-space:normal; text-align:left;" onclick="showComponentInFlightDetail('${c.component_id}')">
+            <div>${(c.qty_in_flight || 0).toLocaleString()}</div>${inFlightDetail.length ? `<div class="muted" style="font-size:11px;">${inFlightDetail.length} order${inFlightDetail.length === 1 ? '' : 's'}</div>` : ''}
+          </button>`,
+          avgPoQty != null
+            ? `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentOnHandDetail('${c.component_id}')" title="Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'} for this component">${avgPoQty.toLocaleString()}</button>`
+            : '<span class="muted">no history</span>',
+          `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px; white-space:normal; text-align:left;" onclick="manageComponentVendors('${c.component_id}')">
+            ${preferred?.vendors?.vendor_name || '<span class="muted">none set</span>'}${allVendorLinks.length > 1 ? `<div class="muted" style="font-size:11px;">+${allVendorLinks.length - 1} more</div>` : ''}
+          </button>`,
+          `<button class="btn btn-ghost" style="padding:0;" onclick="showComponentStatusDetail('${c.component_id}')">
+            <span class="pill ${statusPill[status]}">${statusLabel[status]}</span>${hasShortfallSignal && status === 'OK' ? ' <span class="pill watch" title="The full PO-recommendation engine flags a real component shortfall — click for detail">⚠</span>' : ''}
+          </button>`,
+          runOutMonthIndex == null ? '<span class="muted">beyond 6mo</span>' : `<strong>~${monthLabelLong(months[runOutMonthIndex])}</strong>`,
+          canEdit() ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
+        ];
+      });
+
+      return `
+        <div class="card" style="padding:0; margin-bottom:12px; overflow-x:auto;">
+          <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <strong style="font-size:16px;">${group.name}</strong>
+              <span class="muted" style="font-size:13px;">${sku}</span>
+            </div>
+            <span class="pill ${needsActionCount > 0 ? 'watch' : 'good'}" style="font-size:12px;">${needsActionCount > 0 ? `${needsActionCount} need${needsActionCount === 1 ? 's' : ''} attention` : 'all OK'}</span>
+          </div>
+          ${kpiTable(['Component', 'On Hand', 'In-Flight', `Avg Last ${lastNPos} PO${lastNPos === 1 ? '' : 's'}`, 'Vendor', 'Status', 'Order By', ''],
+            tableRows, null,
+            ['160px', '125px', '125px', '130px', '150px', '130px', '110px', '95px'],
+            [3, 5, 6])}
+        </div>
+      `;
+    }).join('');
 
   el.innerHTML = `
-    <div class="card" style="padding:16px 18px;">
-      <div style="font-family:'Playfair Display'; font-weight:700; font-size:20px; margin:0 0 3px; color:var(--ink);">Components</div>
-      <div class="muted" style="font-size:13px; margin-bottom:12px;">
-        One row per raw component, organized to answer: how much is on hand (and will a real finished-good PO
-        use it up), how much is in flight (click to see when it lands), how big a PO we could place right
-        now with current levels (click Vendor for lead time, click On Hand/Avg PO for landed-order history),
-        and when to order more next. Status click shows the full rationale, including what the real
-        PO-recommendation engine (Overview tab) separately says. Sorted Order Now / Order Soon / OK.
-      </div>
-      <div style="display:flex; align-items:center; gap:14px; margin-bottom:12px; flex-wrap:wrap;">
-        <select id="components-product-filter" style="padding:6px 9px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="setComponentsProductFilter(this.value)">
-          <option value="all" ${productFilter === 'all' ? 'selected' : ''}>All products</option>
-          ${uniqueProducts.map(([sku, name]) => `<option value="${sku}" ${productFilter === sku ? 'selected' : ''}>${name}</option>`).join('')}
-        </select>
-        <label style="display:flex; align-items:center; gap:6px; font-size:14px;">
-          Avg of last
-          <input type="number" id="components-last-n-pos" value="${lastNPos}" min="1" max="20" style="width:52px; padding:5px 7px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="setComponentsLastNPos(this.value)">
-          POs
-        </label>
-      </div>
-      ${tableRows.length
-        ? kpiTable(['Component', 'Product', 'On Hand', 'In-Flight', `Avg Last ${lastNPos} PO${lastNPos === 1 ? '' : 's'}`, 'Vendor', 'Status', 'Order By', ''],
-            tableRows, null,
-            ['140px', '150px', '115px', '115px', '130px', '150px', '130px', '100px', '95px'],
-            [2, 3, 4, 5, 6, 7, 8])
-        : '<div class="empty-state">No components match this filter.</div>'}
+    <div style="font-family:'Playfair Display'; font-weight:700; font-size:20px; margin:0 0 3px; color:var(--ink);">Components</div>
+    <div class="muted" style="font-size:13px; margin-bottom:12px;">
+      Grouped by finished-good product. Per component: how much is on hand (and will a real finished-good PO
+      use it up), how much is in flight (click to see when it lands), how big a PO we could place right
+      now with current levels (click Vendor for lead time, click On Hand/Avg PO for landed-order history),
+      and when to order more next. Status click shows the full rationale, including what the real
+      PO-recommendation engine (Overview tab) separately says. Components within each product sorted
+      Order Now / Order Soon / OK.
     </div>
+    <div class="card" style="padding:12px 16px; margin-bottom:12px;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:14px; font-weight:500;">
+        Avg of last
+        <input type="number" id="components-last-n-pos" value="${lastNPos}" min="1" max="20" style="width:52px; padding:5px 7px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="setComponentsLastNPos(this.value)">
+        POs (applies to every component below)
+      </label>
+    </div>
+    ${groupsHtml || '<div class="card empty-state">No components found.</div>'}
     ${singleComponentNotice}
   `;
 }
@@ -3391,6 +3404,10 @@ function setComponentsLastNPos(n) {
 
 // Alex (2026-11-15): "How much do we have on hand of each component? Are there any finished
 // good PO's in progress or planned that will use this up?" -- the on-hand-click detail.
+// Alex (2026-11-16): "popup boxes... improve the UI... concise visuals but visuals" -- replaced
+// the plain text+table layout with a stat-tile header (big number + context) and a small Chart.js
+// bar chart (On Hand vs. In-Flight vs. what FG POs will consume), same chart-first pattern as the
+// existing safety-stock popup.
 function showComponentOnHandDetail(componentId) {
   const { rows } = window._componentsCache || { rows: [] };
   const r = rows.find(row => row.c.component_id === componentId);
@@ -3399,6 +3416,7 @@ function showComponentOnHandDetail(componentId) {
   const lastNPos = window._componentsLastNPos || 3;
   const trailing = landedHistory.slice(0, lastNPos);
   const avgPoQty = trailing.length ? Math.round(trailing.reduce((s, o) => s + (o.qty_in || 0), 0) / trailing.length) : null;
+  const fgTotalQty = openFgOrdersForProduct.reduce((s, o) => s + (o.qty || 0), 0);
 
   const historyRows = landedHistory.slice(0, 10).map(o => [
     o.order_number || '<span class="muted">—</span>',
@@ -3412,25 +3430,59 @@ function showComponentOnHandDetail(componentId) {
   ]);
 
   const body = `
-    <div style="font-size:15px; line-height:1.5;">
-      <div style="padding:8px 0; border-bottom:1px solid var(--border); margin-bottom:10px;">
-        <strong>${(c.qty_on_hand || 0).toLocaleString()}</strong> units of <strong>${c.component_name}</strong> on hand for ${c.product_name}
-        (1:1 consumption per finished unit${c.qty_per_unit && c.qty_per_unit !== 1 ? `, ${c.qty_per_unit} per unit` : ''}).
+    <div style="display:flex; gap:14px; margin-bottom:16px; flex-wrap:wrap;">
+      <div class="card" style="flex:1; min-width:140px; padding:14px; text-align:center; background:var(--good-bg);">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--good-text); font-weight:700;">On Hand</div>
+        <div style="font-size:28px; font-weight:700; color:var(--good-text); margin-top:4px;">${(c.qty_on_hand || 0).toLocaleString()}</div>
       </div>
-
-      <div style="font-weight:700; font-size:15px; margin:0 0 7px;">Finished-good PO's that will use this up</div>
-      ${fgRows.length
-        ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
-        : `<div class="muted" style="font-size:14px; margin-bottom:10px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
-
-      <div style="font-weight:700; font-size:15px; margin:14px 0 7px;">Recent landed orders (for the trailing-average below)</div>
-      ${historyRows.length
-        ? kpiTable(['Order #', 'Qty', 'Landed'], historyRows, null, ['110px', '90px', '110px'], [1, 2])
-        : '<div class="muted" style="font-size:14px;">No landed order history for this component yet.</div>'}
-      ${avgPoQty != null ? `<div class="muted" style="font-size:13px; margin-top:8px;">Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'}: <strong>${avgPoQty.toLocaleString()}</strong> units. Change the "Avg of last N POs" control on the Components tab to adjust.</div>` : ''}
+      <div class="card" style="flex:1; min-width:140px; padding:14px; text-align:center; background:var(--watch-bg);">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--watch-text); font-weight:700;">FG POs Will Use</div>
+        <div style="font-size:28px; font-weight:700; color:var(--watch-text); margin-top:4px;">${fgTotalQty.toLocaleString()}</div>
+      </div>
+      <div class="card" style="flex:1; min-width:140px; padding:14px; text-align:center;">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); font-weight:700;">Avg Last ${trailing.length || lastNPos} PO${trailing.length === 1 ? '' : 's'}</div>
+        <div style="font-size:28px; font-weight:700; color:var(--ink); margin-top:4px;">${avgPoQty != null ? avgPoQty.toLocaleString() : '—'}</div>
+      </div>
     </div>
+    <div style="height:120px; margin-bottom:16px;"><canvas id="component-onhand-chart"></canvas></div>
+
+    <div style="font-weight:700; font-size:15px; margin:0 0 7px;">Finished-good PO's that will use this up</div>
+    ${fgRows.length
+      ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
+      : `<div class="muted" style="font-size:14px; margin-bottom:10px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
+
+    <div style="font-weight:700; font-size:15px; margin:14px 0 7px;">Recent landed orders</div>
+    ${historyRows.length
+      ? kpiTable(['Order #', 'Qty', 'Landed'], historyRows, null, ['110px', '90px', '110px'], [1, 2])
+      : '<div class="muted" style="font-size:14px;">No landed order history for this component yet.</div>'}
+    ${avgPoQty != null ? `<div class="muted" style="font-size:13px; margin-top:8px;">Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'}. Change the "Avg of last N POs" control on the Components tab to adjust.</div>` : ''}
   `;
   showDetail(`${c.component_name} — On Hand`, body, 'wide');
+
+  const canvas = document.getElementById('component-onhand-chart');
+  if (canvas) {
+    new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: ['On Hand', 'In-Flight', 'FG POs Will Use'],
+        datasets: [{
+          data: [c.qty_on_hand || 0, c.qty_in_flight || 0, fgTotalQty],
+          backgroundColor: ['#3F6B35', '#8A7257', '#96631A'],
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.x.toLocaleString()} units` } },
+        },
+        scales: {
+          x: { ticks: { font: { size: 10 }, callback: (v) => v.toLocaleString() }, title: { display: true, text: 'Units', font: { size: 10 } } },
+          y: { ticks: { font: { size: 11 } } },
+        },
+      },
+    });
+  }
 }
 
 // Alex (2026-11-15): "How much do we have in flight? I'd like to be able to click into this and
@@ -3454,29 +3506,67 @@ function showComponentInFlightDetail(componentId) {
     `<span style="white-space:nowrap;">${o.eta ? fmtDate(o.eta) : '<span class="muted">no ETA</span>'}</span>`,
   ]);
 
+  // Chart-first per the dashboard-ui-taste standard: a timeline of in-flight orders by ETA
+  // month, so "when do they land" is visible at a glance, not just in the table below.
+  const monthBuckets = {};
+  inFlightDetail.forEach(o => {
+    const key = o.eta ? o.eta.slice(0, 7) : 'no-eta';
+    monthBuckets[key] = (monthBuckets[key] || 0) + (o.qty_in || 0);
+  });
+  const sortedMonthKeys = Object.keys(monthBuckets).sort();
+  const chartLabels = sortedMonthKeys.map(k => k === 'no-eta' ? 'No ETA' : monthLabelShort(k + '-01'));
+  const chartData = sortedMonthKeys.map(k => monthBuckets[k]);
+
   const body = `
-    <div style="font-size:15px; line-height:1.5;">
-      <div style="padding:8px 0; border-bottom:1px solid var(--border); margin-bottom:10px;">
-        <strong>${(c.qty_in_flight || 0).toLocaleString()}</strong> units of <strong>${c.component_name}</strong> currently in flight (ordered, not yet landed).
+    <div style="display:flex; gap:14px; margin-bottom:16px; flex-wrap:wrap;">
+      <div class="card" style="flex:1; min-width:140px; padding:14px; text-align:center; background:var(--watch-bg);">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--watch-text); font-weight:700;">In Flight</div>
+        <div style="font-size:28px; font-weight:700; color:var(--watch-text); margin-top:4px;">${(c.qty_in_flight || 0).toLocaleString()}</div>
       </div>
-
-      <div style="font-weight:700; font-size:15px; margin:0 0 7px;">When they land</div>
-      ${inFlightRows.length
-        ? kpiTable(['Order #', 'Qty', 'Vendor', 'ETA'], inFlightRows, null, ['110px', '90px', '140px', '110px'], [1, 2, 3])
-        : '<div class="muted" style="font-size:14px; margin-bottom:10px;">Nothing currently in flight for this component.</div>'}
-
-      <div style="font-weight:700; font-size:15px; margin:14px 0 7px;">Finished-good PO's that will use this up</div>
-      ${fgRows.length
-        ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
-        : `<div class="muted" style="font-size:14px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
+      <div class="card" style="flex:1; min-width:140px; padding:14px; text-align:center;">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); font-weight:700;">Orders In Flight</div>
+        <div style="font-size:28px; font-weight:700; color:var(--ink); margin-top:4px;">${inFlightDetail.length}</div>
+      </div>
+      <div class="card" style="flex:1; min-width:140px; padding:14px; text-align:center; background:var(--good-bg);">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--good-text); font-weight:700;">FG POs Will Use</div>
+        <div style="font-size:28px; font-weight:700; color:var(--good-text); margin-top:4px;">${openFgOrdersForProduct.reduce((s, o) => s + (o.qty || 0), 0).toLocaleString()}</div>
+      </div>
     </div>
+    ${chartLabels.length ? `<div style="height:120px; margin-bottom:16px;"><canvas id="component-inflight-chart"></canvas></div>` : ''}
+
+    <div style="font-weight:700; font-size:15px; margin:0 0 7px;">When they land</div>
+    ${inFlightRows.length
+      ? kpiTable(['Order #', 'Qty', 'Vendor', 'ETA'], inFlightRows, null, ['110px', '90px', '140px', '110px'], [1, 2, 3])
+      : '<div class="muted" style="font-size:14px; margin-bottom:10px;">Nothing currently in flight for this component.</div>'}
+
+    <div style="font-weight:700; font-size:15px; margin:14px 0 7px;">Finished-good PO's that will use this up</div>
+    ${fgRows.length
+      ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
+      : `<div class="muted" style="font-size:14px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
   `;
   showDetail(`${c.component_name} — In Flight`, body, 'wide');
-}
 
-function setComponentsProductFilter(sku) {
-  window._componentsProductFilter = sku;
-  renderComponentsTable();
+  const canvas = document.getElementById('component-inflight-chart');
+  if (canvas && chartLabels.length) {
+    new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: chartLabels,
+        datasets: [{ data: chartData, backgroundColor: '#96631A' }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y.toLocaleString()} units landing` } },
+        },
+        scales: {
+          y: { ticks: { font: { size: 10 }, callback: (v) => v.toLocaleString() }, title: { display: true, text: 'Units', font: { size: 10 } } },
+          x: { ticks: { font: { size: 11 } } },
+        },
+      },
+    });
+  }
 }
 
 function showComponentStatusDetail(componentId) {
@@ -3498,36 +3588,75 @@ function showComponentStatusDetail(componentId) {
     ? `Start the conversation soon — projected to run out around ${monthLabelLong(months[runOutMonthIndex])}, which is within one contact-cadence window (${cadenceDays}d) past the ${leadDays}-day lead time.`
     : `No action needed right now — ${runOutMonthIndex == null ? "doesn't project to run out within the 6-month horizon" : `runout (${monthLabelLong(months[runOutMonthIndex])}) is comfortably beyond lead time + cadence`}.`;
 
+  const statusColor = { ORDER_NOW: 'var(--bad-text)', ORDER_SOON: 'var(--watch-text)', OK: 'var(--good-text)' };
+  const statusBg = { ORDER_NOW: 'var(--bad-bg)', ORDER_SOON: 'var(--watch-bg)', OK: 'var(--good-bg)' };
+
   const body = `
-    <div style="font-size:14px; line-height:1.5;">
-      <div style="padding:6px 0; border-bottom:1px solid var(--border); margin-bottom:8px;"><strong>Recommendation:</strong> ${recommendationSentence}</div>
-
-      <div class="section-label" style="margin:0 0 4px; font-size:12px;">Full Recommendation Engine (Overview tab)</div>
-      ${backendRec ? `
-        <div class="muted" style="font-size:13px; margin-bottom:4px;">
-          Netted against a real active PO-shortfall recommendation
-          (<span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:10px;">${backendRec.urgency}</span>,
-          due by ${fmtDate(backendRec.last_responsible_date)}) — accounts for the actual forecasted finished-good PO,
-          not just smoothed continuous demand.
-        </div>
-        <div style="font-size:13px; margin-bottom:8px;">Net need: <strong>${(backendRec.net_need || 0).toLocaleString()}</strong> · MOQ: ${(backendRec.moq || 0).toLocaleString()} · <strong>Order ${(backendRec.order_qty || 0).toLocaleString()} units from ${backendRec.vendor}</strong></div>
-      ` : `<div class="muted" style="font-size:13px; margin-bottom:8px;">No active PO-shortfall recommendation currently references this component.</div>`}
-
-      <details>
-        <summary>Show this tab's quick estimate</summary>
-        <div class="muted" style="font-size:12px; margin-bottom:6px;">
-          Starting stock: ${(c.qty_on_hand || 0).toLocaleString()} on hand + ${(c.qty_in_flight || 0).toLocaleString()} in-flight
-          = <strong>${startQty.toLocaleString()}</strong> available, consumed at ${c.qty_per_unit || 1} unit${c.qty_per_unit === 1 ? '' : 's'}/finished unit against the root product's live revenue forecast.
-        </div>
-        <table style="width:100%; font-size:13px; border-collapse:collapse; margin-bottom:6px;">
-          <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Consumed</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Running Balance</th></tr></thead>
-          <tbody>${monthRows}</tbody>
-        </table>
-        <div class="muted" style="font-size:12px;">Vendor lead time: ${leadDays} days. Contact cadence: ${cadenceDays} days.</div>
-      </details>
+    <div class="card" style="padding:14px; margin-bottom:14px; text-align:center; background:${statusBg[status]};">
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:${statusColor[status]}; font-weight:700;">Status</div>
+      <div style="font-size:24px; font-weight:700; color:${statusColor[status]}; margin-top:4px;">${statusLabel[status]}</div>
+      <div style="font-size:13px; margin-top:6px; color:var(--ink);">${recommendationSentence}</div>
     </div>
+
+    <div style="height:140px; margin-bottom:16px;"><canvas id="component-status-chart"></canvas></div>
+
+    <div class="section-label" style="margin:0 0 4px; font-size:12px;">Full Recommendation Engine (Overview tab)</div>
+    ${backendRec ? `
+      <div class="muted" style="font-size:13px; margin-bottom:4px;">
+        Netted against a real active PO-shortfall recommendation
+        (<span class="urgency-badge urgency-${backendRec.urgency}" style="font-size:10px;">${backendRec.urgency}</span>,
+        due by ${fmtDate(backendRec.last_responsible_date)}) — accounts for the actual forecasted finished-good PO,
+        not just smoothed continuous demand.
+      </div>
+      <div style="font-size:13px; margin-bottom:8px;">Net need: <strong>${(backendRec.net_need || 0).toLocaleString()}</strong> · MOQ: ${(backendRec.moq || 0).toLocaleString()} · <strong>Order ${(backendRec.order_qty || 0).toLocaleString()} units from ${backendRec.vendor}</strong></div>
+    ` : `<div class="muted" style="font-size:13px; margin-bottom:8px;">No active PO-shortfall recommendation currently references this component.</div>`}
+
+    <details>
+      <summary>Show this tab's quick estimate (table)</summary>
+      <div class="muted" style="font-size:12px; margin:6px 0 6px;">
+        Starting stock: ${(c.qty_on_hand || 0).toLocaleString()} on hand + ${(c.qty_in_flight || 0).toLocaleString()} in-flight
+        = <strong>${startQty.toLocaleString()}</strong> available, consumed at ${c.qty_per_unit || 1} unit${c.qty_per_unit === 1 ? '' : 's'}/finished unit against the root product's live revenue forecast.
+      </div>
+      <table style="width:100%; font-size:13px; border-collapse:collapse; margin-bottom:6px;">
+        <thead><tr><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Month</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Consumed</th><th style="text-align:left; padding:3px 8px; border-bottom:1px solid var(--border);">Running Balance</th></tr></thead>
+        <tbody>${monthRows}</tbody>
+      </table>
+      <div class="muted" style="font-size:12px;">Vendor lead time: ${leadDays} days. Contact cadence: ${cadenceDays} days.</div>
+    </details>
   `;
   showDetail(`${c.component_name} — Why "${statusLabel[status]}"?`, body, 'wide');
+
+  const canvas = document.getElementById('component-status-chart');
+  if (canvas) {
+    let runningBalance = startQty;
+    const balanceSeries = months.map((m, i) => { runningBalance -= consumption[i]; return Math.round(runningBalance); });
+    new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: months.map(m => monthLabelShort(m)),
+        datasets: [{
+          label: 'Projected balance',
+          data: balanceSeries,
+          borderColor: '#5C4A36',
+          backgroundColor: 'rgba(92,74,54,0.08)',
+          fill: true, tension: 0.25,
+          pointBackgroundColor: balanceSeries.map(v => v < 0 ? '#A33B2E' : '#5C4A36'),
+          pointRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y.toLocaleString()} units` } },
+        },
+        scales: {
+          y: { ticks: { font: { size: 10 }, callback: (v) => v.toLocaleString() }, title: { display: true, text: 'Units on hand', font: { size: 10 } } },
+          x: { ticks: { font: { size: 11 } } },
+        },
+      },
+    });
+  }
 }
 
 // ---------- Component vendor management (multiple vendors per component, lead time/cadence/MOQ edits) ----------
