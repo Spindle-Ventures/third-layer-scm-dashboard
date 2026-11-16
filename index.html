@@ -1979,29 +1979,120 @@ function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
     : `<label style="display:block; margin-bottom:8px; font-size:13px;">To (no contact email on file for ${vendor?.vendor_name || 'this vendor'} yet)<br>
         <input id="order-placed-email-to" type="email" placeholder="vendor@example.com" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border);" />
       </label>`;
+  // Alex (2026-11-17, round 54): "we also can initiate and check in over slack so let's build
+  // that into the create order screenflows." Added a channel toggle here -- Email (existing
+  // flow, unchanged) or Slack (posts a Block Kit message with buttons to the vendor-facing
+  // thirdlayer-aisupplychain channel instead). Switching channel re-renders the preview via
+  // toggleOrderPlacedChannel() below so Alex can see exactly what will go out before sending.
   const bodyHtml = `
     ${addOrderStepperHtml()}
-    ${recipientHtml}
-    <label style="display:block; font-size:13px; margin-bottom:4px;">Subject<br>
-      <input id="order-placed-email-subject" type="text" value="${subject.replace(/"/g, '&quot;')}" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border); box-sizing:border-box;" />
-    </label>
-    <textarea id="order-placed-email-text" style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical; margin-top:8px;">${body}</textarea>
-    <div class="muted" style="font-size:12px; margin-top:6px;">Future check-ins on this order will go out as Slack messages, not email.</div>
+    <div style="display:flex; gap:6px; margin-bottom:10px;">
+      <button id="order-placed-channel-email" class="btn btn-primary" style="padding:4px 10px; font-size:12px;" onclick="toggleOrderPlacedChannel('email', '${ledgerRow.id}')">📧 Email</button>
+      <button id="order-placed-channel-slack" class="btn btn-ghost" style="padding:4px 10px; font-size:12px;" onclick="toggleOrderPlacedChannel('slack', '${ledgerRow.id}')">💬 Slack</button>
+    </div>
+    <div id="order-placed-email-fields">
+      ${recipientHtml}
+      <label style="display:block; font-size:13px; margin-bottom:4px;">Subject<br>
+        <input id="order-placed-email-subject" type="text" value="${subject.replace(/"/g, '&quot;')}" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--border); box-sizing:border-box;" />
+      </label>
+      <textarea id="order-placed-email-text" style="width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid var(--border); font-family:'Inter'; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical; margin-top:8px;">${body}</textarea>
+    </div>
+    <div id="order-placed-slack-preview" style="display:none;"></div>
+    <div class="muted" style="font-size:12px; margin-top:6px;">Future check-ins on this order will go out on whichever channel you pick here.</div>
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-      <button class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="sendOrderPlacedEmailNow('${ledgerRow.id}', ${vendor ? `'${vendor.id}'` : 'null'})">Send Email</button>
+      <button id="order-placed-send-btn" class="btn btn-primary" style="padding:6px 12px; font-size:13px;" onclick="sendOrderPlacedEmailNow('${ledgerRow.id}', ${vendor ? `'${vendor.id}'` : 'null'})">Send Email</button>
       <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="document.getElementById('detail-modal-backdrop')?.remove()">Skip for now</button>
     </div>
   `;
   showDetail(`Send initial order email${vendor?.vendor_name ? ` to ${vendor.vendor_name}` : ''}?`, bodyHtml);
+  window._orderPlacedDraft = { o, vendor };
+}
+
+function toggleOrderPlacedChannel(channel, ledgerId) {
+  const emailBtn = document.getElementById('order-placed-channel-email');
+  const slackBtn = document.getElementById('order-placed-channel-slack');
+  const emailFields = document.getElementById('order-placed-email-fields');
+  const slackPreview = document.getElementById('order-placed-slack-preview');
+  const sendBtn = document.getElementById('order-placed-send-btn');
+  window._orderPlacedChannel = channel;
+  if (channel === 'slack') {
+    emailBtn.className = 'btn btn-ghost'; slackBtn.className = 'btn btn-primary';
+    emailFields.style.display = 'none'; slackPreview.style.display = 'block';
+    const { o } = window._orderPlacedDraft || {};
+    const preview = buildOrderPlacedSlackPreview(o);
+    slackPreview.innerHTML = `
+      <div class="muted" style="font-size:12px; margin-bottom:4px;">Will post to #thirdlayer-aisupplychain with buttons:</div>
+      <div style="padding:10px; border-radius:8px; border:1px solid var(--border); font-size:13px; line-height:1.5; white-space:pre-wrap;">${preview}</div>
+    `;
+    sendBtn.textContent = 'Queue Slack Message';
+  } else {
+    emailBtn.className = 'btn btn-primary'; slackBtn.className = 'btn btn-ghost';
+    emailFields.style.display = 'block'; slackPreview.style.display = 'none';
+    sendBtn.textContent = 'Send Email';
+  }
+}
+
+// Alex (2026-11-17, round 54): "write it within the tonality of slack" -- JS-side preview
+// mirrors build_order_placed_slack_blocks() in scripts/vendor_slack_messages.py exactly (same
+// text, buttons rendered separately server-side when actually posted) so what Alex previews
+// here is what actually goes out.
+function buildOrderPlacedSlackPreview(o) {
+  const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
+  const itemPhrase = humanizeItemLabel(itemLabel);
+  const qtyFmt = o.qty != null ? `${o.qty.toLocaleString()} units of ` : '';
+  const etaStr = o.eta ? plainDate(o.eta) : 'a date we still need to confirm';
+  const destPhrase = o.landing_destination_name ? ` at ${o.landing_destination_name}` : '';
+  const destAddressInline = (o.landing_destination_name && o.landing_destination_address) ? ` (${o.landing_destination_address})` : '';
+  const cadenceDays = o.vendor_default_cadence_days;
+  const cadenceLine = cadenceDays ? `We'll check in roughly every ${cadenceDays} days` : "We'll check in periodically";
+  const vendorFirst = o.vendor_contact_name ? o.vendor_contact_name.split(' ')[0] : 'there';
+  return (
+    `👋 Hey ${vendorFirst}! Kicking off a new order: ${qtyFmt}${itemPhrase}, landing ${etaStr}${destPhrase}${destAddressInline}.\n\n` +
+    `Can you confirm price + payment terms, and send over the order number once it's created on your end?\n\n` +
+    `Anything needing a signature → Alex@spindle.ventures. Invoicing → TLAccounting@spindle.ventures.\n\n` +
+    `${cadenceLine} -- flag us early if anything shifts!\n\n` +
+    `[💰 Confirmed Price & Terms]  [✏️ Add Order Number]  [⚠️ Need to Flag Something]`
+  );
 }
 
 async function sendOrderPlacedEmailNow(ledgerId, vendorId) {
+  const vendor = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
+  // Alex (2026-11-17, round 54): "we also can initiate and check in over slack so let's build
+  // that into the create order screenflows." If Slack is the selected channel, queue a
+  // channel='slack' vendor_messages row instead of 'email' -- send_queued_slack() in
+  // vendor_email_sync.py (the same trusted-process pattern as the email path) is the only thing
+  // that actually posts it to #thirdlayer-aisupplychain with real Block Kit buttons.
+  if (window._orderPlacedChannel === 'slack') {
+    const { o } = window._orderPlacedDraft || {};
+    const { data, error } = await sb.from('vendor_messages').insert({
+      vendor_id: vendorId, ledger_id: ledgerId, channel: 'slack',
+      direction: 'outbound', subject: null, body: buildOrderPlacedSlackPreview(o || {}),
+      status: 'queued', trigger_type: 'order_placed', proposed_by: 'dashboard',
+    }).select().single();
+    if (error) { await showConfirmModal('Something went wrong', 'Could not queue the message: ' + error.message, { okOnly: true, danger: true }); return; }
+    await logAction('vendor_messages', data.id, 'create', `Queued initial order-placed Slack message for ${vendor?.vendor_name || 'vendor'}`, null, data, { silent: true });
+    window._addOrderWizard = { step: 4 };
+    const modalEl = document.querySelector('#detail-modal-backdrop .detail-modal');
+    if (modalEl) {
+      modalEl.innerHTML = `
+        ${addOrderStepperHtml()}
+        <div style="text-align:center; padding:20px 10px;">
+          <div style="font-size:40px; margin-bottom:10px;">✅</div>
+          <div style="font-weight:700; font-family:'Playfair Display'; font-size:22px; margin-bottom:8px;">Queued to send</div>
+          <div class="muted" style="font-size:13px;">Will post to #thirdlayer-aisupplychain for ${vendor?.vendor_name || 'the vendor'} on the next sync.</div>
+          <button class="btn btn-primary" style="margin-top:14px; padding:6px 16px; font-size:13px;" onclick="document.getElementById('detail-modal-backdrop')?.remove()">Done</button>
+        </div>
+      `;
+    }
+    showQueuedToast(`Queued Slack message to ${vendor?.vendor_name || 'vendor'}`);
+    return;
+  }
+
   const toEmail = (document.getElementById('order-placed-email-to')?.value || '').trim() ||
     (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId)?.contact_email || null;
   if (!toEmail) { await showConfirmModal('Check your input', 'Enter a recipient email address before sending.', { okOnly: true }); return; }
   const subject = document.getElementById('order-placed-email-subject')?.value || 'Order update';
   const body = document.getElementById('order-placed-email-text')?.value || '';
-  const vendor = (window._addOrderLookups?.vendors || []).find(v => v.id === vendorId);
   const { data, error } = await sb.from('vendor_messages').insert({
     vendor_id: vendorId, ledger_id: ledgerId, channel: 'email',
     direction: 'outbound', subject, body, to_email: toEmail, status: 'queued',
@@ -2052,6 +2143,33 @@ function showQueuedToast(message) {
   setTimeout(() => { if (document.getElementById('queued-toast') === toast) toast.remove(); }, 5000);
 }
 
+function buildCheckInSlackPreview(o) {
+  const ref = o.internal_ref || o.vendor_po_number || 'this order';
+  const etaStr = o.eta ? plainDate(o.eta) : 'a date we still need to confirm';
+  const destPhrase = o.landing_destination_name ? ` at ${o.landing_destination_name}` : '';
+  const destAddressInline = (o.landing_destination_name && o.landing_destination_address) ? ` (${o.landing_destination_address})` : '';
+  const trackingLine = o.tracking_info ? '' : `\n\nAlso -- whenever you've got tracking info, drop it in here!`;
+  return (
+    `🔄 Quick check-in on Order ${ref} -- still tracking for ${etaStr}${destPhrase}${destAddressInline}?${trackingLine}\n\n` +
+    `[✅ Still On Track]  [⏳ Running Late]`
+  );
+}
+
+async function sendVendorMessageSlackNow(ledgerId) {
+  const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
+  if (!o) return;
+  const text = buildCheckInSlackPreview(o);
+  const { data, error } = await sb.from('vendor_messages').insert({
+    vendor_id: o.vendor_id, po_id: o.po_id || null, ledger_id: ledgerId, channel: 'slack',
+    direction: 'outbound', subject: null, body: text, status: 'queued',
+    trigger_type: 'contact_schedule', proposed_by: 'dashboard',
+  }).select().single();
+  if (error) { await showConfirmModal('Something went wrong', 'Could not queue the message: ' + error.message, { okOnly: true, danger: true }); return; }
+  await logAction('vendor_messages', data.id, 'create', `Queued check-in Slack message for ${o.vendor_name || 'vendor'}`, null, data, { silent: true });
+  document.getElementById('detail-modal-backdrop')?.remove();
+  showQueuedToast(`Queued Slack check-in for ${o.vendor_name || 'vendor'}`);
+}
+
 function showVendorMessagePopup(ledgerId) {
   const o = (window._openOrdersCache || []).find(r => r.ledger_id === ledgerId);
   if (!o) return;
@@ -2064,6 +2182,10 @@ function showVendorMessagePopup(ledgerId) {
   // previous popup screen." Compose is always reached FROM the Contact Schedule popup now (the
   // standalone "Thread" button that opened this directly was removed in round 35) -- a "← Back"
   // link returns there instead of leaving a dead end once this modal closes.
+  // Alex (2026-11-17, round 54): "we also can initiate and check in over slack" -- added a
+  // "Send via Slack" option alongside the existing email path, with its own preview (same Slack
+  // tone/buttons as build_check_in_slack_blocks() in vendor_slack_messages.py).
+  const slackPreview = buildCheckInSlackPreview(o);
   const body = `
     <button class="btn btn-ghost" style="padding:3px 8px; font-size:12px; margin-bottom:10px;" onclick="showContactScheduleDetail('${ledgerId}')">← Back</button>
     ${contactLine}
@@ -2073,6 +2195,11 @@ function showVendorMessagePopup(ledgerId) {
       <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="copyVendorMessage()">Copy message</button>
       ${o.vendor_contact_email ? `<a class="btn btn-ghost" style="padding:6px 12px; font-size:13px; text-decoration:none;" href="mailto:${o.vendor_contact_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}">Open in my own email instead</a>` : ''}
       <span id="vendor-message-copied" class="muted" style="font-size:13px; align-self:center; display:none;">Copied ✓</span>
+    </div>
+    <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border);">
+      <div class="muted" style="font-size:12px; margin-bottom:6px;">Or send a shorter check-in via Slack (#thirdlayer-aisupplychain) instead:</div>
+      <div style="padding:10px; border-radius:8px; border:1px solid var(--border); font-size:13px; line-height:1.5; white-space:pre-wrap; margin-bottom:8px;">${slackPreview}</div>
+      <button class="btn btn-ghost" style="padding:6px 12px; font-size:13px;" onclick="sendVendorMessageSlackNow('${ledgerId}')">💬 Send via Slack Instead</button>
     </div>
   `;
   showDetail(`Message for ${o.vendor_name || 'vendor'}`, body);
@@ -2344,6 +2471,18 @@ async function showContactScheduleDetail(ledgerId) {
     const isOut = m.direction === 'outbound';
     const isDraft = isOut && m.status !== 'sent';
     const dateStr = fmtDate((m.sent_at || m.created_at || '').slice(0, 10));
+    // Alex (2026-11-17, round 54): "we need to build out the conversation history for both
+    // email and slack to track slack message check-ins." This thread already merges both
+    // channels (vendor_messages.channel is 'email' or 'slack', same select('*') query) -- it
+    // was just missing a visible marker for WHICH channel each message came over. Added a
+    // small channel badge, and surface slack_button_clicked as its own pill (a structured tap
+    // reads differently from a typed reply, worth seeing at a glance).
+    const channelBadge = m.channel === 'slack'
+      ? `<span class="muted" style="font-size:10px;">💬 Slack</span>`
+      : `<span class="muted" style="font-size:10px;">📧 Email</span>`;
+    const buttonPill = m.slack_button_clicked
+      ? `<span class="pill watch" style="font-size:10px; margin-left:6px;">tapped: ${m.slack_button_clicked.replace(/_/g, ' ')}</span>`
+      : '';
     const statusPill = (!isOut && m.parsed_status)
       ? `<span class="pill ${m.parsed_status === 'confirmed' ? 'good' : m.parsed_status === 'delay' ? 'bad' : 'watch'}" style="font-size:10px; margin-left:6px;">${m.parsed_status}</span>`
       : (isDraft ? `<span class="pill watch" style="font-size:10px; margin-left:6px;">${m.status === 'proposed' ? 'pending approval' : m.status}</span>` : '');
@@ -2352,7 +2491,7 @@ async function showContactScheduleDetail(ledgerId) {
     return `
       <div style="display:flex; justify-content:${isOut ? 'flex-end' : 'flex-start'}; margin-bottom:8px;">
         <div style="max-width:80%; padding:8px 12px; border-radius:10px; background:${isOut ? 'var(--accent-soft, #f0e6d8)' : 'var(--card-bg, #f5f5f5)'}; border:1px solid var(--border);">
-          <div style="font-size:11px; color:var(--muted); margin-bottom:3px;">${isOut ? (isDraft ? 'Draft (not sent yet)' : 'We sent') : 'They replied'} · ${dateStr}${statusPill}</div>
+          <div style="font-size:11px; color:var(--muted); margin-bottom:3px;">${channelBadge} · ${isOut ? (isDraft ? 'Draft (not sent yet)' : 'We sent') : 'They replied'} · ${dateStr}${statusPill}${buttonPill}</div>
           <div style="font-size:13px; line-height:1.4;">${summaryText}</div>
           <div style="margin-top:4px;">
             <a href="#" onclick="event.preventDefault(); const el=document.getElementById('${fullId}'); el.style.display = el.style.display === 'none' ? 'block' : 'none'; return false;" style="font-size:11px; color:var(--accent, #8a6d3b); text-decoration:underline;">View full message</a>
