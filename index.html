@@ -1848,19 +1848,24 @@ function buildVendorMessageDraft(o) {
   // directly -- but ending on a direct yes/no question (rather than an open-ended "could you
   // confirm the current status?") makes Gmail far more likely to surface a one-tap "Yes, on
   // track" / "No, delayed" style suggestion, while anyone with real news can still just type it.
+  // Alex (2026-11-17): "the tone should be to check up on the timing/progress of the order
+  // against the ETA and should be worded as such built around confirming no delays or asking
+  // for delays to be taken into effect if the ETA needs to push." Explicitly invites a revised
+  // date rather than only a yes/no -- if the ETA needs to move, this email should make it easy
+  // for the vendor to just say the new date, not force a separate round-trip to get it.
   let ask;
   if (o.eta && o.eta < today && !o.landed) {
     const daysLate = Math.round((new Date(today) - new Date(o.eta)) / 86400000);
-    ask = `Checking in on ${qtyFmt}${itemPhrase} — it was expected ${plainDate(o.eta)} and we haven't seen it land yet (${daysLate} day${daysLate === 1 ? '' : 's'} past the original date). Is it still on the way?`;
+    ask = `Checking in on ${qtyFmt}${itemPhrase} — it was expected ${plainDate(o.eta)} and we haven't seen it land yet (${daysLate} day${daysLate === 1 ? '' : 's'} past the original date). Can you confirm it's on the way, or let us know a new expected date if it's pushed?`;
   } else if (o.next_contact && o.next_contact < today) {
-    ask = `Following up on ${qtyFmt}${itemPhrase}. Is everything still on track?`;
+    ask = `Following up on ${qtyFmt}${itemPhrase} and the ${o.eta ? `${plainDate(o.eta)} ETA` : 'timing'}. Can you confirm that's still on track, or let us know if it needs to move?`;
   } else if (o.eta) {
-    ask = `Just checking in ahead of ${qtyFmt}${itemPhrase}, expected ${plainDate(o.eta)}. Is it still on track for that date?`;
+    ask = `Just checking in ahead of ${qtyFmt}${itemPhrase}, expected ${plainDate(o.eta)}. Is it still on track for that date, or should we plan around a later one?`;
   } else {
-    ask = `Checking in on ${qtyFmt}${itemPhrase}. Is everything on track?`;
+    ask = `Checking in on ${qtyFmt}${itemPhrase}. Is everything on track, or is there a delay we should know about?`;
   }
 
-  return `${greeting}\n\n${refLine}${ask}${missingClause}\n\nThanks,\nThird Layer`;
+  return `${greeting}\n\n${refLine}${ask}${missingClause}\n\nThanks,\nManny`;
 }
 
 // Alex (2026-11-12): "It should be a second screen within the screenflow any time a new order
@@ -1914,18 +1919,20 @@ function buildOrderPlacedBody(o) {
   const greeting = o.vendor_contact_name ? `Hi ${o.vendor_contact_name.split(' ')[0]},` : 'Hi,';
   const etaStr = o.eta ? plainDate(o.eta) : 'no ETA set yet';
   const destPhrase = o.landing_destination_name ? ` at ${o.landing_destination_name}` : '';
-  // Alex (2026-11-14): "it should also be a part of the validation email" (the landing
-  // destination's address). Only appended when we actually have an address on file -- no
-  // "address not set" filler text in a vendor-facing email.
-  const destAddressLine = (o.landing_destination_name && o.landing_destination_address)
-    ? `Landing address: ${o.landing_destination_address}\n\n`
+  // Alex (2026-11-17): "put the landing address where it naturally fits in the email... It
+  // should be after the landing location is mentioned." Moved from its own paragraph up top
+  // (before the ask) to right after "...at <landing location>" inline, as a parenthetical, so
+  // the address reads as elaborating on the destination that was just named -- only appended
+  // when we actually have an address on file -- no "address not set" filler in a vendor email.
+  const destAddressInline = (o.landing_destination_name && o.landing_destination_address)
+    ? ` (${o.landing_destination_address})`
     : '';
   return (
-    `${greeting}\n\n${refLine}${destAddressLine}` +
+    `${greeting}\n\n${refLine}` +
     // Alex (2026-11-14): "In the email we don't need a confirmation number, just the order
     // number." -- the order number is already stated above (refLine); dropped the old
     // "your order/confirmation number" ask entirely, kept price/terms.
-    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}${destPhrase}. Could you confirm price and payment terms for this order?\n\n` +
+    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}${destPhrase}${destAddressInline}. Could you confirm price and payment terms for this order?\n\n` +
     // Alex (2026-11-14): "When asking for pricing & terms let's have them send anything that
     // requires signature to Alex@spindle.ventures and then request invoicing be sent to
     // tlaccounting@spindle.ventures." Two distinct asks, two distinct addresses -- do not
@@ -2190,14 +2197,14 @@ function contactStatus(o) {
   const lastInbound = msgs.filter(m => m.direction === 'inbound').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
   const dueToday = o.next_contact && o.next_contact <= today;
   if (lastInbound && lastOutbound && lastInbound.created_at > lastOutbound.sent_at) {
-    if (lastInbound.parsed_status === 'confirmed') return { key: 'healthy', label: 'Healthy', cls: 'good' };
-    if (lastInbound.parsed_status === 'delay') return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
-    return { key: 'needs_attention', label: 'Needs Review', cls: 'watch' };
+    if (lastInbound.parsed_status === 'confirmed') return { key: 'healthy', label: 'Healthy', cls: 'good', reason: 'Vendor replied confirming this order is on track.' };
+    if (lastInbound.parsed_status === 'delay') return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad', reason: 'Vendor replied reporting a delay on this order.' };
+    return { key: 'needs_attention', label: 'Needs Review', cls: 'watch', reason: "Vendor replied, but their response couldn't be auto-classified as confirmed or delayed -- read it directly." };
   }
   if (lastOutbound) {
     const daysSinceSent = daysBetween(lastOutbound.sent_at.slice(0, 10), today);
-    if (daysSinceSent >= 3) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
-    return { key: 'awaiting_reply', label: 'Awaiting Reply', cls: 'watch' };
+    if (daysSinceSent >= 3) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad', reason: `Vendor has gone silent for ${daysSinceSent} days since our last outbound message -- no reply yet.` };
+    return { key: 'awaiting_reply', label: 'Awaiting Reply', cls: 'watch', reason: `Sent ${daysSinceSent} day${daysSinceSent === 1 ? '' : 's'} ago, within the normal reply window.` };
   }
   const pendingDraft = msgs.filter(m => m.direction === 'outbound' && (m.status === 'proposed' || m.status === 'queued'))
     // Alex (2026-11-12): "When I click send email from the order creation that should serve as
@@ -2209,11 +2216,17 @@ function contactStatus(o) {
     // an already-approved send is never shown as still pending just because an older proposed
     // row happens to sort first.
     .sort((a, b) => (a.status === 'queued' ? -1 : 1) - (b.status === 'queued' ? -1 : 1))[0];
-  if (pendingDraft) return { key: 'pending_draft', label: pendingDraft.status === 'queued' ? 'Approved — Sending' : 'Pending Approval', cls: 'watch' };
-  if (o.next_contact && o.next_contact < today) return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad' };
-  if (dueToday) return { key: 'due_today', label: 'Due Today', cls: 'watch' };
-  if (o.next_contact || o.last_contacted) return { key: 'scheduled', label: 'Scheduled', cls: 'watch' };
-  return { key: 'not_contacted', label: 'Not Contacted', cls: 'watch' };
+  if (pendingDraft) return {
+    key: 'pending_draft', label: pendingDraft.status === 'queued' ? 'Approved — Sending' : 'Pending Approval', cls: 'watch',
+    reason: pendingDraft.status === 'queued' ? 'A message to the vendor is approved and queued to send on the next cycle.' : 'A draft message to the vendor is waiting for approval before it sends.',
+  };
+  if (o.next_contact && o.next_contact < today) {
+    const daysOverdue = daysBetween(o.next_contact, today);
+    return { key: 'needs_attention', label: 'Needs Attention', cls: 'bad', reason: `Next contact was due ${fmtDate(o.next_contact)} -- ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue with no vendor message sent yet.` };
+  }
+  if (dueToday) return { key: 'due_today', label: 'Due Today', cls: 'watch', reason: `Next contact is due today (${fmtDate(o.next_contact)}).` };
+  if (o.next_contact || o.last_contacted) return { key: 'scheduled', label: 'Scheduled', cls: 'watch', reason: `Next contact scheduled for ${o.next_contact ? fmtDate(o.next_contact) : 'a date not yet set'}.` };
+  return { key: 'not_contacted', label: 'Not Contacted', cls: 'watch', reason: 'No contact has been logged or scheduled for this order yet.' };
 }
 
 function renderContactScheduleCell(o) {
@@ -2223,8 +2236,11 @@ function renderContactScheduleCell(o) {
   // "confirmed" should read as healthy even if next_contact hasn't been bumped yet, and a vendor
   // who's gone silent past the 3-day window (Alex, 2026-11-11) should read as needs-attention
   // even if next_contact is still in the future.
+  // Alex (2026-11-17): "why is that categorized as needs attention?" -- added a plain-language
+  // reason as the pill's hover tooltip (native `title`, zero extra screen space) built from the
+  // exact same branch that produced the status, so it can never drift from the real logic.
   const s = contactStatus(o);
-  return `<span class="pill clickable-pill ${s.cls}" onclick="showContactScheduleDetail('${o.ledger_id}')">${s.label}</span>`;
+  return `<span class="pill clickable-pill ${s.cls}" title="${(s.reason || '').replace(/"/g, '&quot;')}" onclick="showContactScheduleDetail('${o.ledger_id}')">${s.label}</span>`;
 }
 
 // Alex (2026-11-12): "I should be able to see a top level contextual 2 sentences on the status
@@ -2458,6 +2474,18 @@ function renderOpenOrderRow(o, editing) {
   // table's own "Action" column is now JUST the ⋯ actions menu (whose "View / Edit Details"
   // entry is where the status pill, Order #, and Tracking now live), not a second status
   // indicator duplicating what the popup shows.
+  // Alex (2026-11-17): "why is [Night Oil 50ml] categorized as 'needs attention'?" -- the
+  // Overview group header's "N need attention" count comes from action_needed (On Track vs. not),
+  // which had NO visible indicator anywhere in the row since the status pill moved into the
+  // popup above -- there was no way to see why a row counted toward that total without opening
+  // the popup. Added a small icon next to the ETA cell (same cell the ETA-driven reasons relate
+  // to) with the real action_detail sentence as its hover tooltip -- zero added screen space,
+  // same source data the group-header count already uses, so it can't drift.
+  const actionIcon = { 'Overdue': '⚠', 'Contact Due': '✉', 'ETA Soon': '◷', 'Paused': '⏸' }[o.action_needed];
+  const actionIconCls = { 'Overdue': 'bad', 'Contact Due': 'watch', 'ETA Soon': 'watch', 'Paused': 'watch' }[o.action_needed] || 'watch';
+  const actionIndicator = (o.action_needed && o.action_needed !== 'On Track' && actionIcon)
+    ? ` <span class="pill ${actionIconCls}" style="padding:1px 6px; font-size:11px;" title="${(o.action_detail || o.action_needed).replace(/"/g, '&quot;')}">${actionIcon}</span>`
+    : '';
   return `
     <tr id="row-${o.ledger_id}" style="background:${rowBg};">
       ${selectCell}
@@ -2465,7 +2493,7 @@ function renderOpenOrderRow(o, editing) {
       <td><span class="pill ${orderTypePillClass}">${orderTypeLabel}</span></td>
       <td>${componentText}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
-      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong>${actionIndicator}</td>
       <td>${o.vendor_name || '—'}</td>
       <td>${renderContactScheduleCell(o)}</td>
     </tr>
