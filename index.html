@@ -2483,8 +2483,11 @@ function renderOpenOrderRow(o, editing) {
   // same source data the group-header count already uses, so it can't drift.
   const actionIcon = { 'Overdue': '⚠', 'Contact Due': '✉', 'ETA Soon': '◷', 'Paused': '⏸' }[o.action_needed];
   const actionIconCls = { 'Overdue': 'bad', 'Contact Due': 'watch', 'ETA Soon': 'watch', 'Paused': 'watch' }[o.action_needed] || 'watch';
+  // Alex (2026-11-17): "This icon needs to be much bigger." Bumped from 11px/padding:1px 6px
+  // to a visibly larger pill (18px icon, more padding) -- still just this one cell, no layout
+  // change beyond its own size.
   const actionIndicator = (o.action_needed && o.action_needed !== 'On Track' && actionIcon)
-    ? ` <span class="pill ${actionIconCls}" style="padding:1px 6px; font-size:11px;" title="${(o.action_detail || o.action_needed).replace(/"/g, '&quot;')}">${actionIcon}</span>`
+    ? ` <span class="pill ${actionIconCls}" style="padding:3px 9px; font-size:18px; line-height:1;" title="${(o.action_detail || o.action_needed).replace(/"/g, '&quot;')}">${actionIcon}</span>`
     : '';
   return `
     <tr id="row-${o.ledger_id}" style="background:${rowBg};">
