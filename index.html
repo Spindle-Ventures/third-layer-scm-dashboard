@@ -1899,11 +1899,18 @@ function buildOrderPlacedSubject(o) {
 // setup) -- the body text's own closing line was changed from "Third Layer" to "Manny" so there
 // isn't a second, conflicting sign-off above the real Gmail signature.
 function buildOrderPlacedBody(o) {
+  // Alex (2026-11-17, round 53): "Don't reference the order number as we won't have it upon
+  // initiation. We need to add as the last question in the first paragraph asking for the
+  // order number. In the last sentence, reference the contact cadence for that vendor and
+  // include a communication that states how often we will be checking in." Removed the old
+  // `refLine`/"Order #:" line entirely (we genuinely don't have one yet at initiation time --
+  // that was always sourced from internal_ref, which is only set AFTER the vendor responds).
+  // Folded the order-number ask into the end of paragraph 1, and replaced the old generic
+  // "let us know proactively" closer with one that names the real cadence
+  // (vendor.default_cadence_days) so the vendor knows what to expect going forward.
   const itemLabel = o.order_type === 'componentry' ? (o.component_name || 'this component') : o.product_name;
   const itemPhrase = humanizeItemLabel(itemLabel);
   const qtyFmt = o.qty != null ? `${o.qty.toLocaleString()} units of ` : '';
-  const ref = o.internal_ref || o.vendor_po_number;
-  const refLine = ref ? `Order #: ${ref}\n\n` : '';
   const greeting = o.vendor_contact_name ? `Hi ${o.vendor_contact_name.split(' ')[0]},` : 'Hi,';
   const etaStr = o.eta ? plainDate(o.eta) : 'no ETA set yet';
   const destPhrase = o.landing_destination_name ? ` at ${o.landing_destination_name}` : '';
@@ -1915,18 +1922,19 @@ function buildOrderPlacedBody(o) {
   const destAddressInline = (o.landing_destination_name && o.landing_destination_address)
     ? ` (${o.landing_destination_address})`
     : '';
+  const cadenceDays = o.vendor_default_cadence_days;
+  const cadenceClause = cadenceDays
+    ? ` We'll check in with you roughly every ${cadenceDays} day${cadenceDays === 1 ? '' : 's'} on the status of this order.`
+    : ' We\'ll be checking in periodically on the status of this order.';
   return (
-    `${greeting}\n\n${refLine}` +
-    // Alex (2026-11-14): "In the email we don't need a confirmation number, just the order
-    // number." -- the order number is already stated above (refLine); dropped the old
-    // "your order/confirmation number" ask entirely, kept price/terms.
-    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}${destPhrase}${destAddressInline}. Could you confirm price and payment terms for this order?\n\n` +
+    `${greeting}\n\n` +
+    `We'd like to initiate an order for ${qtyFmt}${itemPhrase}, targeting a landing date of ${etaStr}${destPhrase}${destAddressInline}. Could you confirm price and payment terms for this order, and let us know the order number for it once it's created on your end?\n\n` +
     // Alex (2026-11-14): "When asking for pricing & terms let's have them send anything that
     // requires signature to Alex@spindle.ventures and then request invoicing be sent to
     // tlaccounting@spindle.ventures." Two distinct asks, two distinct addresses -- do not
     // collapse them into one line/address.
     `If anything needs a signature, please send it to Alex@spindle.ventures. Once invoicing is ready, please send it to TLAccounting@spindle.ventures.\n\n` +
-    `Please let us know proactively if anything changes or a delay comes up on your end -- the earlier we hear about it, the better we can plan around it.\n\n` +
+    `Please let us know proactively if anything changes or a delay comes up on your end -- the earlier we hear about it, the better we can plan around it.${cadenceClause}\n\n` +
     `Thanks,\nManny`
   );
 }
@@ -1958,6 +1966,10 @@ function showOrderPlacedEmailScreen(ledgerRow, vendor, itemLabel) {
     vendor_contact_name: vendor?.contact_name,
     landing_destination_name: landingDestName,
     landing_destination_address: landingDestAddress,
+    // Alex (2026-11-17, round 53): "reference the contact cadence for that vendor" -- vendor
+    // objects from _addOrderLookups already carry default_cadence_days (same vendors row), just
+    // wasn't threaded into this manually-built `o`.
+    vendor_default_cadence_days: vendor?.default_cadence_days,
   };
   const subject = buildOrderPlacedSubject(o);
   const body = buildOrderPlacedBody(o);
@@ -2552,7 +2564,7 @@ async function showAddOrderMenu() {
   // ones are visibly tagged "(inactive)" in the picker rather than silently hidden.
   const [{ data: products }, { data: vendors }] = await Promise.all([
     sb.from('products').select('id, sku_code, display_name, is_active'),
-    sb.from('vendors').select('id, vendor_name, vendor_type, contact_email, contact_name, address').order('vendor_name'),
+    sb.from('vendors').select('id, vendor_name, vendor_type, contact_email, contact_name, address, default_cadence_days').order('vendor_name'),
   ]);
   window._addOrderLookups = {
     products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
@@ -3831,7 +3843,7 @@ async function orderComponentFromComponentsTab(componentId, productId) {
   if (!window._addOrderLookups) {
     const [{ data: products }, { data: vendors }] = await Promise.all([
       sb.from('products').select('id, sku_code, display_name, is_active'),
-      sb.from('vendors').select('id, vendor_name, contact_email, contact_name').order('vendor_name'),
+      sb.from('vendors').select('id, vendor_name, contact_email, contact_name, default_cadence_days').order('vendor_name'),
     ]);
     window._addOrderLookups = {
       products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
@@ -3860,7 +3872,7 @@ async function initiateLivePoFromOutlook(productId, recommendedQty, recommendedM
   if (!window._addOrderLookups) {
     const [{ data: products }, { data: vendors }] = await Promise.all([
       sb.from('products').select('id, sku_code, display_name, is_active'),
-      sb.from('vendors').select('id, vendor_name').order('vendor_name'),
+      sb.from('vendors').select('id, vendor_name, default_cadence_days').order('vendor_name'),
     ]);
     window._addOrderLookups = {
       products: (products || []).sort((a, b) => productSortRank(a.display_name) - productSortRank(b.display_name) || a.display_name.localeCompare(b.display_name)),
