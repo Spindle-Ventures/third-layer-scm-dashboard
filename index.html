@@ -199,6 +199,10 @@
   .empty-state { color: var(--muted); font-size: 14px; padding: 30px; text-align: center; }
   .clickable-pill { cursor: pointer; }
   .clickable-pill:hover { filter: brightness(0.95); }
+  /* Alex (2026-11-17, 3rd pass): "I want it to be hover over the icon to understand why."
+     CSS-driven hover tooltip for the Overview needs-attention icon -- shows the bubble on
+     :hover, nothing else needed in JS. */
+  .action-needed-tip:hover .action-needed-tip-bubble { display: block !important; }
   .detail-modal-backdrop {
     position: fixed; inset: 0; background: rgba(44,42,38,0.35); display: flex; align-items: center;
     justify-content: center; z-index: 1000;
@@ -2483,17 +2487,20 @@ function renderOpenOrderRow(o, editing) {
   // same source data the group-header count already uses, so it can't drift.
   const actionIcon = { 'Overdue': '⚠', 'Contact Due': '✉', 'ETA Soon': '◷', 'Paused': '⏸' }[o.action_needed];
   const actionIconCls = { 'Overdue': 'bad', 'Contact Due': 'watch', 'ETA Soon': 'watch', 'Paused': 'watch' }[o.action_needed] || 'watch';
-  // Alex (2026-11-17, 2nd pass): "The icon needs to be bigger and there's no real plain
-  // language explanation." A hover-only tooltip doesn't count as a real explanation (you have
-  // to find and hover it, and it's invisible on a quick glance or in a screenshot) -- now shows
-  // the actual action_detail sentence as visible text under the ETA, and the icon itself is
-  // bumped again to 26px (from 18px) so it reads clearly without hovering anything.
+  // Alex (2026-11-17, 3rd pass): "The icon is still not hover over. Instead there's just text
+  // below the icon which I don't like. I want it to be hover over the icon to understand why."
+  // Dropped the always-visible text line entirely -- back to icon-only, but the hover
+  // mechanism itself needed to actually work: a bare native `title` on an inline <span> can be
+  // slow/inconsistent to trigger in some browsers. Switched to a dedicated hover-tooltip pattern
+  // (CSS-only, span wraps icon + a hidden ::after-style tooltip shown on :hover) so hovering the
+  // icon reliably shows the action_detail reason, with no permanent on-screen text.
   const needsAttention = o.action_needed && o.action_needed !== 'On Track' && actionIcon;
+  const actionReasonText = (o.action_detail || o.action_needed || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   const actionIndicator = needsAttention
-    ? `<span class="pill ${actionIconCls}" style="padding:4px 11px; font-size:26px; line-height:1; vertical-align:middle; margin-left:6px;" title="${(o.action_detail || o.action_needed).replace(/"/g, '&quot;')}">${actionIcon}</span>`
-    : '';
-  const actionDetailLine = needsAttention
-    ? `<div class="muted" style="font-size:12px; margin-top:3px; line-height:1.3; max-width:220px; white-space:normal;">${(o.action_detail || o.action_needed).replace(/</g, '&lt;')}</div>`
+    ? `<span class="action-needed-tip" style="position:relative; display:inline-block; margin-left:6px; vertical-align:middle;">` +
+      `<span class="pill ${actionIconCls}" style="padding:4px 11px; font-size:26px; line-height:1; cursor:help;">${actionIcon}</span>` +
+      `<span class="action-needed-tip-bubble" style="display:none; position:absolute; left:50%; top:125%; transform:translateX(-50%); background:#2a2a2a; color:#fff; font-size:12px; line-height:1.3; padding:6px 10px; border-radius:6px; width:220px; white-space:normal; z-index:50; box-shadow:0 2px 8px rgba(0,0,0,0.25);">${actionReasonText}</span>` +
+      `</span>`
     : '';
   return `
     <tr id="row-${o.ledger_id}" style="background:${rowBg};">
@@ -2502,7 +2509,7 @@ function renderOpenOrderRow(o, editing) {
       <td><span class="pill ${orderTypePillClass}">${orderTypeLabel}</span></td>
       <td>${componentText}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
-      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong>${actionIndicator}${actionDetailLine}</td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong>${actionIndicator}</td>
       <td>${o.vendor_name || '—'}</td>
       <td>${renderContactScheduleCell(o)}</td>
     </tr>
