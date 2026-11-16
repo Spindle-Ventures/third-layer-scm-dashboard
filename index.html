@@ -1850,7 +1850,7 @@ function buildVendorMessageDraft(o) {
 
   return (
     `Hey ${vendorFirst},\n\n` +
-    `I'm doing a scheduled check-in on ${ref} set to arrive on ${etaStr}${destPhrase}${destAddressInline}. ` +
+    `I'm doing a scheduled check-in on Order Number ${ref} set to arrive on ${etaStr}${destPhrase}${destAddressInline}. ` +
     `Are we still on track? If yes, please confirm. If there are delays, please respond with context surrounding the delays and the new ETA.${trackingAsk}\n\n` +
     `Thanks,\nManny`
   );
@@ -2179,7 +2179,11 @@ function showActionNeededTip(evt, text) {
   hideActionNeededTip();
   const el = document.createElement('div');
   el.id = 'action-needed-tip-floating';
-  el.style.cssText = 'position:fixed; z-index:9999; background:#2a2a2a; color:#fff; font-size:12px; line-height:1.3; padding:6px 10px; border-radius:6px; max-width:240px; white-space:normal; box-shadow:0 2px 8px rgba(0,0,0,0.3); pointer-events:none;';
+  // Alex (2026-11-17, 5th pass): "Can we make the popup white box with the same color font as
+  // is on the rest of the dashboard?" Was a dark bg (#2a2a2a) + white text -- inconsistent with
+  // every other card/popup on the dashboard (white --card bg, --ink dark text). Switched to the
+  // same card look as the rest of the app, with a border matching other cards/popups.
+  el.style.cssText = 'position:fixed; z-index:9999; background:var(--card, #fff); color:var(--ink, #2C2A26); font-size:12px; line-height:1.3; padding:6px 10px; border-radius:6px; border:1px solid var(--border, #E5E0D8); max-width:240px; white-space:normal; box-shadow:0 2px 8px rgba(0,0,0,0.18); pointer-events:none;';
   el.textContent = text;
   document.body.appendChild(el);
   const rect = evt.target.getBoundingClientRect();
