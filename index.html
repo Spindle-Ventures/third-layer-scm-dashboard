@@ -1579,7 +1579,7 @@ function applyOpenOrdersFilter() {
       ${group.rows.length === 0
         ? `<div class="empty-state" style="padding:14px;">No open orders right now — everything has landed or been cancelled. Use "+ Add Order" above to place a new one.</div>`
         : `<table style="white-space:nowrap;">
-        <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th>Action</th><th>Order Type</th><th>Component</th><th>Quantity</th><th>Estimated Time of Arrival</th><th>Vendor</th><th>Contact Status</th></tr></thead>
+        <thead><tr><th><input type="checkbox" onchange="toggleSelectAllInGroup(this, '${sku}')" title="Select all in this group" /></th><th>Action</th><th title="Needs attention indicator"></th><th>Order Type</th><th>Component</th><th>Quantity</th><th>Estimated Time of Arrival</th><th>Vendor</th><th>Contact Status</th></tr></thead>
         <tbody>${sortedRows.map(o => renderOpenOrderRow(o)).join('')}</tbody>
       </table>`}
     </div>
@@ -2179,19 +2179,22 @@ function showActionNeededTip(evt, text) {
   hideActionNeededTip();
   const el = document.createElement('div');
   el.id = 'action-needed-tip-floating';
-  // Alex (2026-11-17, 5th pass): "Can we make the popup white box with the same color font as
-  // is on the rest of the dashboard?" Was a dark bg (#2a2a2a) + white text -- inconsistent with
-  // every other card/popup on the dashboard (white --card bg, --ink dark text). Switched to the
-  // same card look as the rest of the app, with a border matching other cards/popups.
-  el.style.cssText = 'position:fixed; z-index:9999; background:var(--card, #fff); color:var(--ink, #2C2A26); font-size:12px; line-height:1.3; padding:6px 10px; border-radius:6px; border:1px solid var(--border, #E5E0D8); max-width:240px; white-space:normal; box-shadow:0 2px 8px rgba(0,0,0,0.18); pointer-events:none;';
+  // Alex (2026-11-17, 5th pass): "I want the popup box to be much bigger... I want the pop up
+  // box to be above the cursor." Bumped font/padding/width up significantly (was 12px/240px,
+  // now 16px/340px) and the position logic (below) now always places the box ABOVE the icon
+  // instead of defaulting to below-with-a-flip-if-no-room.
+  el.style.cssText = 'position:fixed; z-index:9999; background:var(--card, #fff); color:var(--ink, #2C2A26); font-size:16px; line-height:1.4; padding:14px 18px; border-radius:10px; border:1px solid var(--border, #E5E0D8); max-width:340px; white-space:normal; box-shadow:0 6px 20px rgba(0,0,0,0.22); pointer-events:none;';
   el.textContent = text;
   document.body.appendChild(el);
   const rect = evt.target.getBoundingClientRect();
   const elRect = el.getBoundingClientRect();
   let left = rect.left + rect.width / 2 - elRect.width / 2;
   left = Math.max(8, Math.min(left, window.innerWidth - elRect.width - 8));
-  let top = rect.bottom + 6;
-  if (top + elRect.height > window.innerHeight - 8) top = rect.top - elRect.height - 6;
+  // Alex: "I want the pop up box to be above the cursor." Always position above the icon now
+  // (was below-by-default with an above-flip only when below ran off-screen); clamp to the top
+  // of the viewport as a last resort so it can never render fully off-screen upward either.
+  let top = rect.top - elRect.height - 8;
+  if (top < 8) top = 8;
   el.style.left = `${left}px`;
   el.style.top = `${top}px`;
 }
@@ -2492,14 +2495,14 @@ function renderOpenOrderRow(o, editing) {
   // table's own "Action" column is now JUST the ⋯ actions menu (whose "View / Edit Details"
   // entry is where the status pill, Order #, and Tracking now live), not a second status
   // indicator duplicating what the popup shows.
-  // Alex (2026-11-17): "why is [Night Oil 50ml] categorized as 'needs attention'?" -- the
-  // Overview group header's "N need attention" count comes from action_needed (On Track vs. not),
-  // which had NO visible indicator anywhere in the row since the status pill moved into the
-  // popup above -- there was no way to see why a row counted toward that total without opening
-  // the popup. Added a small icon next to the ETA cell (same cell the ETA-driven reasons relate
-  // to) with the real action_detail sentence as its hover tooltip -- zero added screen space,
-  // same source data the group-header count already uses, so it can't drift.
-  const actionIcon = { 'Overdue': '⚠', 'Contact Due': '✉', 'ETA Soon': '◷', 'Paused': '⏸' }[o.action_needed];
+  // Alex (2026-11-17, 5th pass): "I want the icon to be different than a question mark and I
+  // want the icon to be broken out into it's own column that only occurs in the UI for orders
+  // that are constituted as 'needs attention'." The old ◷ (clock) and ⏸ (pause) glyphs render as
+  // a tofu/question-mark box on fonts that lack them -- switched to common emoji presentation
+  // forms (🔴/📧/⏰/⏸️) that are universally supported, and moved the icon out of the ETA cell
+  // into its own dedicated column (empty header, only populated on needs-attention rows) instead
+  // of being squeezed inline next to the ETA text.
+  const actionIcon = { 'Overdue': '🔴', 'Contact Due': '📧', 'ETA Soon': '⏰', 'Paused': '⏸️' }[o.action_needed];
   const actionIconCls = { 'Overdue': 'bad', 'Contact Due': 'watch', 'ETA Soon': 'watch', 'Paused': 'watch' }[o.action_needed] || 'watch';
   // Alex (2026-11-17, 4th pass): "it should pop up over anything else, it makes me scroll right
   // now." Root cause: position:absolute inside the Overview table (whose card wrapper is
@@ -2508,19 +2511,22 @@ function renderOpenOrderRow(o, editing) {
   // JS-driven position:fixed tooltip (appended straight to <body>, positioned at the icon's
   // real viewport coordinates on hover) -- position:fixed escapes the table's overflow context
   // entirely, so the bubble now floats above the whole page instead of pushing table width.
+  // Alex (2026-11-17, 5th pass): "I want the pop up box to be above the cursor" + "much bigger."
+  // showActionNeededTip() (below) now always positions above the icon and is sized larger.
   const needsAttention = o.action_needed && o.action_needed !== 'On Track' && actionIcon;
   const actionReasonText = (o.action_detail || o.action_needed || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-  const actionIndicator = needsAttention
-    ? `<span class="pill ${actionIconCls}" style="padding:4px 11px; font-size:26px; line-height:1; cursor:help; margin-left:6px; vertical-align:middle;" onmouseenter="showActionNeededTip(event, '${actionReasonText}')" onmouseleave="hideActionNeededTip()">${actionIcon}</span>`
-    : '';
+  const actionIndicatorCell = needsAttention
+    ? `<td style="text-align:center;"><span class="pill ${actionIconCls}" style="padding:4px 11px; font-size:26px; line-height:1; cursor:help;" onmouseenter="showActionNeededTip(event, '${actionReasonText}')" onmouseleave="hideActionNeededTip()">${actionIcon}</span></td>`
+    : `<td></td>`;
   return `
     <tr id="row-${o.ledger_id}" style="background:${rowBg};">
       ${selectCell}
       <td>${canAct ? `<button class="btn btn-ghost" style="padding:4px 8px; font-size:14px; line-height:1;" onclick="showOrderActionsMenu('${o.ledger_id}', this)" title="Actions">⋯</button>` : ''}</td>
+      ${actionIndicatorCell}
       <td><span class="pill ${orderTypePillClass}">${orderTypeLabel}</span></td>
       <td>${componentText}</td>
       <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}>${o.qty != null ? o.qty.toLocaleString() : '—'}</td>
-      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong>${actionIndicator}</td>
+      <td${canAct ? ` class="clickable-pill" onclick="editOpenOrderRow('${o.ledger_id}')" title="Click to edit"` : ''}><strong>${fmtDate(o.eta)}</strong></td>
       <td>${o.vendor_name || '—'}</td>
       <td>${renderContactScheduleCell(o)}</td>
     </tr>
@@ -2921,13 +2927,25 @@ function showOrderDetailsPopup(ledgerId) {
   // unchanged. Vendor's Order # is a real, separate, dashboard-editable field independent of
   // order_type -- only the sheet-synced "Order number" needed to stay componentry-read-only.
   // Show both for componentry orders now.
+  // Alex (2026-11-17, round 51): "Vendors Order # and Order # are still showing up in the
+  // view/edit card of the order record. This was supposed to be completed in a past action to
+  // consolidate." The round-38 revert (above) only needed to KEEP two separate fields for
+  // COMPONENTRY orders (sheet-sync conflict: componentry's "Order number" gets silently
+  // overwritten daily by sync_componentry_ledger.py, so editing it there would be pointless and
+  // confusing). Finished-good orders never had that sheet-sync conflict and were never the
+  // reason for the revert -- but the display code still showed them as two rows regardless of
+  // order_type. Consolidated to one row for finished-good, matching the "same thing, call it
+  // Order number" merge that was actually intended -- editVendorOrderNumber() already writes
+  // the single vendor_order_number column and already falls back to internal_ref/vendor_po_number
+  // for older rows, so no backend change needed, only the display split.
   const orderNumberRowHtml = o.order_type === 'componentry'
     ? row('Order number', o.internal_ref
         ? `<strong>${o.internal_ref}</strong> <span class="muted" style="font-size:11px;">(synced from Componentry Ledger sheet)</span>`
         : '<span class="muted">not set in sheet yet</span>')
       + row("Vendor's Order #", o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`)
-    : row('Order #', o.internal_ref || o.vendor_po_number || '<span class="muted">none on file</span>', `editPoNumber('${ledgerId}')`)
-      + row("Vendor's Order #", o.vendor_order_number ? `<strong>${o.vendor_order_number}</strong>` : '<span class="muted">not provided yet</span>', `editVendorOrderNumber('${ledgerId}')`);
+    : row('Order number', (o.vendor_order_number || o.internal_ref || o.vendor_po_number)
+        ? `<strong>${o.vendor_order_number || o.internal_ref || o.vendor_po_number}</strong>`
+        : '<span class="muted">none on file</span>', `editVendorOrderNumber('${ledgerId}')`);
   const body = `
     <div style="display:flex; flex-direction:column;">
       ${row('Product', `<strong>${o.product_name}</strong>`)}
