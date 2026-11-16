@@ -2051,7 +2051,7 @@ function buildOrderPlacedSlackPreview(o) {
     `Can you confirm price + payment terms, and send over the order number once it's created on your end?\n\n` +
     `Anything needing a signature → Alex@spindle.ventures. Invoicing → TLAccounting@spindle.ventures.\n\n` +
     `${cadenceLine} -- flag us early if anything shifts!\n\n` +
-    `[💰 Confirmed Price & Terms]  [✏️ Add Order Number]  [⚠️ Need to Flag Something]  [💬 Custom Response]`
+    `[💬 Respond]`
   );
 }
 
@@ -2151,7 +2151,7 @@ function buildCheckInSlackPreview(o) {
   const trackingLine = o.tracking_info ? '' : `\n\nAlso -- whenever you've got tracking info, drop it in here!`;
   return (
     `🔄 Quick check-in on Order ${ref} -- still tracking for ${etaStr}${destPhrase}${destAddressInline}?${trackingLine}\n\n` +
-    `[✅ Still On Track]  [⏳ Running Late]  [💬 Custom Response]`
+    `[✅ On Track]  [⚠️ Not On Track]`
   );
 }
 
