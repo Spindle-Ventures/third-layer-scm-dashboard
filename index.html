@@ -2513,10 +2513,15 @@ function renderOpenOrderRow(o, editing) {
   // entirely, so the bubble now floats above the whole page instead of pushing table width.
   // Alex (2026-11-17, 5th pass): "I want the pop up box to be above the cursor" + "much bigger."
   // showActionNeededTip() (below) now always positions above the icon and is sized larger.
+  // Alex (2026-11-17, 6th pass): "When I hover my cursor over it, it's still a question mark."
+  // Not the glyph at all -- `cursor:help` is a CSS mouse-cursor value that most OSes render as
+  // an actual question-mark pointer overlay, completely separate from the emoji icon itself.
+  // That cursor icon was what Alex was actually seeing on hover. Switched to `cursor:default`
+  // (plain arrow, no overlay).
   const needsAttention = o.action_needed && o.action_needed !== 'On Track' && actionIcon;
   const actionReasonText = (o.action_detail || o.action_needed || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   const actionIndicatorCell = needsAttention
-    ? `<td style="text-align:center;"><span class="pill ${actionIconCls}" style="padding:4px 11px; font-size:26px; line-height:1; cursor:help;" onmouseenter="showActionNeededTip(event, '${actionReasonText}')" onmouseleave="hideActionNeededTip()">${actionIcon}</span></td>`
+    ? `<td style="text-align:center;"><span class="pill ${actionIconCls}" style="padding:4px 11px; font-size:26px; line-height:1; cursor:default;" onmouseenter="showActionNeededTip(event, '${actionReasonText}')" onmouseleave="hideActionNeededTip()">${actionIcon}</span></td>`
     : `<td></td>`;
   return `
     <tr id="row-${o.ledger_id}" style="background:${rowBg};">
