@@ -3296,6 +3296,13 @@ async function renderLandedOrders() {
   const { data: rows } = await sb.from('landed_orders_by_product').select('*');
   window._landedOrdersCache = (rows || []).filter(r => (r.qty || 0) > 0);
 
+  // Item 1 (round 59): read-only history of componentry count adjustments, shown here AND on
+  // the Components tab per Alex's confirmed scope ("viewable from BOTH the Landed Orders tab
+  // AND the Components tab"). Always refetched fresh (not reused from the Components tab's
+  // cache) so this tab shows current data even if opened without Components ever rendering.
+  const { data: countAdjustments } = await sb.from('componentry_count_adjustments').select('*, components(component_name)').order('adjusted_at', { ascending: false });
+  window._countAdjustmentsCache = countAdjustments || [];
+
   const products = [...new Map(window._landedOrdersCache.map(r => [r.product_sku, r.product_name])).entries()]
     .sort((a, b) => productSortRank(a[1]) - productSortRank(b[1]) || a[1].localeCompare(b[1]));
 
@@ -3317,9 +3324,11 @@ async function renderLandedOrders() {
       </div>
       <div id="landed-orders-table"></div>
     </div>
+    ${renderComponentryCountHistoryCard()}
   `;
   applyLandedOrdersFilter();
 }
+
 
 function applyLandedOrdersFilter() {
   const all = window._landedOrdersCache || [];
@@ -3417,7 +3426,7 @@ async function renderComponents() {
   el.innerHTML = `<div class="card empty-state">Loading component levels…</div>`;
 
   const months = nextSixMonths();
-  const [{ data: componentQoh }, { data: componentVendors }, { data: products }, { data: revForecasts }, { data: forecastParams }, { data: activeRecs }, { data: inFlightOrders }, { data: landedOrders }, { data: openFgOrders }] = await Promise.all([
+  const [{ data: componentQoh }, { data: componentVendors }, { data: products }, { data: revForecasts }, { data: forecastParams }, { data: activeRecs }, { data: inFlightOrders }, { data: landedOrders }, { data: openFgOrders }, { data: componentsMeta }, { data: countAdjustments }] = await Promise.all([
     sb.from('component_qoh').select('*'),
     sb.from('component_vendors').select('*, vendors(vendor_name, default_lead_days, default_cadence_days)'),
     sb.from('products').select('id, sku_code, display_name, product_type'),
@@ -3435,10 +3444,19 @@ async function renderComponents() {
     // open finished-good order, by product, so each component row (already 1:1 with a product in
     // this tab's model) can show exactly which real open orders would consume it.
     sb.from('open_orders_by_product').select('product_sku, product_name, qty, eta, internal_ref, order_status').eq('order_type', 'finished_good'),
+    // Per-component "Avg of last N POs" override (item 4, round 59, 051 migration) -- NULL means
+    // "use the dashboard-wide default" (window._componentsLastNPos).
+    sb.from('components').select('id, last_n_pos'),
+    // Monthly componentry count/audit history (item 1, round 59) -- read-only history view,
+    // surfaced on BOTH this tab and the Landed Orders tab per Alex's confirmed scope.
+    sb.from('componentry_count_adjustments').select('*, components(component_name)').order('adjusted_at', { ascending: false }),
   ]);
 
   const productBySku = {};
   (products || []).forEach(p => { productBySku[p.sku_code] = p; });
+  const lastNPosByComponentId = {};
+  (componentsMeta || []).forEach(c => { if (c.last_n_pos != null) lastNPosByComponentId[c.id] = c.last_n_pos; });
+  window._countAdjustmentsCache = countAdjustments || [];
 
   const liveForecast = {};
   (revForecasts || []).forEach(r => {
@@ -3505,7 +3523,10 @@ async function renderComponents() {
     const inFlightDetail = (inFlightByComponentId[c.component_id] || []).slice().sort((a, b) => (a.eta || '').localeCompare(b.eta || ''));
     const landedHistory = (landedByComponentId[c.component_id] || []).slice(); // already event_date desc from the query
     const openFgOrdersForProduct = openFgOrdersBySku[c.product_sku] || [];
-    return { c, product, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, demandUnits, consumption, startQty, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct };
+    // Item 4 (round 59): per-component override of the "Avg of last N POs" window, confirmed by
+    // Alex as the fix (per-product/per-component configurable N, not a single global number).
+    const lastNPosOverride = lastNPosByComponentId[c.component_id] ?? null;
+    return { c, product, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, demandUnits, consumption, startQty, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct, lastNPosOverride };
   });
 
   // Alex (2026-11-03): this tab is built entirely by iterating raw components, so a product with
@@ -3527,6 +3548,26 @@ async function renderComponents() {
   renderComponentsTable();
 }
 
+// Alex (2026-11-18, round 59): "Make the per-product card groups on the Components tab
+// collapsible, matching the Overview tab's existing per-product collapse behavior." NOTE: a
+// direct grep of renderOverview()/applyOpenOrdersFilter() found NO existing collapse toggle on
+// the Overview tab's per-product groups today -- they're always fully expanded, no caret, no
+// stored open/closed state. Flagged this back rather than guessing; reused instead the
+// dashboard's actual nearest equivalent -- the Catalog tab's toggleCatalogAccordion() caret
+// pattern (pure CSS display toggle, state kept in a plain object, body rendered once and never
+// rebuilt on toggle) -- same shape, scoped to Components tab per-product cards only (Overview is
+// explicitly out of scope per Alex's confirmed answer).
+window._componentsGroupOpen = window._componentsGroupOpen || {};
+function toggleComponentsGroup(sku) {
+  if (!(sku in window._componentsGroupOpen)) window._componentsGroupOpen[sku] = true;
+  const open = !window._componentsGroupOpen[sku];
+  window._componentsGroupOpen[sku] = open;
+  const body = document.getElementById(`cg-body-${sku}`);
+  const caret = document.getElementById(`cg-caret-${sku}`);
+  if (body) body.style.display = open ? '' : 'none';
+  if (caret) caret.textContent = open ? '▾ Collapse' : '▸ Expand';
+}
+
 function renderComponentsTable() {
   const { rows, months, singleComponentNotice } = window._componentsCache || { rows: [], months: [], singleComponentNotice: '' };
   const el = document.getElementById('tab-components');
@@ -3534,7 +3575,11 @@ function renderComponentsTable() {
   // the overview tab." Replaced the single flat table + product-filter dropdown with one card
   // per product (same shape as applyOpenOrdersFilter() on the Overview tab) -- the dropdown is
   // gone entirely since grouping by product IS the new navigation.
-  const lastNPos = window._componentsLastNPos || 3;
+  // Alex (2026-11-18, round 59, item 4): this dashboard-wide number now acts as the DEFAULT only
+  // -- any component with its own override (components.last_n_pos, set via the per-row "N" pill)
+  // uses that instead. "applies to every component below" becomes "applies to every component
+  // below that hasn't been given its own override."
+  const defaultLastNPos = window._componentsLastNPos || 3;
 
   const byProduct = new Map();
   rows.forEach(r => {
@@ -3556,9 +3601,10 @@ function renderComponentsTable() {
       const needsActionCount = sortedRows.filter(r => r.status !== 'OK').length;
 
       const tableRows = sortedRows.map(r => {
-        const { c, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct } = r;
+        const { c, preferred, allVendorLinks, leadDays, cadenceDays, status, runOutMonthIndex, backendRec, inFlightDetail, landedHistory, openFgOrdersForProduct, lastNPosOverride } = r;
         const hasShortfallSignal = backendRec && backendRec.net_need > 0;
-        const trailing = landedHistory.slice(0, lastNPos);
+        const effectiveLastNPos = lastNPosOverride ?? defaultLastNPos;
+        const trailing = landedHistory.slice(0, effectiveLastNPos);
         const avgPoQty = trailing.length ? Math.round(trailing.reduce((s, o) => s + (o.qty_in || 0), 0) / trailing.length) : null;
         const fgCount = openFgOrdersForProduct.length;
         return [
@@ -3572,9 +3618,12 @@ function renderComponentsTable() {
           `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px; white-space:normal; text-align:left;" onclick="showComponentInFlightDetail('${c.component_id}')">
             <div>${(c.qty_in_flight || 0).toLocaleString()}</div>${inFlightDetail.length ? `<div class="muted" style="font-size:11px;">${inFlightDetail.length} order${inFlightDetail.length === 1 ? '' : 's'}</div>` : ''}
           </button>`,
-          avgPoQty != null
-            ? `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentOnHandDetail('${c.component_id}')" title="Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'} for this component">${avgPoQty.toLocaleString()}</button>`
-            : '<span class="muted">no history</span>',
+          `<div style="display:flex; align-items:center; gap:4px;">
+            ${avgPoQty != null
+              ? `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px;" onclick="showComponentOnHandDetail('${c.component_id}')" title="Average of the last ${trailing.length} landed order${trailing.length === 1 ? '' : 's'} for this component">${avgPoQty.toLocaleString()}</button>`
+              : '<span class="muted">no history</span>'}
+            ${canEdit() ? `<span class="pill clickable-pill ${lastNPosOverride != null ? 'watch' : ''}" style="font-size:10px; padding:2px 6px;" title="${lastNPosOverride != null ? `Using a per-component override of ${lastNPosOverride} (default is ${defaultLastNPos})` : `Using the dashboard-wide default of ${defaultLastNPos} -- click to set an override just for this component`}" onclick="editComponentLastNPosOverride('${c.component_id}', ${lastNPosOverride ?? 'null'})">N=${effectiveLastNPos}</span>` : ''}
+          </div>`,
           `<button class="btn btn-ghost" style="padding:4px 9px; font-size:14px; white-space:normal; text-align:left;" onclick="manageComponentVendors('${c.component_id}')">
             ${preferred?.vendors?.vendor_name || '<span class="muted">none set</span>'}${allVendorLinks.length > 1 ? `<div class="muted" style="font-size:11px;">+${allVendorLinks.length - 1} more</div>` : ''}
           </button>`,
@@ -3582,23 +3631,37 @@ function renderComponentsTable() {
             <span class="pill ${statusPill[status]}">${statusLabel[status]}</span>${hasShortfallSignal && status === 'OK' ? ' <span class="pill watch" title="The full PO-recommendation engine flags a real component shortfall — click for detail">⚠</span>' : ''}
           </button>`,
           runOutMonthIndex == null ? '<span class="muted">beyond 6mo</span>' : `<strong>~${monthLabelLong(months[runOutMonthIndex])}</strong>`,
-          canEdit() ? `<button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>` : '',
+          canEdit()
+            ? `<div style="display:flex; flex-direction:column; gap:3px;">
+                <button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="orderComponentFromComponentsTab('${c.component_id}', '${r.product?.id || ''}')">+ Order</button>
+                <button class="btn btn-ghost" style="padding:4px 10px; font-size:13px;" onclick="showComponentCountAdjustmentModal('${c.component_id}')" title="Enter a monthly physical count and apply the correcting adjustment">📋 Count</button>
+              </div>`
+            : '',
         ];
       });
 
+      // Item 5 (round 59): collapsible per-product card group, matching the dashboard's own
+      // caret-toggle accordion shape (toggleComponentsGroup, defined above) -- see that function's
+      // comment for the scope note (Overview tab itself has no existing toggle to copy from).
+      const groupOpen = window._componentsGroupOpen[sku] !== false;
       return `
         <div class="card" style="padding:0; margin-bottom:12px; overflow-x:auto;">
-          <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; cursor:pointer;" onclick="toggleComponentsGroup('${sku}')">
             <div style="display:flex; align-items:center; gap:10px;">
               <strong style="font-size:16px;">${group.name}</strong>
               <span class="muted" style="font-size:13px;">${sku}</span>
             </div>
-            <span class="pill ${needsActionCount > 0 ? 'watch' : 'good'}" style="font-size:12px;">${needsActionCount > 0 ? `${needsActionCount} need${needsActionCount === 1 ? 's' : ''} attention` : 'all OK'}</span>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span class="pill ${needsActionCount > 0 ? 'watch' : 'good'}" style="font-size:12px;">${needsActionCount > 0 ? `${needsActionCount} need${needsActionCount === 1 ? 's' : ''} attention` : 'all OK'}</span>
+              <span class="muted" id="cg-caret-${sku}" style="font-size:14px; white-space:nowrap;">${groupOpen ? '▾ Collapse' : '▸ Expand'}</span>
+            </div>
           </div>
-          ${kpiTable(['Component', 'On Hand', 'In-Flight', `Avg Last ${lastNPos} PO${lastNPos === 1 ? '' : 's'}`, 'Vendor', 'Status', 'Order By', ''],
-            tableRows, null,
-            ['160px', '125px', '125px', '130px', '150px', '130px', '110px', '95px'],
-            [3, 5, 6])}
+          <div id="cg-body-${sku}" style="${groupOpen ? '' : 'display:none;'}">
+            ${kpiTable(['Component', 'On Hand', 'In-Flight', 'Avg Last N POs', 'Vendor', 'Status', 'Order By', ''],
+              tableRows, null,
+              ['160px', '125px', '125px', '150px', '150px', '130px', '110px', '110px'],
+              [5, 6])}
+          </div>
         </div>
       `;
     }).join('');
@@ -3606,22 +3669,23 @@ function renderComponentsTable() {
   el.innerHTML = `
     <div style="font-family:'Playfair Display'; font-weight:700; font-size:20px; margin:0 0 3px; color:var(--ink);">Components</div>
     <div class="muted" style="font-size:13px; margin-bottom:12px;">
-      Grouped by finished-good product. Per component: how much is on hand (and will a real finished-good PO
-      use it up), how much is in flight (click to see when it lands), how big a PO we could place right
-      now with current levels (click Vendor for lead time, click On Hand/Avg PO for landed-order history),
-      and when to order more next. Status click shows the full rationale, including what the real
-      PO-recommendation engine (Overview tab) separately says. Components within each product sorted
-      Order Now / Order Soon / OK.
+      Grouped by finished-good product (click a product's header to collapse/expand it). Per component: how much is
+      on hand (and will a real finished-good PO use it up), how much is in flight (click to see when it lands), how
+      big a PO we could place right now with current levels (click Vendor for lead time, click On Hand/Avg PO for
+      landed-order history), and when to order more next. Status click shows the full rationale, including what the
+      real PO-recommendation engine (Overview tab) separately says. Components within each product sorted
+      Order Now / Order Soon / OK. "Count" logs a monthly physical count and applies the correcting adjustment.
     </div>
     <div class="card" style="padding:12px 16px; margin-bottom:12px;">
       <label style="display:flex; align-items:center; gap:6px; font-size:14px; font-weight:500;">
         Avg of last
-        <input type="number" id="components-last-n-pos" value="${lastNPos}" min="1" max="20" style="width:52px; padding:5px 7px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="setComponentsLastNPos(this.value)">
-        POs (applies to every component below)
+        <input type="number" id="components-last-n-pos" value="${defaultLastNPos}" min="1" max="20" style="width:52px; padding:5px 7px; border-radius:6px; border:1px solid var(--border); font-size:14px;" onchange="setComponentsLastNPos(this.value)">
+        POs (default -- click a component's "N=" pill to override just that component)
       </label>
     </div>
     ${groupsHtml || '<div class="card empty-state">No components found.</div>'}
     ${singleComponentNotice}
+    ${renderComponentryCountHistoryCard()}
   `;
 }
 
@@ -3629,6 +3693,155 @@ function setComponentsLastNPos(n) {
   const parsed = Math.max(1, Math.min(20, parseInt(n, 10) || 3));
   window._componentsLastNPos = parsed;
   renderComponentsTable();
+}
+
+// Item 4 (round 59): per-component override of the "Avg of last N POs" window. Alex's clarifying
+// answer confirmed: configurable per-product/per-component, not a single global number -- this
+// is the edit affordance for that override (persisted on components.last_n_pos, migration 051).
+async function editComponentLastNPosOverride(componentId, currentOverride) {
+  const input = await showPromptModal(
+    'Avg Last N POs — Override',
+    'Leave blank to use the dashboard-wide default. Set a number (1-20) to track a different trailing-order window just for this component.',
+    currentOverride ?? '', 'number'
+  );
+  if (input === null) return;
+  const trimmed = String(input).trim();
+  const val = trimmed === '' ? null : Math.max(1, Math.min(20, parseInt(trimmed, 10) || 1));
+  const { data: before, error: fetchErr } = await sb.from('components').select('id, component_name, last_n_pos').eq('id', componentId).single();
+  if (fetchErr) { await showConfirmModal('Something went wrong', 'Failed: ' + fetchErr.message, { okOnly: true, danger: true }); return; }
+  const { error } = await sb.from('components').update({ last_n_pos: val }).eq('id', componentId);
+  if (error) { await showConfirmModal('Something went wrong', 'Failed: ' + error.message, { okOnly: true, danger: true }); return; }
+  await logAction('components', componentId, 'update',
+    val == null ? `Reset ${before.component_name} to the dashboard-wide "Avg Last N POs" default` : `Set ${before.component_name}'s "Avg Last N POs" override to ${val}`,
+    { last_n_pos: before.last_n_pos }, { last_n_pos: val });
+  await renderComponents();
+}
+
+// Item 1 (round 59): "Private Label audits componentry levels monthly, adjustments get made
+// based on the count." Entry/exercise UI: enter a counted qty, see the delta vs. the current
+// system qty_on_hand, add a note, commit. Committing both (a) inserts a real inventory_ledger
+// row (event_type='monthly_count', landed=true -- the same event_type the ledger/component_qoh
+// view already sums unconditionally for on-hand, see 001/002_*.sql) so the correction actually
+// changes component_qoh.qty_on_hand, and (b) inserts a componentry_count_adjustments audit row
+// for the read-only history views (this tab + Landed Orders tab).
+function showComponentCountAdjustmentModal(componentId) {
+  const { rows } = window._componentsCache || { rows: [] };
+  const r = rows.find(row => row.c.component_id === componentId);
+  if (!r) return;
+  const { c } = r;
+  const systemQty = c.qty_on_hand || 0;
+
+  document.getElementById('detail-modal-backdrop')?.remove();
+  const el = document.createElement('div');
+  el.id = 'detail-modal-backdrop';
+  el.className = 'detail-modal-backdrop';
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div class="detail-modal" style="max-width:480px;">
+      <div style="font-weight:700; margin-bottom:10px; font-family:'Playfair Display'; font-size:17px;">${c.component_name} — Monthly Count</div>
+      <div class="muted" style="font-size:13px; margin-bottom:10px;">System qty on hand right now: <strong>${systemQty.toLocaleString()}</strong></div>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Counted quantity</label>
+      <input id="count-adj-qty" type="number" value="${systemQty}" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:8px;" />
+      <div id="count-adj-delta" class="muted" style="font-size:13px; margin-bottom:10px;"></div>
+      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Note (optional)</label>
+      <textarea id="count-adj-note" rows="2" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); font-size:14px; margin-bottom:14px; font-family:inherit;"></textarea>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" id="count-adj-commit">Commit Adjustment</button>
+        <button class="btn btn-ghost" id="count-adj-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+
+  const qtyInput = document.getElementById('count-adj-qty');
+  const deltaEl = document.getElementById('count-adj-delta');
+  const updateDelta = () => {
+    const counted = parseInt(qtyInput.value, 10);
+    if (!Number.isFinite(counted)) { deltaEl.textContent = ''; return; }
+    const delta = counted - systemQty;
+    const color = delta === 0 ? 'var(--ink)' : (delta > 0 ? 'var(--good-text)' : 'var(--bad-text)');
+    deltaEl.innerHTML = `Delta vs. system: <strong style="color:${color};">${delta > 0 ? '+' : ''}${delta.toLocaleString()}</strong>${delta === 0 ? ' (no change)' : ''}`;
+  };
+  qtyInput.addEventListener('input', updateDelta);
+  qtyInput.focus();
+  qtyInput.select();
+  updateDelta();
+  document.getElementById('count-adj-cancel').onclick = () => el.remove();
+  document.getElementById('count-adj-commit').onclick = () => commitComponentCountAdjustment(componentId, systemQty, qtyInput.value, document.getElementById('count-adj-note').value);
+}
+
+async function commitComponentCountAdjustment(componentId, systemQty, countedQtyRaw, note) {
+  const counted = parseInt(countedQtyRaw, 10);
+  if (!Number.isFinite(counted) || counted < 0) {
+    await showConfirmModal('Check your input', 'Enter a counted quantity of 0 or more.', { okOnly: true });
+    return;
+  }
+  const delta = counted - systemQty;
+  if (delta === 0) {
+    if (!(await showConfirmModal('No change', 'The counted quantity matches the system quantity exactly -- commit anyway as a confirmed-count record with no ledger adjustment?', 'Commit anyway'))) return;
+  }
+  const { rows } = window._componentsCache || { rows: [] };
+  const r = rows.find(row => row.c.component_id === componentId);
+  const componentName = r?.c.component_name || 'component';
+
+  // Only write a ledger row when there's an actual correction to apply -- a zero-delta confirmed
+  // count is still worth recording in the audit table (adjusted_by/note/timestamp), but shouldn't
+  // insert a no-op monthly_count row into the ledger.
+  let ledgerId = null;
+  if (delta !== 0) {
+    // IMPORTANT: component_qoh sums qty_in across EVERY initial_count/monthly_count row ever
+    // inserted for this component (it's a running ledger, not a "last value wins" snapshot --
+    // see 001/002_*.sql's component_qoh view definition) -- the new row's qty_in must be the
+    // DELTA (counted - system), not the raw counted value, or every future count compounds on
+    // top of the last one. Verified directly against a rolled-back staging transaction before
+    // shipping: qty_in=counted inflated qty_on_hand to roughly double; qty_in=delta is correct.
+    const { data: ledgerRow, error: ledgerErr } = await sb.from('inventory_ledger').insert({
+      event_type: 'monthly_count', component_id: componentId, qty_in: delta, landed: true,
+      event_date: todayIso(),
+    }).select().single();
+    if (ledgerErr) { await showConfirmModal('Something went wrong', 'Failed to apply adjustment: ' + ledgerErr.message, { okOnly: true, danger: true }); return; }
+    ledgerId = ledgerRow.id;
+  }
+
+  const { data: auditRow, error: auditErr } = await sb.from('componentry_count_adjustments').insert({
+    component_id: componentId, counted_qty: counted, system_qty_at_time: systemQty, delta,
+    adjusted_by: currentUserRow?.email || 'dashboard', note: note || null, ledger_id: ledgerId,
+  }).select().single();
+  if (auditErr) { await showConfirmModal('Something went wrong', 'Failed to record the count audit row: ' + auditErr.message, { okOnly: true, danger: true }); return; }
+
+  if (ledgerId) {
+    await logAction('inventory_ledger', ledgerId, 'create',
+      `Monthly count adjustment for ${componentName}: counted ${counted.toLocaleString()} vs. system ${systemQty.toLocaleString()} (${delta > 0 ? '+' : ''}${delta.toLocaleString()})`,
+      null, { event_type: 'monthly_count', component_id: componentId, qty_in: counted });
+  }
+  document.getElementById('detail-modal-backdrop')?.remove();
+  await renderComponents();
+  await renderLandedOrders();
+}
+
+// Read-only history of past count adjustments (item 1, round 59) -- surfaced on BOTH the
+// Components tab (this card) and the Landed Orders tab (renderComponentryCountHistoryCard reused
+// there too, same markup/data, no duplicate logic).
+function renderComponentryCountHistoryCard() {
+  const adjustments = window._countAdjustmentsCache || [];
+  if (!adjustments.length) return '';
+  const rowsHtml = adjustments.slice(0, 25).map(a => {
+    const delta = a.delta || 0;
+    const deltaColor = delta === 0 ? 'var(--ink)' : (delta > 0 ? 'var(--good-text)' : 'var(--bad-text)');
+    return [
+      fmtDateTime(a.adjusted_at),
+      a.components?.component_name || '<span class="muted">—</span>',
+      `<strong style="color:${deltaColor};">${delta > 0 ? '+' : ''}${delta.toLocaleString()}</strong>`,
+      a.adjusted_by || '<span class="muted">—</span>',
+      a.note || '<span class="muted">—</span>',
+    ];
+  });
+  return `
+    <div class="card" style="padding:12px 16px; margin-top:12px;">
+      <div class="section-label" style="margin:0 0 6px;">Monthly Componentry Count History</div>
+      ${kpiTable(['Date', 'Component', 'Delta', 'Adjusted By', 'Note'], rowsHtml, null, ['150px', '170px', '90px', '140px', '220px'], [2])}
+    </div>
+  `;
 }
 
 // Alex (2026-11-15): "How much do we have on hand of each component? Are there any finished
@@ -3717,6 +3930,17 @@ function showComponentOnHandDetail(componentId) {
 // Alex (2026-11-15): "How much do we have in flight? I'd like to be able to click into this and
 // have a box appear that show's when they land. Are there any finished good PO's in progress or
 // planned that will use this up?"
+// Alex (2026-11-18, round 59, items 2+3): audited the existing code -- the FG-POs cross-reference
+// and the componentry-orders-in-flight list were ALREADY both present here (added round 42), but
+// rendered as two bare "When they land" / "Finished-good PO's..." <div> headers with no visual
+// separation beyond a heading -- not clearly two distinct SECTIONS. Wrapped each in its own
+// bordered/tinted card (watch-colored for componentry orders, good-colored for FG POs, matching
+// the stat-tile palette above them) so they read as visually separate, per Alex's explicit "two
+// separate sections, not one combined timeline" confirmation -- NOT merged into one list.
+// Item 3 (new, additive): a Gantt-like timeline chart showing, per open FG order for this
+// product, when its components need to land (nominal ETA - 37 days, see
+// computeComponentRequiredByDate) vs. when the FG order itself is due -- answers "are we on pace"
+// at a glance, separate from (and above) the two list sections.
 function showComponentInFlightDetail(componentId) {
   const { rows } = window._componentsCache || { rows: [] };
   const r = rows.find(row => row.c.component_id === componentId);
@@ -3746,6 +3970,25 @@ function showComponentInFlightDetail(componentId) {
   const chartLabels = sortedMonthKeys.map(k => k === 'no-eta' ? 'No ETA' : monthLabelShort(k + '-01'));
   const chartData = sortedMonthKeys.map(k => monthBuckets[k]);
 
+  // Item 3: Gantt-like timeline -- one row per open FG order (that has a real ETA), a floating
+  // bar from "component required-by" (fg eta - 37d nominal) to the FG order's own ETA, with the
+  // earliest real in-flight componentry ETA for this component overlaid as a point marker so
+  // it's visible at a glance whether the real order is on pace against the nominal window.
+  const fgOrdersWithEta = openFgOrdersForProduct.filter(o => o.eta);
+  const ganttRows = fgOrdersWithEta.map(o => {
+    const requiredBy = window.RevenueLogic.computeComponentRequiredByDate(o.eta);
+    const earliestComponentEta = inFlightDetail.map(d => d.eta).filter(Boolean).sort()[0] || null;
+    return { label: o.internal_ref || `FG ETA ${fmtDate(o.eta)}`, requiredBy, fgEta: o.eta, earliestComponentEta };
+  }).sort((a, b) => (a.fgEta || '').localeCompare(b.fgEta || ''));
+  const ganttHtml = ganttRows.length ? `
+    <div style="font-weight:700; font-size:15px; margin:0 0 7px;">Component Landing vs. FG PO Timing</div>
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">
+      Nominal rule: components should land ~30 days before the FG PO run date, which is ~7 days before the FG
+      PO's own ETA — roughly 37 days before the FG order's ETA (approximate, not a hard deadline).
+    </div>
+    <div style="height:${Math.max(90, ganttRows.length * 46)}px; margin-bottom:16px;"><canvas id="component-gantt-chart"></canvas></div>
+  ` : '';
+
   const body = `
     <div style="display:flex; gap:14px; margin-bottom:16px; flex-wrap:wrap;">
       <div class="card" style="flex:1; min-width:140px; padding:14px; text-align:center; background:var(--watch-bg);">
@@ -3762,16 +4005,21 @@ function showComponentInFlightDetail(componentId) {
       </div>
     </div>
     ${chartLabels.length ? `<div style="height:120px; margin-bottom:16px;"><canvas id="component-inflight-chart"></canvas></div>` : ''}
+    ${ganttHtml}
 
-    <div style="font-weight:700; font-size:15px; margin:0 0 7px;">When they land</div>
-    ${inFlightRows.length
-      ? kpiTable(['Order #', 'Qty', 'Vendor', 'ETA'], inFlightRows, null, ['110px', '90px', '140px', '110px'], [1, 2, 3])
-      : '<div class="muted" style="font-size:14px; margin-bottom:10px;">Nothing currently in flight for this component.</div>'}
+    <div class="card" style="border:2px solid var(--watch-text); padding:12px 14px; margin-bottom:14px;">
+      <div style="font-weight:700; font-size:15px; margin:0 0 7px; color:var(--watch-text);">Componentry Orders In Flight (this component)</div>
+      ${inFlightRows.length
+        ? kpiTable(['Order #', 'Qty', 'Vendor', 'ETA'], inFlightRows, null, ['110px', '90px', '140px', '110px'], [1, 2, 3])
+        : '<div class="muted" style="font-size:14px;">Nothing currently in flight for this component.</div>'}
+    </div>
 
-    <div style="font-weight:700; font-size:15px; margin:14px 0 7px;">Finished-good PO's that will use this up</div>
-    ${fgRows.length
-      ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
-      : `<div class="muted" style="font-size:14px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
+    <div class="card" style="border:2px solid var(--good-text); padding:12px 14px;">
+      <div style="font-weight:700; font-size:15px; margin:0 0 7px; color:var(--good-text);">Finished-Good PO's That Will Use This Up</div>
+      ${fgRows.length
+        ? kpiTable(['PO #', 'Qty', 'ETA'], fgRows, null, ['110px', '90px', '110px'], [1, 2])
+        : `<div class="muted" style="font-size:14px;">No open or planned finished-good orders for ${c.product_name} right now.</div>`}
+    </div>
   `;
   showDetail(`${c.component_name} — In Flight`, body, 'wide');
 
@@ -3792,6 +4040,49 @@ function showComponentInFlightDetail(componentId) {
         scales: {
           y: { ticks: { font: { size: 10 }, callback: (v) => v.toLocaleString() }, title: { display: true, text: 'Units', font: { size: 10 } } },
           x: { ticks: { font: { size: 11 } } },
+        },
+      },
+    });
+  }
+
+  // Item 3: the Gantt-like timeline. Floating horizontal bars (Chart.js accepts [min,max] data
+  // points for a bar chart on a linear axis) from "component required-by" to "FG ETA," one row
+  // per open FG order with a real ETA, x-axis in day offsets from the earliest date shown
+  // (labeled back to real dates via a tick callback) so the bar lengths are visually proportional.
+  const ganttCanvas = document.getElementById('component-gantt-chart');
+  if (ganttCanvas && ganttRows.length) {
+    const toDay = (iso) => Math.floor(new Date(iso + 'T00:00:00Z').getTime() / 86400000);
+    const allDays = ganttRows.flatMap(g => [toDay(g.requiredBy), toDay(g.fgEta), g.earliestComponentEta ? toDay(g.earliestComponentEta) : null].filter(v => v != null));
+    const minDay = Math.min(...allDays);
+    const dayToIso = (day) => new Date(day * 86400000).toISOString().slice(0, 10);
+    new Chart(ganttCanvas, {
+      type: 'bar',
+      data: {
+        labels: ganttRows.map(g => g.label),
+        datasets: [
+          {
+            label: 'Component required-by → FG ETA window',
+            data: ganttRows.map(g => [toDay(g.requiredBy) - minDay, toDay(g.fgEta) - minDay]),
+            backgroundColor: 'rgba(150, 99, 26, 0.35)',
+            borderColor: '#96631A', borderWidth: 1,
+          },
+          {
+            label: 'Earliest real componentry order ETA',
+            type: 'scatter',
+            data: ganttRows.map((g, i) => g.earliestComponentEta ? { x: toDay(g.earliestComponentEta) - minDay, y: i } : null).filter(Boolean),
+            backgroundColor: '#3F6B35', pointStyle: 'triangle', pointRadius: 7, pointRotation: 90,
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: {
+          legend: { display: true, position: 'bottom', labels: { font: { size: 10 }, boxHeight: 8 } },
+          tooltip: { callbacks: { label: (ctx) => ctx.dataset.type === 'scatter' ? `Component ETA: ${dayToIso(ctx.parsed.x + minDay)}` : `Required by ${dayToIso(ctx.raw[0] + minDay)} → FG ETA ${dayToIso(ctx.raw[1] + minDay)}` } },
+        },
+        scales: {
+          x: { ticks: { font: { size: 10 }, callback: (v) => dayToIso(v + minDay) }, title: { display: true, text: 'Date', font: { size: 10 } } },
+          y: { ticks: { font: { size: 11 } } },
         },
       },
     });
